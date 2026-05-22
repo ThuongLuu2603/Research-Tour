@@ -167,3 +167,22 @@ export const updateSchedule = async (hour: number, minute: number) => {
   const { data } = await api.post("/scraper/schedule", { hour, minute });
   return data;
 };
+
+// ── Admin / Data sync ─────────────────────────────────────────────────────────
+
+export interface DataStatus {
+  total: number;
+  breakdown: Record<string, number>;
+  expected_min: Record<string, number>;
+  complete: boolean;
+}
+
+export const getDataStatus = async (): Promise<DataStatus> => {
+  const { data } = await api.get("/admin/data-status");
+  return data;
+};
+
+export const syncSheetData = async () => {
+  const { data } = await api.post("/admin/sync-data");
+  return data;
+};

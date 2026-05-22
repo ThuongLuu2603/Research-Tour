@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { triggerScrape, getScrapeJobs, getSchedule, updateSchedule, ScrapeJob } from "@/lib/api";
+import { triggerScrape, getScrapeJobs, getSchedule, updateSchedule, getDataStatus, syncSheetData, ScrapeJob } from "@/lib/api";
 import { fmtDate, statusColor, cn } from "@/lib/utils";
-import { Play, Clock, CheckCircle, XCircle, Loader2, RefreshCw } from "lucide-react";
+import { Play, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Database } from "lucide-react";
 
 interface ProgressEvent { pct: number; msg: string; done: boolean; added?: number; updated?: number; error?: boolean }
 
@@ -119,6 +119,23 @@ export default function ScraperHub() {
     queryFn: getSchedule,
   });
 
+  const { data: dataStatus, refetch: refetchDataStatus } = useQuery({
+    queryKey: ["data-status"],
+    queryFn: getDataStatus,
+  });
+
+  const syncData = useMutation({
+    mutationFn: syncSheetData,
+    onSuccess: () => {
+      refetchDataStatus();
+      qc.invalidateQueries({ queryKey: ["kpi"] });
+      qc.invalidateQueries({ queryKey: ["tours"] });
+      qc.invalidateQueries({ queryKey: ["by-market"] });
+      qc.invalidateQueries({ queryKey: ["by-company"] });
+      qc.invalidateQueries({ queryKey: ["by-segment"] });
+    },
+  });
+
   useEffect(() => {
     if (schedule) {
       setSchedHour(schedule.hour);
@@ -143,6 +160,55 @@ export default function ScraperHub() {
         <button onClick={() => refetchJobs()} className="btn-secondary text-xs">
           <RefreshCw size={14} /> Làm mới
         </button>
+      </div>
+
+      {/* Data import — no Render Shell needed on free tier */}
+      <div className={cn("card p-5 border-2", dataStatus?.complete ? "border-green-200 bg-green-50/40" : "border-amber-300 bg-amber-50/50")}>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+              <Database size={18} className="text-primary-600" />
+              Dữ liệu thị trường trong hệ thống
+            </h3>
+            <p className="text-xs text-gray-500 mt-1">
+              Tổng: <strong>{(dataStatus?.total ?? 0).toLocaleString("vi-VN")}</strong> tour
+              {dataStatus && !dataStatus.complete && (
+                <span className="text-amber-700 ml-2">— thiếu dữ liệu tab Main (~8.410 tour). Bấm nút bên phải để import.</span>
+              )}
+            </p>
+            {dataStatus && (
+              <div className="flex flex-wrap gap-3 mt-3 text-xs">
+                {Object.entries(dataStatus.breakdown).map(([src, n]) => {
+                  const ok = n >= (dataStatus.expected_min[src] ?? 1);
+                  return (
+                    <span key={src} className={cn("badge", ok ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800")}>
+                      {src}: {n.toLocaleString("vi-VN")}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() => syncData.mutate()}
+            disabled={syncData.isPending}
+            className="btn-primary text-sm shrink-0"
+          >
+            {syncData.isPending ? (
+              <><Loader2 size={16} className="animate-spin" /> Đang import (~1–2 phút)...</>
+            ) : (
+              <><Database size={16} /> Import dữ liệu Sheet</>
+            )}
+          </button>
+        </div>
+        {syncData.isSuccess && (
+          <p className="text-sm text-green-700 mt-3">
+            ✓ Import xong — tổng {(syncData.data as { total: number }).total.toLocaleString("vi-VN")} tour. Refresh Dashboard để xem.
+          </p>
+        )}
+        {syncData.isError && (
+          <p className="text-sm text-red-600 mt-3">Import thất bại. Thử lại hoặc redeploy commit mới nhất.</p>
+        )}
       </div>
 
       {/* Scraper cards */}
