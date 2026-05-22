@@ -19,6 +19,7 @@ services:
       cd backend &&
       python seed.py &&
       uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -31,6 +32,6 @@ services:
       - key: NODE_VERSION
         value: "20.18.0"
       - key: SHEET_ID
-        sync: false
+        value: "1sI34D88zsmSrN7Jf9fS3jh4aUvaep-blxnBR1CGq9eM"
       - key: GOOGLE_CREDENTIALS_JSON
         sync: false

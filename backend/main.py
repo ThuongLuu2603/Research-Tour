@@ -54,6 +54,11 @@ app.include_router(analytics.router)
 app.include_router(scraper_api.router)
 
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 # Serve React build (production)
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend" / "dist"
 
