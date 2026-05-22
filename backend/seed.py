@@ -2,15 +2,18 @@
 """
 Seed initial data:
   1. Create default admin users
-  2. Import tour data from Google Sheets (Main, Vietravel, FindTourGo)
+  2. Import tour data from bundled CSV snapshots (or Google Sheets fallback)
 """
 from __future__ import annotations
 
+import csv
+import gzip
+import io
 import logging
 import re
 import sys
-
-import pandas as pd
+import urllib.request
+from pathlib import Path
 
 from database import SessionLocal, init_db
 from models import Tour, User
@@ -19,8 +22,8 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-BATCH_SIZE = 200
-CHUNK_SIZE = 500
+DATA_DIR = Path(__file__).parent / "data"
+BATCH_SIZE = 300
 
 HEADER_MAP = {
     "Tên Công Ty": "cong_ty",
@@ -40,13 +43,13 @@ HEADER_MAP = {
     "Link": "link_raw",
 }
 
-SHEET_SOURCES = [
-    ("Vietravel", settings.gid_vietravel),
-    ("FindTourGo", settings.gid_findtourgo),
-    ("Main", settings.gid_main),
+# (nguon, gid, local snapshot filename)
+SHEET_SOURCES: list[tuple[str, str, str]] = [
+    ("Vietravel", settings.gid_vietravel, "vietravel.csv.gz"),
+    ("FindTourGo", settings.gid_findtourgo, "findtourgo.csv.gz"),
+    ("Main", settings.gid_main, "main.csv.gz"),
 ]
 
-# Minimum rows expected per tab — triggers re-import if below (handles partial imports on Render)
 EXPECTED_MIN: dict[str, int] = {
     "Vietravel": 100,
     "FindTourGo": 500,
@@ -100,33 +103,27 @@ def create_default_users() -> None:
         ]
         for u in users:
             if not db.query(User).filter(User.username == u["username"]).first():
-                user = User(
+                db.add(User(
                     username=u["username"],
                     password_hash=hash_password(u["password"]),
                     display_name=u["display_name"],
-                )
-                db.add(user)
+                ))
                 logger.info("Created user: %s", u["username"])
-            else:
-                logger.info("User already exists: %s", u["username"])
         db.commit()
     finally:
         db.close()
 
 
-def _sheet_url(gid: str) -> str:
-    return (
-        f"https://docs.google.com/spreadsheets/d/{settings.sheet_id}"
-        f"/export?format=csv&gid={gid}"
-    )
+def _map_row(raw: dict[str, str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for k, v in raw.items():
+        field = HEADER_MAP.get(k)
+        if field:
+            out[field] = v or ""
+    return out
 
 
-def _rename_columns(df: pd.DataFrame) -> pd.DataFrame:
-    rename = {c: HEADER_MAP[c] for c in df.columns if c in HEADER_MAP}
-    return df.rename(columns=rename)
-
-
-def _row_to_tour(row, nguon: str) -> Tour | None:
+def _row_to_tour(row: dict[str, str], nguon: str) -> Tour | None:
     ten_tour = str(row.get("ten_tour") or "").strip()
     if not ten_tour or ten_tour.lower() in ("nan", "tên tour"):
         return None
@@ -134,9 +131,7 @@ def _row_to_tour(row, nguon: str) -> Tour | None:
     gia_raw = str(row.get("gia_raw") or "").strip()
     gia = parse_price(gia_raw)
     thoi_gian = str(row.get("thoi_gian") or "").strip()
-    link_url = str(row.get("link_url") or "").strip()
-    if not link_url:
-        link_url = str(row.get("link_raw") or "").strip()
+    link_url = str(row.get("link_url") or "").strip() or str(row.get("link_raw") or "").strip()
 
     return Tour(
         cong_ty=str(row.get("cong_ty") or "").strip(),
@@ -159,40 +154,30 @@ def _row_to_tour(row, nguon: str) -> Tour | None:
     )
 
 
-def _find_existing(db, tour: Tour, nguon: str):
-    if tour.ma_tour:
-        found = (
-            db.query(Tour)
-            .filter(Tour.nguon == nguon, Tour.ma_tour == tour.ma_tour)
-            .first()
-        )
-        if found:
-            return found
-    return (
-        db.query(Tour)
-        .filter(
-            Tour.nguon == nguon,
-            Tour.ten_tour == tour.ten_tour,
-            Tour.cong_ty == tour.cong_ty,
-        )
-        .first()
+def _open_csv_rows(nguon: str, gid: str, snapshot: str):
+    """Yield mapped row dicts from local snapshot or Google Sheet URL."""
+    local = DATA_DIR / snapshot
+    if local.exists():
+        logger.info("Reading %s from bundled file %s", nguon, local)
+        with gzip.open(local, "rt", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            for raw in reader:
+                yield _map_row(raw)
+        return
+
+    url = (
+        f"https://docs.google.com/spreadsheets/d/{settings.sheet_id}"
+        f"/export?format=csv&gid={gid}"
     )
+    logger.info("Reading %s from URL %s", nguon, url)
+    with urllib.request.urlopen(url, timeout=180) as resp:
+        text = resp.read().decode("utf-8")
+    reader = csv.DictReader(io.StringIO(text))
+    for raw in reader:
+        yield _map_row(raw)
 
 
-def _apply_tour(existing: Tour, tour: Tour) -> None:
-    for field in (
-        "cong_ty", "thi_truong", "tuyen_tour", "ten_tour", "lich_trinh",
-        "diem_kh", "thoi_gian", "gia_raw", "gia", "lich_kh", "link_url",
-        "ma_tour", "khach_san", "hang_khong", "so_ngay", "phan_khuc",
-    ):
-        setattr(existing, field, getattr(tour, field))
-
-
-def import_sheet_tab(nguon: str, gid: str, replace: bool = False) -> int:
-    """Import one sheet tab using chunked CSV reads (memory-safe on Render)."""
-    url = _sheet_url(gid)
-    logger.info("Importing %s from %s (replace=%s)", nguon, url, replace)
-
+def import_sheet_tab(nguon: str, gid: str, snapshot: str, replace: bool = False) -> int:
     db = SessionLocal()
     count = 0
     pending = 0
@@ -202,33 +187,51 @@ def import_sheet_tab(nguon: str, gid: str, replace: bool = False) -> int:
             db.commit()
             logger.info("Removed %s existing %s tours", deleted, nguon)
 
-        for chunk in pd.read_csv(url, header=0, dtype=str, chunksize=CHUNK_SIZE):
-            chunk = _rename_columns(chunk)
-            for _, row in chunk.iterrows():
-                tour = _row_to_tour(row, nguon)
-                if not tour:
-                    continue
+        for row in _open_csv_rows(nguon, gid, snapshot):
+            tour = _row_to_tour(row, nguon)
+            if not tour:
+                continue
 
-                if replace:
-                    db.add(tour)
+            if replace:
+                db.add(tour)
+            else:
+                existing = None
+                if tour.ma_tour:
+                    existing = (
+                        db.query(Tour)
+                        .filter(Tour.nguon == nguon, Tour.ma_tour == tour.ma_tour)
+                        .first()
+                    )
+                if not existing:
+                    existing = (
+                        db.query(Tour)
+                        .filter(
+                            Tour.nguon == nguon,
+                            Tour.ten_tour == tour.ten_tour,
+                            Tour.cong_ty == tour.cong_ty,
+                        )
+                        .first()
+                    )
+                if existing:
+                    for field in (
+                        "cong_ty", "thi_truong", "tuyen_tour", "ten_tour", "lich_trinh",
+                        "diem_kh", "thoi_gian", "gia_raw", "gia", "lich_kh", "link_url",
+                        "ma_tour", "khach_san", "hang_khong", "so_ngay", "phan_khuc",
+                    ):
+                        setattr(existing, field, getattr(tour, field))
                 else:
-                    existing = _find_existing(db, tour, nguon)
-                    if existing:
-                        _apply_tour(existing, tour)
-                    else:
-                        db.add(tour)
+                    db.add(tour)
 
-                count += 1
-                pending += 1
-                if pending >= BATCH_SIZE:
-                    db.commit()
-                    pending = 0
-                    logger.info("Imported %s rows for %s...", count, nguon)
-
-            del chunk
+            count += 1
+            pending += 1
+            if pending >= BATCH_SIZE:
+                db.commit()
+                pending = 0
+                if count % 1500 == 0:
+                    logger.info("%s: %s rows imported...", nguon, count)
 
         db.commit()
-        logger.info("Imported %s tours from %s", count, nguon)
+        logger.info("Finished %s: %s tours", nguon, count)
     except Exception:
         db.rollback()
         logger.exception("Import failed for %s", nguon)
@@ -246,37 +249,24 @@ def source_count(nguon: str) -> int:
         db.close()
 
 
-def import_all_sheets(replace: bool = False) -> dict[str, int]:
+def import_missing_sheets() -> dict[str, int]:
     results: dict[str, int] = {}
-    for nguon, gid in SHEET_SOURCES:
+    for nguon, gid, snapshot in SHEET_SOURCES:
+        count = source_count(nguon)
+        expected = EXPECTED_MIN.get(nguon, 1)
+        if count >= expected:
+            logger.info("%s OK (%s >= %s)", nguon, count, expected)
+            results[nguon] = count
+            continue
+        logger.info("%s incomplete (%s < %s) — importing", nguon, count, expected)
         try:
-            results[nguon] = import_sheet_tab(nguon, gid, replace=replace)
+            results[nguon] = import_sheet_tab(nguon, gid, snapshot, replace=count > 0)
         except Exception as e:
-            logger.error("Skipping %s after error: %s", nguon, e)
-            results[nguon] = 0
+            logger.error("%s import error: %s", nguon, e)
+            results[nguon] = source_count(nguon)
+    total = tour_count()
+    logger.info("Sync complete — total tours: %s — breakdown: %s", total, results)
     return results
-
-
-def import_missing_sheets() -> None:
-    """Import any sheet tab that is missing or partially imported."""
-    try:
-        for nguon, gid in SHEET_SOURCES:
-            count = source_count(nguon)
-            expected = EXPECTED_MIN.get(nguon, 1)
-            if count >= expected:
-                logger.info("%s OK: %s tours (expected >= %s)", nguon, count, expected)
-                continue
-            logger.info(
-                "%s incomplete: %s tours (expected >= %s) — re-importing",
-                nguon, count, expected,
-            )
-            import_sheet_tab(nguon, gid, replace=count > 0)
-        logger.info(
-            "Sheet sync done — totals: %s",
-            {n: source_count(n) for n, _ in SHEET_SOURCES},
-        )
-    except Exception:
-        logger.exception("Background sheet import failed")
 
 
 def tour_count() -> int:
@@ -294,15 +284,14 @@ if __name__ == "__main__":
 
     if "--users-only" in sys.argv:
         print("Seed completed (users only).")
-    elif "--import-all" in sys.argv or "--import-sheet" in sys.argv:
-        replace = "--replace" in sys.argv
-        import_all_sheets(replace=replace)
+    elif "--import-all" in sys.argv:
+        for nguon, gid, snap in SHEET_SOURCES:
+            import_sheet_tab(nguon, gid, snap, replace="--replace" in sys.argv)
         print("Seed completed.")
-    elif "--sync" in sys.argv:
+    elif "--sync" in sys.argv or len(sys.argv) == 1:
         import_missing_sheets()
         print("Seed completed.")
     else:
-        print(f"Database has {tour_count()} tours.")
-        for nguon, _ in SHEET_SOURCES:
+        print(f"Total tours: {tour_count()}")
+        for nguon, _, _ in SHEET_SOURCES:
             print(f"  {nguon}: {source_count(nguon)}")
-        print("Seed completed.")

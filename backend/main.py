@@ -22,13 +22,10 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup — keep fast so Render health check passes
     init_db()
-    from seed import create_default_users, import_missing_sheets
-    import threading
+    from seed import create_default_users
 
     create_default_users()
-    threading.Thread(target=import_missing_sheets, daemon=True, name="sheet-import").start()
     set_event_loop(asyncio.get_event_loop())
     start_scheduler()
     logger.info("OTA Research Platform started")
