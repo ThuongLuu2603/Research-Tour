@@ -122,19 +122,27 @@ export default function ScraperHub() {
   const { data: dataStatus, refetch: refetchDataStatus } = useQuery({
     queryKey: ["data-status"],
     queryFn: getDataStatus,
+    refetchInterval: (query) =>
+      query.state.data?.import?.running ? 2000 : false,
   });
 
   const syncData = useMutation({
     mutationFn: syncSheetData,
     onSuccess: () => {
       refetchDataStatus();
+    },
+  });
+
+  useEffect(() => {
+    if (dataStatus?.import?.running) return;
+    if (dataStatus?.complete) {
       qc.invalidateQueries({ queryKey: ["kpi"] });
       qc.invalidateQueries({ queryKey: ["tours"] });
       qc.invalidateQueries({ queryKey: ["by-market"] });
       qc.invalidateQueries({ queryKey: ["by-company"] });
       qc.invalidateQueries({ queryKey: ["by-segment"] });
-    },
-  });
+    }
+  }, [dataStatus?.import?.running, dataStatus?.complete, qc]);
 
   useEffect(() => {
     if (schedule) {
@@ -191,23 +199,31 @@ export default function ScraperHub() {
           </div>
           <button
             onClick={() => syncData.mutate()}
-            disabled={syncData.isPending}
+            disabled={syncData.isPending || dataStatus?.import?.running}
             className="btn-primary text-sm shrink-0"
           >
-            {syncData.isPending ? (
-              <><Loader2 size={16} className="animate-spin" /> Đang import (~1–2 phút)...</>
+            {syncData.isPending || dataStatus?.import?.running ? (
+              <><Loader2 size={16} className="animate-spin" /> {dataStatus?.import?.message || "Đang import..."}</>
             ) : (
               <><Database size={16} /> Import dữ liệu Sheet</>
             )}
           </button>
         </div>
-        {syncData.isSuccess && (
-          <p className="text-sm text-green-700 mt-3">
-            ✓ Import xong — tổng {(syncData.data as { total: number }).total.toLocaleString("vi-VN")} tour. Refresh Dashboard để xem.
+        {dataStatus?.import?.running && (
+          <p className="text-sm text-blue-700 mt-3">
+            ⏳ {dataStatus.import.message} — tab Main có ~8.410 tour, cần 2–5 phút. Không tắt trang.
           </p>
         )}
-        {syncData.isError && (
-          <p className="text-sm text-red-600 mt-3">Import thất bại. Thử lại hoặc redeploy commit mới nhất.</p>
+        {dataStatus?.import?.error && (
+          <p className="text-sm text-red-600 mt-3">Lỗi import: {dataStatus.import.error}</p>
+        )}
+        {!dataStatus?.import?.running && dataStatus?.complete && syncData.isSuccess && (
+          <p className="text-sm text-green-700 mt-3">
+            ✓ Import xong — tổng {dataStatus.total.toLocaleString("vi-VN")} tour. Refresh Dashboard để xem.
+          </p>
+        )}
+        {syncData.isError && !dataStatus?.import?.running && (
+          <p className="text-sm text-red-600 mt-3">{(syncData.error as Error)?.message || "Import thất bại."}</p>
         )}
       </div>
 

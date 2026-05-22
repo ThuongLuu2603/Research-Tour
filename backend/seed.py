@@ -12,6 +12,7 @@ import io
 import logging
 import re
 import sys
+import threading
 import urllib.request
 from pathlib import Path
 
@@ -23,7 +24,7 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path(__file__).parent / "data"
-BATCH_SIZE = 300
+BULK_SIZE = 500
 
 HEADER_MAP = {
     "Tên Công Ty": "cong_ty",
@@ -43,7 +44,6 @@ HEADER_MAP = {
     "Link": "link_raw",
 }
 
-# (nguon, gid, local snapshot filename)
 SHEET_SOURCES: list[tuple[str, str, str]] = [
     ("Vietravel", settings.gid_vietravel, "vietravel.csv.gz"),
     ("FindTourGo", settings.gid_findtourgo, "findtourgo.csv.gz"),
@@ -55,6 +55,20 @@ EXPECTED_MIN: dict[str, int] = {
     "FindTourGo": 500,
     "Main": 7500,
 }
+
+_import_lock = threading.Lock()
+_import_status: dict = {
+    "running": False,
+    "message": "",
+    "current_source": "",
+    "rows_done": 0,
+    "error": None,
+}
+
+
+def get_import_status() -> dict:
+    with _import_lock:
+        return dict(_import_status)
 
 
 def parse_price(v) -> float | None:
@@ -115,12 +129,7 @@ def create_default_users() -> None:
 
 
 def _map_row(raw: dict[str, str]) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for k, v in raw.items():
-        field = HEADER_MAP.get(k)
-        if field:
-            out[field] = v or ""
-    return out
+    return {HEADER_MAP[k]: (v or "") for k, v in raw.items() if k in HEADER_MAP}
 
 
 def _row_to_tour(row: dict[str, str], nguon: str) -> Tour | None:
@@ -155,13 +164,11 @@ def _row_to_tour(row: dict[str, str], nguon: str) -> Tour | None:
 
 
 def _open_csv_rows(nguon: str, gid: str, snapshot: str):
-    """Yield mapped row dicts from local snapshot or Google Sheet URL."""
     local = DATA_DIR / snapshot
     if local.exists():
         logger.info("Reading %s from bundled file %s", nguon, local)
         with gzip.open(local, "rt", encoding="utf-8", newline="") as f:
-            reader = csv.DictReader(f)
-            for raw in reader:
+            for raw in csv.DictReader(f):
                 yield _map_row(raw)
         return
 
@@ -172,15 +179,22 @@ def _open_csv_rows(nguon: str, gid: str, snapshot: str):
     logger.info("Reading %s from URL %s", nguon, url)
     with urllib.request.urlopen(url, timeout=180) as resp:
         text = resp.read().decode("utf-8")
-    reader = csv.DictReader(io.StringIO(text))
-    for raw in reader:
+    for raw in csv.DictReader(io.StringIO(text)):
         yield _map_row(raw)
 
 
+def _set_progress(nguon: str, count: int, msg: str = "") -> None:
+    with _import_lock:
+        _import_status["current_source"] = nguon
+        _import_status["rows_done"] = count
+        _import_status["message"] = msg or f"Đang import {nguon}: {count:,} dòng..."
+
+
 def import_sheet_tab(nguon: str, gid: str, snapshot: str, replace: bool = False) -> int:
+    """Bulk-import one tab. Fast replace mode for large Main sheet."""
     db = SessionLocal()
     count = 0
-    pending = 0
+    batch: list[Tour] = []
     try:
         if replace:
             deleted = db.query(Tour).filter(Tour.nguon == nguon).delete()
@@ -193,7 +207,15 @@ def import_sheet_tab(nguon: str, gid: str, snapshot: str, replace: bool = False)
                 continue
 
             if replace:
-                db.add(tour)
+                batch.append(tour)
+                if len(batch) >= BULK_SIZE:
+                    db.bulk_save_objects(batch)
+                    db.commit()
+                    count += len(batch)
+                    batch = []
+                    _set_progress(nguon, count)
+                    if count % 2000 == 0:
+                        logger.info("%s: %s rows...", nguon, count)
             else:
                 existing = None
                 if tour.ma_tour:
@@ -221,17 +243,18 @@ def import_sheet_tab(nguon: str, gid: str, snapshot: str, replace: bool = False)
                         setattr(existing, field, getattr(tour, field))
                 else:
                     db.add(tour)
+                count += 1
 
-            count += 1
-            pending += 1
-            if pending >= BATCH_SIZE:
-                db.commit()
-                pending = 0
-                if count % 1500 == 0:
-                    logger.info("%s: %s rows imported...", nguon, count)
+        if batch:
+            db.bulk_save_objects(batch)
+            db.commit()
+            count += len(batch)
 
-        db.commit()
+        if not replace:
+            db.commit()
+
         logger.info("Finished %s: %s tours", nguon, count)
+        _set_progress(nguon, count, f"Xong {nguon}: {count:,} tour")
     except Exception:
         db.rollback()
         logger.exception("Import failed for %s", nguon)
@@ -267,6 +290,37 @@ def import_missing_sheets() -> dict[str, int]:
     total = tour_count()
     logger.info("Sync complete — total tours: %s — breakdown: %s", total, results)
     return results
+
+
+def start_import_background() -> bool:
+    """Start import in background thread. Returns False if already running."""
+    with _import_lock:
+        if _import_status["running"]:
+            return False
+        _import_status.update({
+            "running": True,
+            "message": "Đang bắt đầu import...",
+            "current_source": "",
+            "rows_done": 0,
+            "error": None,
+        })
+
+    def _run():
+        try:
+            import_missing_sheets()
+            with _import_lock:
+                _import_status["message"] = "Import hoàn tất"
+        except Exception as e:
+            logger.exception("Background import failed")
+            with _import_lock:
+                _import_status["error"] = str(e)
+                _import_status["message"] = f"Lỗi: {e}"
+        finally:
+            with _import_lock:
+                _import_status["running"] = False
+
+    threading.Thread(target=_run, daemon=True, name="sheet-import").start()
+    return True
 
 
 def tour_count() -> int:

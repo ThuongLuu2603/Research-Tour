@@ -26,10 +26,8 @@ async def lifespan(app: FastAPI):
     from seed import create_default_users, import_missing_sheets
 
     create_default_users()
-    try:
-        import_missing_sheets()
-    except Exception:
-        logger.exception("Startup data sync failed")
+    from seed import start_import_background
+    start_import_background()
     set_event_loop(asyncio.get_event_loop())
     start_scheduler()
     logger.info("OTA Research Platform started")

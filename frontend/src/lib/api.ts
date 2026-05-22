@@ -175,6 +175,13 @@ export interface DataStatus {
   breakdown: Record<string, number>;
   expected_min: Record<string, number>;
   complete: boolean;
+  import?: {
+    running: boolean;
+    message: string;
+    current_source: string;
+    rows_done: number;
+    error: string | null;
+  };
 }
 
 export const getDataStatus = async (): Promise<DataStatus> => {
