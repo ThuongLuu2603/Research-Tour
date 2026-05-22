@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.db
+.env
+credentials.json
+.venv/
+venv/
+
+# Node
+node_modules/
+node_modules_old/
+frontend/dist/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Build cache
+*.log
+.npm-cache2/

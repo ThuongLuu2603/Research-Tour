@@ -1,0 +1,36 @@
+databases:
+  - name: ota-research-db
+    databaseName: ota_research
+    user: ota_research
+    plan: free
+
+services:
+  - type: web
+    name: ota-research-platform
+    runtime: python
+    plan: free
+    buildCommand: >-
+      cd frontend &&
+      npm ci &&
+      npm run build &&
+      cd ../backend &&
+      pip install -r requirements.txt
+    startCommand: >-
+      cd backend &&
+      python seed.py &&
+      uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ota-research-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: NODE_VERSION
+        value: "20.18.0"
+      - key: SHEET_ID
+        sync: false
+      - key: GOOGLE_CREDENTIALS_JSON
+        sync: false
