@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from api import auth, tours, analytics, scraper as scraper_api
+from api import auth, tours, analytics, scraper as scraper_api, admin
 from api.scraper import set_event_loop
 from database import init_db
 from scheduler import start_scheduler, stop_scheduler
@@ -23,9 +23,13 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    from seed import create_default_users
+    from seed import create_default_users, import_missing_sheets
 
     create_default_users()
+    try:
+        import_missing_sheets()
+    except Exception:
+        logger.exception("Startup data sync failed")
     set_event_loop(asyncio.get_event_loop())
     start_scheduler()
     logger.info("OTA Research Platform started")
@@ -54,6 +58,7 @@ app.include_router(auth.router)
 app.include_router(tours.router)
 app.include_router(analytics.router)
 app.include_router(scraper_api.router)
+app.include_router(admin.router)
 
 
 @app.get("/health")
