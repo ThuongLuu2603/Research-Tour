@@ -109,12 +109,12 @@ def _fmt_price(v: int | None) -> str:
     return f"{v:,}".replace(",", ".")
 
 
-def _extract_schedule(chunk: str, max_len: int = 20000) -> str:
-    sub = chunk[:max_len]
-    dates = re.findall(r'\\"date\\":\\"(\d{4}-\d{2}-\d{2})', sub)
+def _extract_schedule(chunk: str) -> str:
+    """Trích toàn bộ ngày KH từ JSON nhúng trong trang (không cắt 12 ngày)."""
+    dates = re.findall(r'\\"date\\":\\"(\d{4}-\d{2}-\d{2})', chunk)
     if not dates:
         return ""
-    unique = sorted(set(dates))[:12]
+    unique = sorted(set(dates))
     parts = []
     for d in unique:
         try:
@@ -122,11 +122,7 @@ def _extract_schedule(chunk: str, max_len: int = 20000) -> str:
             parts.append(dt.strftime("%d/%m/%Y"))
         except ValueError:
             parts.append(d)
-    more = len(set(dates)) - len(unique)
-    text = ", ".join(parts)
-    if more > 0:
-        text += f" (+{more} ngày khác)"
-    return text
+    return ", ".join(parts)
 
 
 def _extract_prices(chunk: str, max_len: int = 20000) -> int | None:
@@ -178,7 +174,7 @@ def scrape_listing_page(url: str) -> list[dict[str, Any]]:
         duration = _field_in_block(block, "dayStayText") or _field_in_block(block, "dayNight")
         lich_trinh = _extract_destination(block)
         gia = _extract_prices(block)
-        lich_kh = _extract_schedule(block)
+        lich_kh = _extract_schedule(chunk)
 
         tours.append(
             {
