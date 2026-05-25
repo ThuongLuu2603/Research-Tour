@@ -310,6 +310,8 @@ export interface CompareSegment {
   vtr_avg_departures_per_month?: number;
   market_freq_monthly: number;
   market_freq_avg_per_company: number | null;
+  top_freq_competitor?: string;
+  top_freq_competitor_departures?: number | null;
   freq_gap_pct: number | null;
   position: string;
   freq_position: string;

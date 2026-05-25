@@ -214,7 +214,7 @@ def segment_detail(
     if not seg:
         parsed = parse_segment_key(key)
         if parsed:
-            market, route, depart, _days = parsed
+            market, route, depart = parsed
             ctx = get_compare_context(db, [market], route, depart)
             seg = ctx.segment_by_key.get(key)
     if not seg:

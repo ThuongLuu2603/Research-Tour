@@ -154,16 +154,22 @@ export default function VietravelCompare() {
     enabled: !!selectedMatcherTour,
   });
 
+  const fmtDays = (d: number | null | undefined) => {
+    if (d == null) return "—";
+    const r = Math.round(d * 10) / 10;
+    return Number.isInteger(r) ? `${r}N` : `${r}N`;
+  };
+
   const priceChart = (segments?.items ?? []).filter((s) => s.gap_pct != null).slice(0, 12).map((s) => ({
-    name: `${s.tuyen_tour.slice(0, 18)} (${s.diem_kh})`,
+    name: `${s.tuyen_tour.slice(0, 22)} (${s.diem_kh})`,
     gap: s.gap_pct,
   }));
 
   const freqChart = (segments?.items ?? []).filter((s) => s.freq_gap_pct != null).slice(0, 12).map((s) => ({
-    name: `${s.tuyen_tour.slice(0, 18)} (${s.diem_kh})`,
+    name: `${s.tuyen_tour.slice(0, 22)} (${s.diem_kh})`,
     gap: s.freq_gap_pct,
     vtr: s.vtr_avg_departures_per_month ?? s.vietravel_freq_monthly,
-    mkt: s.market_freq_avg_per_company,
+    mkt: s.top_freq_competitor_departures,
   }));
 
   const scatterData = (segments?.items ?? [])
@@ -223,7 +229,7 @@ export default function VietravelCompare() {
         <thead className="bg-gray-50 sticky top-0">
           <tr>
             <th colSpan={5} className="px-2 py-1 text-left text-gray-400 font-normal border-b"><ThTip label="Nhóm so sánh" tip={GLOSSARY.segment} /></th>
-            <th colSpan={4} className="px-2 py-1 text-left text-blue-700 font-semibold border-b bg-blue-50">Vietravel</th>
+            <th colSpan={3} className="px-2 py-1 text-left text-blue-700 font-semibold border-b bg-blue-50">Vietravel</th>
             <th colSpan={4} className="px-2 py-1 text-left text-gray-700 font-semibold border-b bg-gray-100">Thị trường (giai đoạn VTR)</th>
             <th colSpan={2} className="px-2 py-1 text-left border-b">Kết quả</th>
           </tr>
@@ -231,10 +237,9 @@ export default function VietravelCompare() {
             <SortTh col="thi_truong" label={COL.thiTruong} tip={GLOSSARY.thiTruong} sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="tuyen_tour" label={COL.tuyenTour} tip={GLOSSARY.tuyenTour} sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
             <SortTh col="diem_kh" label={COL.diemKhoiHanh} tip={GLOSSARY.diemKhoiHanh} sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
-            <SortTh col="so_ngay" label={COL.thoiGian} tip={GLOSSARY.thoiGian} sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="so_ngay" label={COL.ngayTb} tip="Số ngày TB có trọng số theo đoàn — gộp mọi sản phẩm trên tuyến" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
             <th className="px-2 py-2 text-left font-semibold text-gray-600 whitespace-nowrap"><ThTip label="Giai đoạn" tip="Theo ngày KH tour VTR — VD: T5–T8/2025" /></th>
             <SortTh col="vietravel_avg_price" label={COL.giaTbVtr} tip={GLOSSARY.giaTbVtr} sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
-            <th className="px-2 py-2 text-left font-semibold text-gray-600 whitespace-nowrap"><ThTip label={COL.ngayTb} tip={GLOSSARY.thoiGian} /></th>
             <th className="px-2 py-2 text-left font-semibold text-gray-600 whitespace-nowrap"><ThTip label="Rẻ nhất VTR" tip={GLOSSARY.reNhat} /></th>
             <th className="px-2 py-2 text-left font-semibold text-gray-600">Link</th>
             <th className="px-2 py-2 text-left font-semibold text-gray-600 whitespace-nowrap"><ThTip label={COL.giaThiTruong} tip={GLOSSARY.giaThiTruong} /></th>
@@ -255,10 +260,9 @@ export default function VietravelCompare() {
               <td className="px-2 py-2">{s.thi_truong}</td>
               <td className="px-2 py-2 max-w-[110px] truncate" title={s.tuyen_tour}>{s.tuyen_tour}</td>
               <td className="px-2 py-2">{s.diem_kh}</td>
-              <td className="px-2 py-2">{s.so_ngay}N</td>
+              <td className="px-2 py-2">{fmtDays(s.so_ngay)}</td>
               <td className="px-2 py-2 text-[10px] text-gray-600 whitespace-nowrap">{s.vtr_comparison_period || "—"}</td>
               <td className="px-2 py-2 font-medium text-blue-900">{fmtVND(s.vietravel_avg_price)}</td>
-              <td className="px-2 py-2">{s.vietravel_avg_days ?? s.so_ngay}N</td>
               <td className="px-2 py-2">{fmtVND(s.vietravel_min_price)}</td>
               <td className="px-2 py-2"><LinkCell url={s.vietravel_min_link} title={s.vietravel_min_tour} /></td>
               <td className="px-2 py-2">{fmtVND(s.market_total_price)}</td>
@@ -277,8 +281,8 @@ export default function VietravelCompare() {
   );
 
   const freqCols: [string, string?][] = [
-    [COL.thiTruong, GLOSSARY.thiTruong], [COL.tuyenTour, GLOSSARY.tuyenTour], [COL.diemKhoiHanh, GLOSSARY.diemKhoiHanh], [COL.thoiGian, GLOSSARY.thoiGian],
-    ["VTR " + COL.tbDoanThang, GLOSSARY.tbDoanThang], ["TB đối thủ " + COL.tbDoanThang, GLOSSARY.tbDoanThang], [COL.chenhPct, GLOSSARY.tanSuat], [""],
+    [COL.thiTruong, GLOSSARY.thiTruong], [COL.tuyenTour, GLOSSARY.tuyenTour], [COL.diemKhoiHanh, GLOSSARY.diemKhoiHanh], [COL.ngayTb, "Số ngày TB có trọng số trên tuyến"],
+    ["VTR " + COL.tbDoanThang, GLOSSARY.tbDoanThang], [COL.congTy + " TS cao nhất", "Đối thủ có TB đoàn/tháng cao nhất trên tuyến trong giai đoạn VTR"], ["TB đối thủ " + COL.tbDoanThang, GLOSSARY.tbDoanThang], [COL.chenhPct, GLOSSARY.tanSuat], [""],
   ];
 
   const SegmentTable = ({ sortKey }: { sortKey?: string }) => (
@@ -304,7 +308,7 @@ export default function VietravelCompare() {
               <td className="px-2 py-2">{s.thi_truong}</td>
               <td className="px-2 py-2 max-w-[120px] truncate" title={s.tuyen_tour}>{s.tuyen_tour}</td>
               <td className="px-2 py-2">{s.diem_kh}</td>
-              <td className="px-2 py-2">{s.so_ngay}N</td>
+              <td className="px-2 py-2">{fmtDays(s.so_ngay)}</td>
               {sortKey !== "freq" ? (
                 <>
                   <td className="px-2 py-2 font-medium">{fmtVND(s.vietravel_avg_day)}</td>
@@ -314,7 +318,8 @@ export default function VietravelCompare() {
               ) : (
                 <>
                   <td className="px-2 py-2">{s.vtr_avg_departures_per_month ?? Math.round(s.vietravel_freq_monthly / Math.max(s.vietravel_count, 1))}</td>
-                  <td className="px-2 py-2">{s.market_freq_avg_per_company ?? "—"}</td>
+                  <td className="px-2 py-2 max-w-[100px] truncate" title={s.top_freq_competitor}>{s.top_freq_competitor || "—"}</td>
+                  <td className="px-2 py-2">{s.top_freq_competitor_departures ?? "—"}</td>
                   <td className="px-2 py-2"><FreqBadge pct={s.freq_gap_pct} /></td>
                 </>
               )}
@@ -668,7 +673,7 @@ export default function VietravelCompare() {
           <div className="flex items-start justify-between mb-4">
             <div>
               <h3 className="font-semibold inline-flex items-center">Chi tiết nhóm so sánh<InfoTip text={GLOSSARY.segment} /></h3>
-              <p className="text-xs text-gray-500 mt-1">{detail.segment?.tuyen_tour} · {detail.segment?.diem_kh} · {detail.segment?.so_ngay}N · {detail.segment?.thi_truong}</p>
+              <p className="text-xs text-gray-500 mt-1">{detail.segment?.tuyen_tour} · {detail.segment?.diem_kh} · {fmtDays(detail.segment?.so_ngay)} · {detail.segment?.thi_truong}</p>
             </div>
             <button className="text-xs text-gray-400 hover:text-gray-600" onClick={() => setSelectedKey(null)}>Đóng</button>
           </div>

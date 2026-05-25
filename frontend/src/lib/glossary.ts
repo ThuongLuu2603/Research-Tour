@@ -19,8 +19,8 @@ export const GLOSSARY = {
   giaSoSanh: "Giá so sánh = Giá TB/ngày thị trường × Số ngày TB Vietravel (cùng điều kiện tuyến).",
   chenhGia: "Chênh % = Giá TB VTR ÷ Giá so sánh − 1. Âm = VTR rẻ hơn.",
   reNhat: "Tour rẻ nhất thị trường cùng giai đoạn khởi hành với VTR (±45 ngày).",
-  segment: "Nhóm so sánh: cùng Thị trường + Tuyến tour + Điểm khởi hành + Thời gian.",
-  methodologyCompare: "So sánh cùng tuyến/điểm KH/thời gian. Giá TB có trọng số đoàn; tần suất = TB đoàn/tháng/sản phẩm.",
+  segment: "Nhóm so sánh: cùng Thị trường + Tuyến tour + Điểm khởi hành (gộp mọi số ngày trên tuyến).",
+  methodologyCompare: "So sánh cùng tuyến/điểm KH. Số ngày TB = TB có trọng số đoàn trên tuyến. Tần suất so với đối thủ cao nhất.",
   methodologyMarket: "Phân tích toàn thị trường theo sản phẩm tour. Giá TB robust; thị phần theo tổng đoàn/tháng.",
   methodologyPrice: "Min / TB / Median / Max theo nhóm. TB có trọng số đoàn, giảm ảnh hưởng outlier giá.",
 } as const;

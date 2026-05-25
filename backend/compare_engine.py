@@ -45,32 +45,34 @@ def parse_duration_days(thoi_gian: str, so_ngay: float | None) -> float | None:
     return days
 
 
-def make_segment_key(thi_truong: str, route: str, depart: str, days: float) -> str:
-    return f"{thi_truong}|{route}|{depart}|{days:.0f}d"
+def make_segment_key(thi_truong: str, route: str, depart: str) -> str:
+    """Nhóm so sánh = Thị trường + Tuyến + Điểm KH (không tách theo số ngày)."""
+    return f"{thi_truong}|{route}|{depart}"
 
 
-def parse_segment_key(key: str) -> tuple[str, str, str, float] | None:
-    """Parse segment key → (thi_truong, route, depart, days)."""
+def parse_segment_key(key: str) -> tuple[str, str, str] | None:
+    """Parse segment key → (thi_truong, route, depart). Hỗ trợ key cũ có |{days}d."""
     if not key or "|" not in key:
         return None
-    parts = key.rsplit("|", 3)
-    if len(parts) != 4 or not parts[3].endswith("d"):
-        return None
-    try:
-        days = float(parts[3][:-1])
-    except ValueError:
-        return None
-    return parts[0], parts[1], parts[2], days
+    parts = key.rsplit("|", 2)
+    if len(parts) == 3 and not parts[2].endswith("d"):
+        return parts[0], parts[1], parts[2]
+    legacy = key.rsplit("|", 3)
+    if len(legacy) == 4 and legacy[3].endswith("d"):
+        return legacy[0], legacy[1], legacy[2]
+    return None
 
 
 def segment_key(tour: Tour) -> str | None:
-    days = parse_duration_days(tour.thoi_gian, tour.so_ngay)
     route = normalize_route(tour.tuyen_tour)
     depart = normalize_departure(tour.diem_kh)
     market = (tour.thi_truong or "").strip() or "Khác"
-    if not route or not days or not tour.gia or tour.gia <= 0:
+    if not route or not tour.gia or tour.gia <= 0:
         return None
-    return make_segment_key(market, route, depart, days)
+    days = parse_duration_days(tour.thoi_gian, tour.so_ngay)
+    if not days:
+        return None
+    return make_segment_key(market, route, depart)
 
 
 def _dedup_key(t: Tour) -> str:
@@ -351,19 +353,28 @@ class SegmentStats:
     def market_freq_monthly(self) -> float:
         return self._entries_freq_total(self.market_entries_in_period, in_vtr_period=True)
 
+    def _top_freq_competitor(self) -> tuple[str, float] | None:
+        """Đối thủ có TB đoàn/tháng cao nhất trên tuyến trong giai đoạn VTR."""
+        from classification import resolve_company_name
+
+        best_co = ""
+        best_avg = 0.0
+        for co, c in self._companies(in_vtr_period=True).items():
+            if is_vietravel(co) or c.avg_departures_per_month <= 0:
+                continue
+            if c.avg_departures_per_month > best_avg:
+                best_avg = c.avg_departures_per_month
+                best_co = resolve_company_name(co)
+        return (best_co, best_avg) if best_co and best_avg > 0 else None
+
     @property
     def freq_gap_pct(self) -> float | None:
-        """VTR TB đoàn/tháng so với TB đoàn/tháng mỗi đối thủ trong segment."""
+        """VTR TB đoàn/tháng/sản phẩm so với đối thủ có tần suất cao nhất trên tuyến."""
         vtr_avg = self.vtr_avg_departures_per_month
-        comp_avgs = []
-        for co, c in self._companies(in_vtr_period=True).items():
-            if not is_vietravel(co):
-                comp_avgs.append(c.avg_departures_per_month)
-        comp_avgs = [x for x in comp_avgs if x > 0]
-        if not comp_avgs or vtr_avg <= 0:
+        top = self._top_freq_competitor()
+        if not top or vtr_avg <= 0:
             return None
-        avg_comp = sum(comp_avgs) / len(comp_avgs)
-        return round((vtr_avg / avg_comp - 1) * 100, 1)
+        return round((vtr_avg / top[1] - 1) * 100, 1)
 
     @property
     def vtr_avg_departures_per_month(self) -> float:
@@ -425,6 +436,8 @@ class SegmentStats:
             "vtr_avg_departures_per_month": self.vtr_avg_departures_per_month,
             "market_freq_monthly": round(self.market_freq_monthly, 1),
             "market_freq_avg_per_company": self.market_freq_avg_per_company,
+            "top_freq_competitor": top_freq[0] if top_freq else "",
+            "top_freq_competitor_departures": top_freq[1] if top_freq else None,
             "freq_gap_pct": self.freq_gap_pct,
             "position": _position_label(self.gap_pct),
             "freq_position": _freq_position_label(self.freq_gap_pct),
@@ -493,7 +506,7 @@ def build_segment_stats(tours: list[Tour], *, dedup: bool = True) -> list[Segmen
                 thi_truong=market,
                 tuyen_tour=normalize_route(t.tuyen_tour),
                 diem_kh=normalize_departure(t.diem_kh),
-                so_ngay=days,
+                so_ngay=0,
             )
         buckets[key].entries.append(_tour_to_entry(t, days))
 
@@ -586,10 +599,10 @@ def _gap(a: float | None, b: float | None) -> float | None:
 
 
 METHODOLOGY = (
-    "Nhóm so sánh = cùng Thị trường + Tuyến tour + Điểm khởi hành + Thời gian. "
+    "Nhóm so sánh = cùng Thị trường + Tuyến tour + Điểm khởi hành (gộp mọi số ngày trên tuyến). "
+    "Số ngày TB = trung bình có trọng số theo đoàn của các sản phẩm VTR trên tuyến. "
     "Giai đoạn so sánh giá & tần suất = theo tháng ngày KH của tour VTR trong nhóm. "
-    "Mỗi dòng Tên Tour = 1 sản phẩm; nhiều ngày trong Lịch khởi hành = nhiều đoàn. "
-    "Tần suất = TB số đoàn/tháng/sản phẩm trong giai đoạn VTR. "
+    "Tần suất VTR = TB đoàn/tháng/sản phẩm trong giai đoạn; so sánh với đối thủ có tần suất cao nhất trên tuyến. "
     "Giá TB có trọng số theo đoàn; khi chênh lệch luxury/phổ thông lớn dùng TB cắt biên 10% + median. "
     "Giá so sánh = Giá TB/ngày thị trường (cùng giai đoạn) × Số ngày TB Vietravel. "
     "Chênh % = Giá TB VTR ÷ Giá so sánh − 1."
