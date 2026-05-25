@@ -117,7 +117,7 @@ export default function VietravelCompare() {
     queryFn: () => getCompareSummary(filters),
     staleTime: compareStale,
   });
-  const { data: segments } = useQuery({
+  const { data: segments, isLoading: segmentsLoading, isError: segmentsError } = useQuery({
     queryKey: ["compare-segments", segmentQueryFilters],
     queryFn: () => getCompareSegments(segmentQueryFilters),
     enabled: needsSegments,
@@ -393,24 +393,45 @@ export default function VietravelCompare() {
 
       {tab === "overview" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {segmentsError && (
+            <div className="lg:col-span-2 card p-4 border border-red-200 bg-red-50 text-sm text-red-800">
+              Không tải được dữ liệu biểu đồ — thử làm mới trang hoặc liên hệ admin.
+            </div>
+          )}
           <div className="card p-5">
             <h3 className="font-semibold mb-3 inline-flex items-center">{COL.chenhPct} VTR vs {COL.giaSoSanh}<InfoTip text={GLOSSARY.chenhGia} /></h3>
-            <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={priceChart} layout="vertical"><XAxis type="number" tickFormatter={(v) => `${v}%`} />
+            {segmentsLoading ? (
+              <div className="h-[280px] flex items-center justify-center text-gray-400 text-sm">Đang tải biểu đồ...</div>
+            ) : priceChart.length === 0 ? (
+              <div className="h-[280px] flex items-center justify-center text-gray-400 text-sm">Chưa có nhóm có chênh giá so sánh</div>
+            ) : (
+            <div className="w-full h-[280px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart key={priceChart.length} data={priceChart} layout="vertical"><XAxis type="number" tickFormatter={(v) => `${v}%`} />
                 <YAxis dataKey="name" type="category" width={130} tick={{ fontSize: 9 }} />
                 <Tooltip formatter={(v: number) => [`${v}%`, "Chênh lệch"]} /><ReferenceLine x={0} stroke="#666" />
                 <Bar dataKey="gap" radius={[0, 4, 4, 0]}>{priceChart.map((e, i) => <Cell key={i} fill={(e.gap ?? 0) <= 0 ? "#16a34a" : "#dc2626"} />)}</Bar>
               </BarChart>
             </ResponsiveContainer>
+            </div>
+            )}
           </div>
           <div className="card p-5">
             <h3 className="font-semibold mb-3 inline-flex items-center">{COL.giaTbVtr} vs {COL.giaSoSanh}<InfoTip text={GLOSSARY.giaSoSanh} /></h3>
-            <ResponsiveContainer width="100%" height={280}>
-              <ScatterChart><XAxis dataKey="x" name={COL.giaSoSanh} tickFormatter={(v) => `${(v / 1e6).toFixed(1)}tr`} />
+            {segmentsLoading ? (
+              <div className="h-[280px] flex items-center justify-center text-gray-400 text-sm">Đang tải biểu đồ...</div>
+            ) : scatterData.length === 0 ? (
+              <div className="h-[280px] flex items-center justify-center text-gray-400 text-sm">Chưa có dữ liệu giá so sánh</div>
+            ) : (
+            <div className="w-full h-[280px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <ScatterChart key={scatterData.length}><XAxis dataKey="x" name={COL.giaSoSanh} tickFormatter={(v) => `${(v / 1e6).toFixed(1)}tr`} />
                 <YAxis dataKey="y" name={COL.giaTbVtr} tickFormatter={(v) => `${(v / 1e6).toFixed(1)}tr`} />
                 <ZAxis dataKey="z" range={[30, 400]} /><Tooltip cursor={{ strokeDasharray: "3 3" }} />
                 <Scatter data={scatterData} fill="#003580" /></ScatterChart>
             </ResponsiveContainer>
+            </div>
+            )}
           </div>
         </div>
       )}

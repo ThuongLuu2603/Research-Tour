@@ -1,6 +1,7 @@
 """So sánh Vietravel vs thị trường & đối thủ — giá/ngày + tần suất KH theo segment."""
 from __future__ import annotations
 
+import math
 import re
 import statistics
 from collections import defaultdict
@@ -43,6 +44,14 @@ def parse_duration_days(thoi_gian: str, so_ngay: float | None) -> float | None:
     from classification import resolve_duration_days
     days, _matched = resolve_duration_days(thoi_gian, so_ngay)
     return days
+
+
+def _safe_num(v: float | int | None) -> float | None:
+    if v is None:
+        return None
+    if isinstance(v, float) and not math.isfinite(v):
+        return None
+    return float(v)
 
 
 def make_segment_key(thi_truong: str, route: str, depart: str) -> str:
@@ -281,12 +290,14 @@ class SegmentStats:
     @property
     def vtr_avg_days(self) -> float | None:
         days = self._full_price_stats(self.vtr_entries, vtr=True)["weighted_days"]
-        return round(days, 1) if days else None
+        days = _safe_num(days)
+        return round(days, 1) if days is not None else None
 
     @property
     def market_avg_days(self) -> float | None:
         days = self._full_price_stats(self.market_entries_in_period, vtr=False)["weighted_days"]
-        return round(days, 1) if days else None
+        days = _safe_num(days)
+        return round(days, 1) if days is not None else None
 
     @property
     def market_total_price(self) -> float | None:
@@ -404,41 +415,43 @@ class SegmentStats:
         )
         vtr_min = self._vtr_cheapest()
         mkt_min = self._market_cheapest_matched()
+        top_freq = self._top_freq_competitor()
+        route_days = self.vtr_avg_days
         return {
             "segment_key": self.key,
             "thi_truong": self.thi_truong,
             "tuyen_tour": self.tuyen_tour,
             "diem_kh": self.diem_kh,
-            "so_ngay": self.so_ngay,
-            "vietravel_avg_price": self.vtr_avg_price,
-            "vietravel_avg_days": self.vtr_avg_days,
-            "vietravel_min_price": vtr_min["gia"] if vtr_min else None,
+            "so_ngay": route_days if route_days is not None else self.so_ngay,
+            "vietravel_avg_price": _safe_num(self.vtr_avg_price),
+            "vietravel_avg_days": route_days,
+            "vietravel_min_price": _safe_num(vtr_min["gia"]) if vtr_min else None,
             "vietravel_min_link": vtr_min["link_url"] if vtr_min else "",
             "vietravel_min_tour": vtr_min["ten_tour"] if vtr_min else "",
-            "market_total_price": self.market_total_price,
-            "comparison_price": self.comparison_price,
-            "market_min_price": mkt_min["gia"] if mkt_min else None,
+            "market_total_price": _safe_num(self.market_total_price),
+            "comparison_price": _safe_num(self.comparison_price),
+            "market_min_price": _safe_num(mkt_min["gia"]) if mkt_min else None,
             "market_min_link": mkt_min["link_url"] if mkt_min else "",
             "market_min_tour": mkt_min["ten_tour"] if mkt_min else "",
             "market_min_company": mkt_min["cong_ty"] if mkt_min else "",
             "market_min_has_link": mkt_min.get("has_link", False) if mkt_min else False,
             "vtr_comparison_period": self.vtr_comparison_period,
             "market_count_in_period": len(self.market_entries_in_period),
-            "market_avg_day": self.market_avg_day,
-            "market_avg_days": self.market_avg_days,
-            "vietravel_avg_day": self.vietravel_avg_day,
-            "vietravel_median_day": self._price_stats(self.vtr_entries)["median"],
-            "market_median_day": self._price_stats(self.market_entries_in_period)["median"],
-            "gap_pct": self.gap_pct,
+            "market_avg_day": _safe_num(self.market_avg_day),
+            "market_avg_days": _safe_num(self.market_avg_days),
+            "vietravel_avg_day": _safe_num(self.vietravel_avg_day),
+            "vietravel_median_day": _safe_num(self._price_stats(self.vtr_entries)["median"]),
+            "market_median_day": _safe_num(self._price_stats(self.market_entries_in_period)["median"]),
+            "gap_pct": _safe_num(self.gap_pct),
             "vietravel_count": len(self.vtr_entries),
             "market_count": len(self.market_entries),
-            "vietravel_freq_monthly": round(self.vtr_freq_monthly, 1),
-            "vtr_avg_departures_per_month": self.vtr_avg_departures_per_month,
-            "market_freq_monthly": round(self.market_freq_monthly, 1),
-            "market_freq_avg_per_company": self.market_freq_avg_per_company,
+            "vietravel_freq_monthly": _safe_num(round(self.vtr_freq_monthly, 1)),
+            "vtr_avg_departures_per_month": _safe_num(self.vtr_avg_departures_per_month),
+            "market_freq_monthly": _safe_num(round(self.market_freq_monthly, 1)),
+            "market_freq_avg_per_company": _safe_num(self.market_freq_avg_per_company),
             "top_freq_competitor": top_freq[0] if top_freq else "",
-            "top_freq_competitor_departures": top_freq[1] if top_freq else None,
-            "freq_gap_pct": self.freq_gap_pct,
+            "top_freq_competitor_departures": _safe_num(top_freq[1]) if top_freq else None,
+            "freq_gap_pct": _safe_num(self.freq_gap_pct),
             "position": _position_label(self.gap_pct),
             "freq_position": _freq_position_label(self.freq_gap_pct),
             "top_competitors": top_competitors,
