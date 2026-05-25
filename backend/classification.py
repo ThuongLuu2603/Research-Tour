@@ -73,12 +73,62 @@ DEFAULT_DURATION_ALIASES: list[tuple[float, list[str]]] = [
 
 @lru_cache(maxsize=1)
 def _duration_alias_pairs() -> tuple[tuple[str, float], ...]:
-    pairs: list[tuple[str, float]] = []
+    from models import DurationAliasRule
+    db = SessionLocal()
+    try:
+        rules = (
+            db.query(DurationAliasRule)
+            .filter(DurationAliasRule.active == True)
+            .order_by(DurationAliasRule.sort_order, DurationAliasRule.id)
+            .all()
+        )
+        pairs = [(r.alias.lower().strip(), float(r.canonical_days)) for r in rules if r.alias.strip()]
+        pairs.sort(key=lambda x: len(x[0]), reverse=True)
+        if pairs:
+            return tuple(pairs)
+    finally:
+        db.close()
+    pairs = []
     for days, aliases in DEFAULT_DURATION_ALIASES:
         for a in aliases:
             pairs.append((a.lower().strip(), days))
     pairs.sort(key=lambda x: len(x[0]), reverse=True)
     return tuple(pairs)
+
+
+def seed_duration_aliases_from_defaults() -> int:
+    from models import DurationAliasRule
+    db = SessionLocal()
+    try:
+        if db.query(DurationAliasRule).count() > 0:
+            return 0
+        order = 0
+        for days, aliases in DEFAULT_DURATION_ALIASES:
+            for a in aliases:
+                db.add(DurationAliasRule(canonical_days=days, alias=a, sort_order=order))
+                order += 1
+        db.commit()
+        invalidate_classification_cache()
+        return order
+    finally:
+        db.close()
+
+
+def apply_duration_aliases_to_tours(db) -> int:
+    from models import Tour
+    count = 0
+    for t in db.query(Tour).all():
+        days, matched = resolve_duration_days(t.thoi_gian, t.so_ngay)
+        if days is None:
+            continue
+        changed = False
+        if matched and (not t.so_ngay or float(t.so_ngay) != days):
+            t.so_ngay = days
+            changed = True
+        if changed:
+            count += 1
+    db.commit()
+    return count
 
 
 def is_company_alias_matched(raw_name: str) -> bool:

@@ -127,6 +127,18 @@ class DepartureAliasRule(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class DurationAliasRule(Base):
+    """Chuẩn hóa thời gian tour (alias text → số ngày chuẩn)."""
+    __tablename__ = "duration_alias_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    canonical_days: Mapped[float] = mapped_column(Float, index=True)
+    alias: Mapped[str] = mapped_column(String(256), index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class DailySnapshot(Base):
     """Snapshot KPI hàng ngày — trend & báo cáo."""
     __tablename__ = "daily_snapshots"

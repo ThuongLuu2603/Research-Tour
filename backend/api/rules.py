@@ -8,14 +8,16 @@ from api.auth import require_admin
 from classification import (
     apply_company_aliases_to_tours,
     apply_departure_aliases_to_tours,
+    apply_duration_aliases_to_tours,
     apply_classification_rules_to_tours,
     invalidate_classification_cache,
     seed_company_aliases_from_defaults,
     seed_departure_aliases_from_defaults,
+    seed_duration_aliases_from_defaults,
     seed_market_rules_from_hardcode,
 )
 from database import get_db
-from models import CompanyAliasRule, DepartureAliasRule, MarketKeywordRule, RouteKeywordRule, User
+from models import CompanyAliasRule, DepartureAliasRule, DurationAliasRule, MarketKeywordRule, RouteKeywordRule, User
 from sheets_rules_sync import (
     import_market_rules_from_sheet,
     import_route_rules_to_db,
@@ -435,4 +437,91 @@ def apply_departure_rules_to_tours(_: User = Depends(require_admin), db: Session
 @router.post("/apply-classification-to-tours")
 def apply_classification_endpoint(_: User = Depends(require_admin), db: Session = Depends(get_db)):
     result = apply_classification_rules_to_tours(db)
-    return {**result, "message": f"Đã cập nhật {result['market_updated']} thị trường, {result['route_updated']} tuyến tour"}
+    co = apply_company_aliases_to_tours(db)
+    dep = apply_departure_aliases_to_tours(db)
+    dur = apply_duration_aliases_to_tours(db)
+    return {
+        **result,
+        "company_updated": co,
+        "departure_updated": dep,
+        "duration_updated": dur,
+        "message": (
+            f"Thị trường {result['market_updated']}, tuyến {result['route_updated']}, "
+            f"công ty {co}, điểm KH {dep}, thời gian {dur} tour"
+        ),
+    }
+
+
+# ── Duration alias rules (Thời gian) ─────────────────────────────────────────
+
+class DurationRuleOut(BaseModel):
+    id: int
+    canonical_days: float
+    alias: str
+    active: bool
+    sort_order: int
+    model_config = {"from_attributes": True}
+
+
+class DurationRuleIn(BaseModel):
+    canonical_days: float = Field(gt=0, le=45)
+    alias: str = Field(max_length=256)
+    active: bool = True
+    sort_order: int = 0
+
+
+@router.get("/duration", response_model=list[DurationRuleOut])
+def list_duration_rules(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return (
+        db.query(DurationAliasRule)
+        .order_by(DurationAliasRule.sort_order, DurationAliasRule.canonical_days, DurationAliasRule.alias)
+        .all()
+    )
+
+
+@router.post("/duration", response_model=DurationRuleOut)
+def create_duration_rule(body: DurationRuleIn, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    rule = DurationAliasRule(**body.model_dump())
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    invalidate_classification_cache()
+    return rule
+
+
+@router.put("/duration/{rule_id}", response_model=DurationRuleOut)
+def update_duration_rule(
+    rule_id: int, body: DurationRuleIn, _: User = Depends(require_admin), db: Session = Depends(get_db)
+):
+    rule = db.query(DurationAliasRule).filter(DurationAliasRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(404, "Rule không tồn tại")
+    for k, v in body.model_dump().items():
+        setattr(rule, k, v)
+    db.commit()
+    db.refresh(rule)
+    invalidate_classification_cache()
+    return rule
+
+
+@router.delete("/duration/{rule_id}")
+def delete_duration_rule(rule_id: int, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    rule = db.query(DurationAliasRule).filter(DurationAliasRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(404, "Rule không tồn tại")
+    db.delete(rule)
+    db.commit()
+    invalidate_classification_cache()
+    return {"deleted": rule_id}
+
+
+@router.post("/duration/seed-defaults")
+def seed_duration_defaults(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    added = seed_duration_aliases_from_defaults()
+    return {"added": added, "message": f"Đã thêm {added} alias thời gian mặc định"}
+
+
+@router.post("/duration/apply-to-tours")
+def apply_duration_rules_to_tours(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    updated = apply_duration_aliases_to_tours(db)
+    return {"updated": updated, "message": f"Đã chuẩn hóa số ngày cho {updated} tour"}

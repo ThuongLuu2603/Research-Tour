@@ -415,6 +415,11 @@ export const deleteMarketRule = async (id: number) => {
   return data;
 };
 
+export const updateMarketRule = async (id: number, body: { market: string; keyword: string }) => {
+  const { data } = await api.put(`/admin/rules/market/${id}`, body);
+  return data;
+};
+
 export const listRouteRules = async (): Promise<RouteRule[]> => {
   const { data } = await api.get("/admin/rules/route");
   return data;
@@ -427,6 +432,11 @@ export const createRouteRule = async (body: { thi_truong: string; tuyen_tour: st
 
 export const deleteRouteRule = async (id: number) => {
   const { data } = await api.delete(`/admin/rules/route/${id}`);
+  return data;
+};
+
+export const updateRouteRule = async (id: number, body: { thi_truong: string; tuyen_tour: string; keywords: string }) => {
+  const { data } = await api.put(`/admin/rules/route/${id}`, body);
   return data;
 };
 
@@ -484,6 +494,11 @@ export const deleteCompanyRule = async (id: number) => {
   return data;
 };
 
+export const updateCompanyRule = async (id: number, body: { canonical_name: string; alias: string }) => {
+  const { data } = await api.put(`/admin/rules/company/${id}`, body);
+  return data;
+};
+
 export const seedCompanyDefaults = async () => {
   const { data } = await api.post("/admin/rules/company/seed-defaults");
   return data;
@@ -513,6 +528,11 @@ export const deleteDepartureRule = async (id: number) => {
   return data;
 };
 
+export const updateDepartureRule = async (id: number, body: { canonical_name: string; alias: string }) => {
+  const { data } = await api.put(`/admin/rules/departure/${id}`, body);
+  return data;
+};
+
 export const seedDepartureDefaults = async () => {
   const { data } = await api.post("/admin/rules/departure/seed-defaults");
   return data;
@@ -520,6 +540,40 @@ export const seedDepartureDefaults = async () => {
 
 export const applyDepartureRulesToTours = async () => {
   const { data } = await api.post("/admin/rules/departure/apply-to-tours");
+  return data;
+};
+
+export interface DurationRule {
+  id: number; canonical_days: number; alias: string; active: boolean; sort_order: number;
+}
+
+export const listDurationRules = async (): Promise<DurationRule[]> => {
+  const { data } = await api.get("/admin/rules/duration");
+  return data;
+};
+
+export const createDurationRule = async (body: { canonical_days: number; alias: string }) => {
+  const { data } = await api.post("/admin/rules/duration", body);
+  return data;
+};
+
+export const updateDurationRule = async (id: number, body: { canonical_days: number; alias: string }) => {
+  const { data } = await api.put(`/admin/rules/duration/${id}`, body);
+  return data;
+};
+
+export const deleteDurationRule = async (id: number) => {
+  const { data } = await api.delete(`/admin/rules/duration/${id}`);
+  return data;
+};
+
+export const seedDurationDefaults = async () => {
+  const { data } = await api.post("/admin/rules/duration/seed-defaults");
+  return data;
+};
+
+export const applyDurationRulesToTours = async () => {
+  const { data } = await api.post("/admin/rules/duration/apply-to-tours");
   return data;
 };
 
