@@ -109,6 +109,62 @@ def _fmt_price(v: int | None) -> str:
     return f"{v:,}".replace(",", ".")
 
 
+_DEPARTURE_END_RE = (
+    re.compile(r'\\"departureDate\\":\\"(\d{4}-\d{2}-\d{2}T[^\\"]+)\\"'),
+    re.compile(r'\\"endDate\\":\\"(\d{4}-\d{2}-\d{2}T[^\\"]+)\\"'),
+)
+_DURATION_LABEL_RE = re.compile(r"(\d+)\s*n\s*(\d+)\s*[dđ]", re.I)
+_SAME_DAY_LABELS = frozenset({"trong ngày", "trong ngay", "1 ngày"})
+
+
+def _duration_from_departure_end(chunk: str) -> tuple[int, int] | None:
+    """Suy số ngày/đêm từ departureDate & endDate (VTR hay ghi sai dayStayText)."""
+    deps = _DEPARTURE_END_RE[0].findall(chunk)
+    ends = _DEPARTURE_END_RE[1].findall(chunk)
+    if not deps or not ends:
+        return None
+    from collections import Counter
+
+    counts: Counter[tuple[int, int]] = Counter()
+    for dep_s, end_s in zip(deps, ends):
+        try:
+            dep = datetime.fromisoformat(dep_s)
+            end = datetime.fromisoformat(end_s)
+            days = (end.date() - dep.date()).days + 1
+            if 1 <= days <= 45:
+                counts[(days, max(days - 1, 0))] += 1
+        except ValueError:
+            continue
+    if not counts:
+        return None
+    return counts.most_common(1)[0][0]
+
+
+def _format_duration_label(days: int, nights: int) -> str:
+    if days <= 1:
+        return "Trong ngày"
+    return f"{days}N{nights}Đ"
+
+
+def _extract_duration(block: str, chunk: str) -> str:
+    """Thời gian tour — ưu tiên suy từ ngày KH/kết thúc khi dayStayText sai."""
+    day_stay = (_field_in_block(block, "dayStayText") or _field_in_block(block, "dayNight")).strip()
+    computed = _duration_from_departure_end(chunk)
+
+    if computed:
+        days, nights = computed
+        label = _format_duration_label(days, nights)
+        low = day_stay.lower()
+        if not day_stay or low in _SAME_DAY_LABELS:
+            return label
+        if _DURATION_LABEL_RE.search(day_stay):
+            return day_stay
+        if days >= 2:
+            return label
+
+    return day_stay
+
+
 def _extract_schedule(chunk: str) -> str:
     """Trích toàn bộ ngày KH từ JSON nhúng trong trang (không cắt 12 ngày)."""
     dates = re.findall(r'\\"date\\":\\"(\d{4}-\d{2}-\d{2})', chunk)
@@ -171,7 +227,7 @@ def scrape_listing_page(url: str) -> list[dict[str, Any]]:
 
         title = _decode_json_str(m.group(3))
         dep = _field_in_block(block, "departureName")
-        duration = _field_in_block(block, "dayStayText") or _field_in_block(block, "dayNight")
+        duration = _extract_duration(block, chunk)
         lich_trinh = _extract_destination(block)
         gia = _extract_prices(block)
         lich_kh = _extract_schedule(chunk)

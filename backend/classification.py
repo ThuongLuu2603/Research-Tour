@@ -169,7 +169,7 @@ def resolve_duration_days(thoi_gian: str, so_ngay: float | None) -> tuple[float 
     if not thoi_gian:
         return None, False
     s = thoi_gian.strip().lower()
-    m = re.search(r"(\d+)\s*n\s*(\d+)\s*đ", s)
+    m = re.search(r"(\d+)\s*n\s*(\d+)\s*[dđ]", s)
     if m:
         return float(m.group(1)), False
     m = re.search(r"(\d+)\s*ngày", s)
