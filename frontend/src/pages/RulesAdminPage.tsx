@@ -14,14 +14,16 @@ import {
   syncRouteFromSheet, syncRouteToSheet,
   syncMarketFromSheet, syncMarketToSheet,
   syncAllFromSheet, syncAllToSheet,
-  MarketRule, RouteRule, CompanyRule, DepartureRule, DurationRule,
+  getRulesUnmatched,
+  MarketRule, RouteRule, CompanyRule, DepartureRule, DurationRule, UnmatchedItem,
 } from "@/lib/api";
 import { COL } from "@/lib/glossary";
 import { InfoTip } from "@/components/InfoTip";
 import { cn } from "@/lib/utils";
-import { Plus, Trash2, RefreshCw, Database, Upload, Download, ArrowLeftRight, Search, Pencil, Check, X } from "lucide-react";
+import { Plus, Trash2, RefreshCw, Database, Upload, Download, ArrowLeftRight, Search, Pencil, Check, X, GripVertical } from "lucide-react";
 
 type Tab = "market" | "route" | "company" | "departure" | "duration";
+type AliasTab = "company" | "departure" | "duration";
 
 function matchSearch(q: string, ...parts: (string | number | undefined | null)[]) {
   if (!q.trim()) return true;
@@ -46,6 +48,66 @@ function RuleSearchBar({ value, onChange, total, filtered }: { value: string; on
   );
 }
 
+function UnmatchedDropTray({ items, search }: { items: UnmatchedItem[]; search: string }) {
+  const filtered = useMemo(
+    () => (items ?? []).filter((x) => matchSearch(search, x.value, x.count)),
+    [items, search],
+  );
+  if (!filtered.length) {
+    return (
+      <div className="card p-4 border border-dashed border-gray-200 bg-gray-50 text-xs text-gray-500 text-center">
+        Không còn giá trị chưa khớp trong dữ liệu tour (hoặc bị lọc bởi ô tìm kiếm).
+      </div>
+    );
+  }
+  return (
+    <div className="card p-4 border-2 border-dashed border-amber-400 bg-amber-50/60 space-y-2">
+      <p className="text-sm font-semibold text-amber-900 inline-flex items-center gap-1">
+        <GripVertical size={14} /> Chưa khớp ({filtered.length}) — kéo thả lên cột &quot;Tên chính thức&quot; / &quot;Số ngày&quot;
+        <InfoTip text="Các giá trị raw từ tour chưa map alias. Kéo chip và thả vào dòng tên chuẩn để tạo rule mới." />
+      </p>
+      <div className="flex flex-wrap gap-2 max-h-44 overflow-auto p-1">
+        {filtered.map((item) => (
+          <span
+            key={item.value}
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData("text/plain", item.value);
+              e.dataTransfer.effectAllowed = "copy";
+            }}
+            className="cursor-grab active:cursor-grabbing inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white border border-amber-300 text-xs shadow-sm hover:border-primary-500 hover:bg-blue-50"
+            title={`${item.count} tour · kéo thả để gán`}
+          >
+            <GripVertical size={10} className="text-amber-600 shrink-0" />
+            <span className="max-w-[200px] truncate">{item.value || "—"}</span>
+            <span className="text-gray-400 shrink-0">({item.count})</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function dropHandlers(
+  targetKey: string,
+  dropTarget: string | null,
+  setDropTarget: (k: string | null) => void,
+  onAssign: (alias: string) => void,
+) {
+  const active = dropTarget === targetKey;
+  return {
+    onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDropTarget(targetKey); },
+    onDragLeave: () => { if (dropTarget === targetKey) setDropTarget(null); },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      setDropTarget(null);
+      const alias = e.dataTransfer.getData("text/plain").trim();
+      if (alias) onAssign(alias);
+    },
+    dropClassName: active ? "ring-2 ring-inset ring-primary-500 bg-primary-50" : "",
+  };
+}
+
 export default function RulesAdminPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
@@ -67,12 +129,20 @@ export default function RulesAdminPage() {
   const [dAlias, setDAlias] = useState("");
   const [durDays, setDurDays] = useState("");
   const [durAlias, setDurAlias] = useState("");
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+
+  const aliasTab: AliasTab | null = tab === "company" || tab === "departure" || tab === "duration" ? tab : null;
 
   const { data: marketRules } = useQuery({ queryKey: ["market-rules"], queryFn: listMarketRules, enabled: isAdmin });
   const { data: routeRules } = useQuery({ queryKey: ["route-rules"], queryFn: listRouteRules, enabled: isAdmin });
   const { data: companyRules } = useQuery({ queryKey: ["company-rules"], queryFn: listCompanyRules, enabled: isAdmin });
   const { data: departureRules } = useQuery({ queryKey: ["departure-rules"], queryFn: listDepartureRules, enabled: isAdmin });
   const { data: durationRules } = useQuery({ queryKey: ["duration-rules"], queryFn: listDurationRules, enabled: isAdmin });
+  const { data: unmatched } = useQuery({
+    queryKey: ["rules-unmatched", aliasTab],
+    queryFn: () => getRulesUnmatched(aliasTab!),
+    enabled: isAdmin && !!aliasTab,
+  });
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["market-rules"] });
@@ -80,6 +150,24 @@ export default function RulesAdminPage() {
     qc.invalidateQueries({ queryKey: ["company-rules"] });
     qc.invalidateQueries({ queryKey: ["departure-rules"] });
     qc.invalidateQueries({ queryKey: ["duration-rules"] });
+    qc.invalidateQueries({ queryKey: ["rules-unmatched"] });
+    qc.invalidateQueries({ queryKey: ["compare-class-gaps"] });
+  };
+
+  const assignCompanyAlias = async (canonical: string, alias: string) => {
+    await createCompanyRule({ canonical_name: canonical, alias });
+    invalidate();
+    setSyncMsg(`Đã gán alias "${alias}" → ${canonical}`);
+  };
+  const assignDepartureAlias = async (canonical: string, alias: string) => {
+    await createDepartureRule({ canonical_name: canonical, alias });
+    invalidate();
+    setSyncMsg(`Đã gán alias "${alias}" → ${canonical}`);
+  };
+  const assignDurationAlias = async (days: number, alias: string) => {
+    await createDurationRule({ canonical_days: days, alias });
+    invalidate();
+    setSyncMsg(`Đã gán "${alias}" → ${days}N`);
   };
 
   const onSync = (fn: () => Promise<{ message?: string }>, label: string) =>
@@ -295,7 +383,8 @@ export default function RulesAdminPage() {
             <div><label className="text-xs text-gray-500">Tên chính thức</label>
               <input className="input text-sm" value={cCanonical} onChange={(e) => setCCanonical(e.target.value)} placeholder="Vietravel" /></div>
             <div className="flex-1 min-w-[200px]"><label className="text-xs text-gray-500">Alias</label>
-              <input className="input text-sm" value={cAlias} onChange={(e) => setCAlias(e.target.value)} placeholder="vietravel, vtr..." /></div>
+              <input className="input text-sm" value={cAlias} onChange={(e) => setCAlias(e.target.value)} placeholder="vietravel, vtr..."
+                onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); setCAlias(e.dataTransfer.getData("text/plain")); }} /></div>
             <button onClick={() => addCompany.mutate()} disabled={!cCanonical || !cAlias} className="btn-primary text-sm"><Plus size={14} /> Thêm</button>
             <button onClick={() => onSync(seedCompanyDefaults, "Import xong")} className="btn-secondary text-sm"><Database size={14} /> Alias mặc định</button>
             <button onClick={() => onSync(applyCompanyRulesToTours, "OK")} className="btn-secondary text-sm"><RefreshCw size={14} /> Áp dụng → tour</button>
@@ -304,6 +393,9 @@ export default function RulesAdminPage() {
             rows={filteredCompany}
             editingId={editingId}
             editDraft={editDraft}
+            dropTarget={dropTarget}
+            setDropTarget={setDropTarget}
+            onDropAssign={(canonical, alias) => assignCompanyAlias(canonical, alias)}
             onStartEdit={(r) => startEdit(r.id, { canonical_name: r.canonical_name, alias: r.alias })}
             onDraftChange={setEditDraft}
             onCancel={cancelEdit}
@@ -311,6 +403,7 @@ export default function RulesAdminPage() {
             onDelete={(r) => deleteCompanyRule(r.id).then(() => { invalidate(); setSyncMsg("Đã xóa alias"); })}
             canonicalLabel="Tên chính thức"
           />
+          <UnmatchedDropTray items={unmatched?.items ?? []} search={search} />
         </div>
       )}
 
@@ -320,7 +413,8 @@ export default function RulesAdminPage() {
             <div><label className="text-xs text-gray-500">Tên chính thức</label>
               <input className="input text-sm" value={dCanonical} onChange={(e) => setDCanonical(e.target.value)} placeholder="TP.HCM" /></div>
             <div className="flex-1 min-w-[200px]"><label className="text-xs text-gray-500">Alias</label>
-              <input className="input text-sm" value={dAlias} onChange={(e) => setDAlias(e.target.value)} placeholder="sài gòn, hcm..." /></div>
+              <input className="input text-sm" value={dAlias} onChange={(e) => setDAlias(e.target.value)} placeholder="sài gòn, hcm..."
+                onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); setDAlias(e.dataTransfer.getData("text/plain")); }} /></div>
             <button onClick={() => addDeparture.mutate()} disabled={!dCanonical || !dAlias} className="btn-primary text-sm"><Plus size={14} /> Thêm</button>
             <button onClick={() => onSync(seedDepartureDefaults, "Import xong")} className="btn-secondary text-sm"><Database size={14} /> Alias mặc định</button>
             <button onClick={() => onSync(applyDepartureRulesToTours, "OK")} className="btn-secondary text-sm"><RefreshCw size={14} /> Áp dụng → tour</button>
@@ -333,6 +427,9 @@ export default function RulesAdminPage() {
             rows={filteredDeparture}
             editingId={editingId}
             editDraft={editDraft}
+            dropTarget={dropTarget}
+            setDropTarget={setDropTarget}
+            onDropAssign={(canonical, alias) => assignDepartureAlias(canonical, alias)}
             onStartEdit={(r) => startEdit(r.id, { canonical_name: r.canonical_name, alias: r.alias })}
             onDraftChange={setEditDraft}
             onCancel={cancelEdit}
@@ -340,6 +437,7 @@ export default function RulesAdminPage() {
             onDelete={(r) => deleteDepartureRule(r.id).then(() => { invalidate(); setSyncMsg("Đã xóa alias"); })}
             canonicalLabel="Tên chính thức"
           />
+          <UnmatchedDropTray items={unmatched?.items ?? []} search={search} />
         </div>
       )}
 
@@ -349,7 +447,8 @@ export default function RulesAdminPage() {
             <div><label className="text-xs text-gray-500">Số ngày chuẩn</label>
               <input className="input text-sm w-24" type="number" min={1} max={45} value={durDays} onChange={(e) => setDurDays(e.target.value)} placeholder="5" /></div>
             <div className="flex-1 min-w-[200px]"><label className="text-xs text-gray-500">Alias (text gốc)</label>
-              <input className="input text-sm" value={durAlias} onChange={(e) => setDurAlias(e.target.value)} placeholder="5n4d, 5 ngày 4 đêm..." /></div>
+              <input className="input text-sm" value={durAlias} onChange={(e) => setDurAlias(e.target.value)} placeholder="5n4d, 5 ngày 4 đêm..."
+                onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); setDurAlias(e.dataTransfer.getData("text/plain")); }} /></div>
             <button onClick={() => addDuration.mutate()} disabled={!durDays || !durAlias || Number.isNaN(parseFloat(durDays))} className="btn-primary text-sm"><Plus size={14} /> Thêm</button>
             <button onClick={() => onSync(seedDurationDefaults, "Import xong")} className="btn-secondary text-sm"><Database size={14} /> Alias mặc định</button>
             <button onClick={() => onSync(applyDurationRulesToTours, "OK")} className="btn-secondary text-sm"><RefreshCw size={14} /> Áp dụng → tour</button>
@@ -364,9 +463,12 @@ export default function RulesAdminPage() {
                 <th className="px-3 py-2 text-left">Số ngày chuẩn</th><th className="px-3 py-2 text-left">Alias</th><th className="w-24"></th>
               </tr></thead>
               <tbody>
-                {filteredDuration.map((r: DurationRule) => (
+                {filteredDuration.map((r: DurationRule) => {
+                  const key = `dur-${r.canonical_days}`;
+                  const { dropClassName, ...drop } = dropHandlers(key, dropTarget, setDropTarget, (alias) => assignDurationAlias(r.canonical_days, alias));
+                  return (
                   <tr key={r.id} className={cn("border-t", editingId === r.id && "bg-blue-50")}>
-                    <td className="px-3 py-2 font-medium">
+                    <td className={cn("px-3 py-2 font-medium", dropClassName)} {...drop}>
                       {editingId === r.id ? (
                         <input className="input text-sm py-1 w-20" type="number" value={editDraft.canonical_days ?? ""} onChange={(e) => setEditDraft({ ...editDraft, canonical_days: e.target.value })} />
                       ) : (
@@ -391,11 +493,13 @@ export default function RulesAdminPage() {
                       )}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
             <p className="text-xs text-gray-400 p-3">{filteredDuration.length} rules (DB)</p>
           </div>
+          <UnmatchedDropTray items={unmatched?.items ?? []} search={search} />
         </div>
       )}
     </div>
@@ -403,11 +507,15 @@ export default function RulesAdminPage() {
 }
 
 function AliasTable({
-  rows, editingId, editDraft, onStartEdit, onDraftChange, onCancel, onSave, onDelete, canonicalLabel,
+  rows, editingId, editDraft, dropTarget, setDropTarget, onDropAssign,
+  onStartEdit, onDraftChange, onCancel, onSave, onDelete, canonicalLabel,
 }: {
   rows: Array<CompanyRule | DepartureRule>;
   editingId: number | null;
   editDraft: Record<string, string>;
+  dropTarget: string | null;
+  setDropTarget: (k: string | null) => void;
+  onDropAssign: (canonical: string, alias: string) => void;
   onStartEdit: (r: CompanyRule | DepartureRule) => void;
   onDraftChange: (d: Record<string, string>) => void;
   onCancel: () => void;
@@ -419,12 +527,15 @@ function AliasTable({
     <div className="card overflow-auto max-h-[500px]">
       <table className="w-full text-sm">
         <thead className="bg-gray-50 sticky top-0"><tr>
-          <th className="px-3 py-2 text-left">{canonicalLabel}</th><th className="px-3 py-2 text-left">Alias</th><th className="w-24"></th>
+          <th className="px-3 py-2 text-left">{canonicalLabel} <span className="text-[10px] font-normal text-gray-400">(thả alias vào đây)</span></th><th className="px-3 py-2 text-left">Alias</th><th className="w-24"></th>
         </tr></thead>
         <tbody>
-          {rows.map((r) => (
+          {rows.map((r) => {
+            const key = `alias-${r.canonical_name}`;
+            const { dropClassName, ...drop } = dropHandlers(key, dropTarget, setDropTarget, (alias) => onDropAssign(r.canonical_name, alias));
+            return (
             <tr key={r.id} className={cn("border-t", editingId === r.id && "bg-blue-50")}>
-              <td className="px-3 py-2 font-medium">
+              <td className={cn("px-3 py-2 font-medium", dropClassName)} {...drop}>
                 {editingId === r.id ? (
                   <input className="input text-sm py-1" value={editDraft.canonical_name ?? ""} onChange={(e) => onDraftChange({ ...editDraft, canonical_name: e.target.value })} />
                 ) : (
@@ -449,7 +560,8 @@ function AliasTable({
                 )}
               </td>
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
       <p className="text-xs text-gray-400 p-3">{rows.length} rules</p>

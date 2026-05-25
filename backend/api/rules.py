@@ -525,3 +525,24 @@ def seed_duration_defaults(_: User = Depends(require_admin), db: Session = Depen
 def apply_duration_rules_to_tours(_: User = Depends(require_admin), db: Session = Depends(get_db)):
     updated = apply_duration_aliases_to_tours(db)
     return {"updated": updated, "message": f"Đã chuẩn hóa số ngày cho {updated} tour"}
+
+
+@router.get("/unmatched")
+def list_unmatched_rules(
+    scope: str = Query("company", pattern="^(company|departure|duration|all)$"),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Giá trị từ tour chưa khớp alias — dùng kéo thả gán thủ công."""
+    from classification import collect_unmatched_values
+    from models import Tour
+
+    tours = db.query(Tour).all()
+    data = collect_unmatched_values(tours, vtr_only=False)
+    if scope == "company":
+        return {"scope": scope, "items": data["cong_ty"]}
+    if scope == "departure":
+        return {"scope": scope, "items": data["diem_kh"]}
+    if scope == "duration":
+        return {"scope": scope, "items": data["thoi_gian"]}
+    return {"scope": "all", **data}

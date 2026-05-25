@@ -577,6 +577,13 @@ export const applyDurationRulesToTours = async () => {
   return data;
 };
 
+export type UnmatchedItem = { value: string; count: number };
+
+export const getRulesUnmatched = async (scope: "company" | "departure" | "duration") => {
+  const { data } = await api.get(`/admin/rules/unmatched?scope=${scope}`);
+  return data as { scope: string; items: UnmatchedItem[] };
+};
+
 // ── Intelligence hub ──────────────────────────────────────────────────────────
 
 export interface IntelInsight {
