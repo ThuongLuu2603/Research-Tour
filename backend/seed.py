@@ -122,16 +122,23 @@ def create_default_users() -> None:
     db = SessionLocal()
     try:
         users = [
-            {"username": "admin", "password": "admin123", "display_name": "Admin"},
-            {"username": "analyst", "password": "analyst123", "display_name": "Analyst"},
+            {"username": "admin", "password": "admin123", "display_name": "Admin", "role": "admin"},
+            {"username": "analyst", "password": "analyst123", "display_name": "Analyst", "role": "analyst"},
         ]
         for u in users:
-            if not db.query(User).filter(User.username == u["username"]).first():
+            existing = db.query(User).filter(User.username == u["username"]).first()
+            if not existing:
                 db.add(User(
                     username=u["username"],
                     password_hash=hash_password(u["password"]),
                     display_name=u["display_name"],
+                    role=u.get("role", "analyst"),
                 ))
+                logger.info("Created user: %s", u["username"])
+            else:
+                if u["username"] == "admin":
+                    existing.role = "admin"
+                logger.info("User already exists: %s", u["username"])
         db.commit()
     finally:
         db.close()

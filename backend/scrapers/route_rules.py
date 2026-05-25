@@ -20,21 +20,14 @@ def load_route_rules() -> dict[str, list[dict[str, Any]]]:
     Mỗi rule: TẤT CẢ keywords trong cùng một cột (Giá trị 1, 2, ...) phải có trong tên tour.
     """
     import gspread
-    from google.oauth2.service_account import Credentials
 
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     try:
-        import streamlit as st
-
-        if "gcp_service_account" in st.secrets:
-            creds = Credentials.from_service_account_info(
-                dict(st.secrets["gcp_service_account"]), scopes=scopes
-            )
-            gc = gspread.authorize(creds)
-        else:
-            raise KeyError
+        from google_auth import get_gspread_client
+        gc = get_gspread_client()
     except Exception:
         path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "credentials.json")
+        from google.oauth2.service_account import Credentials
         creds = Credentials.from_service_account_file(path, scopes=scopes)
         gc = gspread.authorize(creds)
 

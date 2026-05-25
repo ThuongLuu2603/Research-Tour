@@ -25,7 +25,7 @@ export default api;
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
-export interface User { id: number; username: string; display_name: string }
+export interface User { id: number; username: string; display_name: string; role?: string; avatar_url?: string }
 
 export const login = async (username: string, password: string): Promise<{ access_token: string; user: User }> => {
   const form = new FormData();
@@ -37,6 +37,36 @@ export const login = async (username: string, password: string): Promise<{ acces
 
 export const getMe = async (): Promise<User> => {
   const { data } = await api.get("/auth/me");
+  return data;
+};
+
+export const updateProfile = async (patch: { display_name?: string; avatar_url?: string }): Promise<User> => {
+  const { data } = await api.patch("/auth/profile", patch);
+  return data;
+};
+
+export const changePassword = async (current_password: string, new_password: string) => {
+  const { data } = await api.post("/auth/change-password", { current_password, new_password });
+  return data;
+};
+
+export interface AdminUser {
+  id: number; username: string; display_name: string; role: string;
+  avatar_url: string; is_active: boolean; last_login: string | null;
+}
+
+export const listUsers = async (): Promise<AdminUser[]> => {
+  const { data } = await api.get("/admin/users");
+  return data;
+};
+
+export const createUser = async (username: string, password: string, display_name: string, role: string) => {
+  const { data } = await api.post("/admin/users", { username, password, display_name, role });
+  return data;
+};
+
+export const updateUser = async (id: number, patch: Partial<{ display_name: string; role: string; is_active: boolean; password: string }>) => {
+  const { data } = await api.patch(`/admin/users/${id}`, patch);
   return data;
 };
 

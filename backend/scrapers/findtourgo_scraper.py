@@ -710,35 +710,8 @@ def tours_to_sheet_rows(df: pd.DataFrame) -> list[list[str]]:
 
 
 def _get_gspread_client():
-    import gspread
-    from google.oauth2.service_account import Credentials
-
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
-    ]
-
-    try:
-        import streamlit as st
-
-        if "gcp_service_account" in st.secrets:
-            creds = Credentials.from_service_account_info(
-                dict(st.secrets["gcp_service_account"]), scopes=scopes
-            )
-            return gspread.authorize(creds)
-    except Exception:
-        pass
-
-    path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "credentials.json")
-    if os.path.isfile(path):
-        creds = Credentials.from_service_account_file(path, scopes=scopes)
-        return gspread.authorize(creds)
-
-    raise FileNotFoundError(
-        "Chưa cấu hình Google Service Account. "
-        "Đặt file credentials.json trong thư mục app hoặc thêm "
-        "[gcp_service_account] vào .streamlit/secrets.toml"
-    )
+    from google_auth import get_gspread_client
+    return get_gspread_client()
 
 
 def _read_existing_rows(ws) -> list[list[str]]:

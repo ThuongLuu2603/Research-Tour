@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     # Google Sheets
     google_credentials_file: str = "credentials.json"
+    google_credentials_json: str = ""  # full JSON for Render env GOOGLE_CREDENTIALS_JSON
     sheet_id: str = "1sI34D88zsmSrN7Jf9fS3jh4aUvaep-blxnBR1CGq9eM"
     gid_main: str = "1729132868"
     gid_vietravel: str = "620817544"

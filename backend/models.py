@@ -15,6 +15,8 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     display_name: Mapped[str] = mapped_column(String(128), default="")
+    role: Mapped[str] = mapped_column(String(32), default="analyst")  # admin | analyst
+    avatar_url: Mapped[str] = mapped_column(String(512), default="")  # emoji or image URL
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

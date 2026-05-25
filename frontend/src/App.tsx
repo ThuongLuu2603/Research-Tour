@@ -9,6 +9,7 @@ import PriceAnalysis from "@/pages/PriceAnalysis";
 import MarketShare from "@/pages/MarketShare";
 import Competitor from "@/pages/Competitor";
 import ScraperHub from "@/pages/ScraperHub";
+import SettingsPage from "@/pages/SettingsPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -54,6 +55,7 @@ export default function App() {
               <Route path="market" element={<MarketShare />} />
               <Route path="competitor" element={<Competitor />} />
               <Route path="scraper" element={<ScraperHub />} />
+              <Route path="settings" element={<SettingsPage />} />
             </Route>
           </Routes>
         </BrowserRouter>

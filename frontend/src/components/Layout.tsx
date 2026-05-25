@@ -2,7 +2,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   LayoutDashboard, Table2, BarChart3, PieChart,
-  Building2, Radio, LogOut, User
+  Building2, Radio, LogOut, User, Settings
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -13,6 +13,7 @@ const NAV = [
   { to: "/market", icon: PieChart, label: "Thị trường" },
   { to: "/competitor", icon: Building2, label: "Đối thủ" },
   { to: "/scraper", icon: Radio, label: "Scraper Hub" },
+  { to: "/settings", icon: Settings, label: "Cài đặt" },
 ];
 
 export default function Layout() {
@@ -58,8 +59,14 @@ export default function Layout() {
         {/* User */}
         <div className="px-3 py-4 border-t border-primary-700">
           <div className="flex items-center gap-2 px-2 py-2 rounded-lg">
-            <div className="w-7 h-7 bg-white rounded-full flex items-center justify-center flex-shrink-0">
-              <User size={14} className="text-primary-600" />
+            <div className="w-7 h-7 bg-white rounded-full flex items-center justify-center flex-shrink-0 text-sm">
+              {user?.avatar_url && !user.avatar_url.startsWith("http") ? (
+                user.avatar_url
+              ) : user?.avatar_url ? (
+                <img src={user.avatar_url} alt="" className="w-7 h-7 rounded-full object-cover" />
+              ) : (
+                <User size={14} className="text-primary-600" />
+              )}
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-white text-xs font-medium truncate">{user?.display_name || user?.username}</p>

@@ -5,6 +5,7 @@ interface AuthCtx {
   user: User | null;
   isLoading: boolean;
   setToken: (token: string, user: User) => void;
+  refreshUser: (user: User) => void;
   logout: () => void;
 }
 
@@ -12,6 +13,7 @@ const AuthContext = createContext<AuthCtx>({
   user: null,
   isLoading: true,
   setToken: () => {},
+  refreshUser: () => {},
   logout: () => {},
 });
 
@@ -38,8 +40,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.location.href = "/login";
   };
 
+  const refreshUser = (u: User) => setUser(u);
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, setToken, logout }}>
+    <AuthContext.Provider value={{ user, isLoading, setToken, refreshUser, logout }}>
       {children}
     </AuthContext.Provider>
   );
