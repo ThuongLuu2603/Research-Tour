@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getTours, getFilterOptions, patchTour, syncToursFromGoogleSheet, Tour } from "@/lib/api";
 import { fmtVND, segmentColor, cn } from "@/lib/utils";
+import { COL } from "@/lib/glossary";
 import { Search, Download, Flag, FlagOff, ChevronLeft, ChevronRight, ExternalLink, Pencil, Check, X, RefreshCw } from "lucide-react";
 
 const PAGE_SIZE = 50;
@@ -183,7 +184,7 @@ export default function ResearchGrid() {
         <table className="w-full text-sm border-collapse">
           <thead className="sticky top-0 z-10">
             <tr className="bg-gray-50 border-b border-gray-200">
-              {["#", "Tên Tour", "Công ty", "Thị trường", "Tuyến tour", "Ngày", "Giá", "Phân khúc", "Nguồn", "Ghi chú", "Flag", "Link"].map((h) => (
+              {["#", COL.tenTour, COL.congTy, COL.thiTruong, COL.tuyenTour, COL.thoiGian, COL.gia, "Phân khúc", "Nguồn", "Ghi chú", "Flag", COL.linkTour].map((h) => (
                 <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap">{h}</th>
               ))}
             </tr>

@@ -170,9 +170,11 @@ export interface MarketIntelRow {
   label: string;
   tour_count: number;
   departure_monthly: number;
+  avg_departures_per_month?: number;
   departure_share_pct?: number;
   tour_share_pct?: number;
   avg_price: number | null;
+  median_price?: number | null;
   avg_days: number | null;
   avg_price_day: number | null;
   market_price: number | null;
@@ -181,7 +183,7 @@ export interface MarketIntelRow {
 
 export interface MarketIntelligence {
   methodology: string;
-  totals: { tours: number; departure_monthly: number; markets: number; companies: number };
+  totals: { tours: number; departure_monthly: number; avg_departures_per_month?: number; markets: number; companies: number };
   vietravel: MarketIntelRow;
   market_avg: MarketIntelRow;
   markets: MarketIntelRow[];
@@ -271,6 +273,7 @@ export interface CompareSummary {
   similar_count: number;
   avg_gap_pct: number | null;
   vtr_freq_monthly_total: number;
+  vtr_avg_departures_per_month?: number | null;
   market_freq_monthly_total: number;
   freq_leading_segments: number;
   freq_lagging_segments: number;
@@ -301,6 +304,7 @@ export interface CompareSegment {
   vietravel_count: number;
   market_count: number;
   vietravel_freq_monthly: number;
+  vtr_avg_departures_per_month?: number;
   market_freq_monthly: number;
   market_freq_avg_per_company: number | null;
   freq_gap_pct: number | null;

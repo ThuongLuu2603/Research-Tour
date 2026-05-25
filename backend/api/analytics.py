@@ -42,6 +42,9 @@ class PriceStatsItem(BaseModel):
     min_gia: float | None
     max_gia: float | None
     avg_gia: float | None
+    median_gia: float | None = None
+    avg_price_day: float | None = None
+    avg_departures_per_month: float | None = None
     count: int
 
 
@@ -174,38 +177,13 @@ def price_stats(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    col_map = {
-        "thi_truong": Tour.thi_truong,
-        "cong_ty": Tour.cong_ty,
-        "tuyen_tour": Tour.tuyen_tour,
-    }
-    col = col_map.get(group_by, Tour.thi_truong)
-    q = db.query(
-        col.label("group"),
-        func.min(Tour.gia).label("min_gia"),
-        func.max(Tour.gia).label("max_gia"),
-        func.avg(Tour.gia).label("avg_gia"),
-        func.count(Tour.id).label("cnt"),
-    )
+    from market_analytics import build_price_analysis
+
+    q = db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)
     if nguon:
         q = q.filter(Tour.nguon.in_(nguon))
-    rows = (
-        q.filter(Tour.gia != None, col != "")
-        .group_by(col)
-        .order_by(func.count(Tour.id).desc())
-        .limit(limit)
-        .all()
-    )
-    return [
-        PriceStatsItem(
-            group=r.group,
-            min_gia=r.min_gia,
-            max_gia=r.max_gia,
-            avg_gia=round(r.avg_gia, 0) if r.avg_gia else None,
-            count=r.cnt,
-        )
-        for r in rows
-    ]
+    rows = build_price_analysis(q.all(), group_by)[:limit]
+    return [PriceStatsItem(**r) for r in rows]
 
 
 @router.get("/treemap", response_model=list[TreemapNode])

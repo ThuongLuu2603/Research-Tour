@@ -1,4 +1,4 @@
-"""Phân tích thị trường — giá & tần suất KH có trọng số theo số đoàn."""
+"""Phân tích thị trường — giá & tần suất khởi hành có trọng số theo số đoàn."""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -6,15 +6,7 @@ from collections import defaultdict
 from compare_engine import deduplicate_tours, is_vietravel, parse_duration_days
 from departure_parser import parse_departure_frequency
 from models import Tour
-
-
-def _weighted_avg(pairs: list[tuple[float, float]]) -> float | None:
-    if not pairs:
-        return None
-    total_w = sum(w for _, w in pairs)
-    if total_w <= 0:
-        return round(sum(v for v, _ in pairs) / len(pairs), 0)
-    return round(sum(v * w for v, w in pairs) / total_w, 0)
+from stats_utils import robust_weighted_avg, weighted_avg, weighted_median
 
 
 def _tour_metrics(t: Tour) -> dict | None:
@@ -40,20 +32,27 @@ def _aggregate_bucket(items: list[dict]) -> dict:
         return {
             "tour_count": 0,
             "departure_monthly": 0.0,
+            "avg_departures_per_month": 0.0,
             "avg_price": None,
+            "median_price": None,
             "avg_days": None,
             "avg_price_day": None,
             "market_price": None,
         }
     freq_total = sum(i["freq"] for i in items)
-    avg_price = _weighted_avg([(i["gia"], i["freq"]) for i in items])
-    avg_days = _weighted_avg([(i["days"], i["freq"]) for i in items])
-    avg_day = _weighted_avg([(i["price_day"], i["freq"]) for i in items])
+    price_pairs = [(i["gia"], i["freq"]) for i in items]
+    day_pairs = [(i["days"], i["freq"]) for i in items]
+    pd_pairs = [(i["price_day"], i["freq"]) for i in items]
+    avg_price = robust_weighted_avg(price_pairs)
+    avg_days = weighted_avg(day_pairs)
+    avg_day = robust_weighted_avg(pd_pairs)
     market_price = round(avg_day * avg_days, 0) if avg_day and avg_days else None
     return {
         "tour_count": len(items),
         "departure_monthly": round(freq_total, 1),
+        "avg_departures_per_month": round(freq_total / len(items), 1),
         "avg_price": avg_price,
+        "median_price": weighted_median(price_pairs),
         "avg_days": round(avg_days, 1) if avg_days else None,
         "avg_price_day": avg_day,
         "market_price": market_price,
@@ -70,14 +69,12 @@ def build_market_intelligence(tours: list[Tour]) -> dict:
 
     by_market: dict[str, list[dict]] = defaultdict(list)
     by_company: dict[str, list[dict]] = defaultdict(list)
-    by_market_company: dict[tuple[str, str], list[dict]] = defaultdict(list)
     by_route: dict[tuple[str, str], list[dict]] = defaultdict(list)
 
     for m in metrics:
         mk = m["thi_truong"]
         by_market[mk].append(m)
         by_company[m["cong_ty"]].append(m)
-        by_market_company[(mk, m["cong_ty"])].append(m)
         if m["tuyen_tour"]:
             by_route[(mk, m["tuyen_tour"])].append(m)
 
@@ -122,14 +119,15 @@ def build_market_intelligence(tours: list[Tour]) -> dict:
 
     return {
         "methodology": (
-            "Mỗi tour có thể có nhiều ngày/đoàn KH — ước tính lượt KH/tháng từ lịch khởi hành làm trọng số. "
-            "Giá TB = Σ(giá × trọng số) ÷ Σ(trọng số). "
-            "Giá thị trường (tuyến) = Giá TB ngày × Số ngày TB. "
-            "Thị phần đoàn = % lượt KH/tháng so với toàn hệ thống."
+            "Mỗi Tên Tour = 1 sản phẩm; Lịch khởi hành ghi nhiều ngày = nhiều đoàn. "
+            "Tần suất = TB số đoàn/tháng/sản phẩm (tổng đoàn ÷ số sản phẩm). "
+            "Giá TB có trọng số theo đoàn; khi biên độ luxury/phổ thông lớn: cắt 10% hai đầu + median. "
+            "Giá thị trường = Giá TB/ngày × Số ngày TB."
         ),
         "totals": {
             "tours": total_tours,
             "departure_monthly": round(total_departures, 1),
+            "avg_departures_per_month": round(total_departures / total_tours, 1) if total_tours else 0,
             "markets": len(markets),
             "companies": len(companies),
         },
@@ -139,3 +137,42 @@ def build_market_intelligence(tours: list[Tour]) -> dict:
         "companies": companies[:30],
         "routes": routes[:50],
     }
+
+
+def build_price_analysis(tours: list[Tour], group_by: str = "thi_truong") -> list[dict]:
+    """Phân tích giá theo nhóm — dùng TB robust có trọng số đoàn."""
+    tours = deduplicate_tours(tours)
+    key_map = {
+        "thi_truong": lambda m: m["thi_truong"],
+        "cong_ty": lambda m: m["cong_ty"],
+        "tuyen_tour": lambda m: f"{m['thi_truong']} · {m['tuyen_tour']}" if m["tuyen_tour"] else m["thi_truong"],
+    }
+    getter = key_map.get(group_by, key_map["thi_truong"])
+
+    by_group: dict[str, list[dict]] = defaultdict(list)
+    for t in tours:
+        m = _tour_metrics(t)
+        if not m:
+            continue
+        g = getter(m)
+        if not g:
+            continue
+        by_group[g].append(m)
+
+    rows = []
+    for group, items in by_group.items():
+        prices = [(i["gia"], i["freq"]) for i in items]
+        pd_pairs = [(i["price_day"], i["freq"]) for i in items]
+        freq_total = sum(i["freq"] for i in items)
+        rows.append({
+            "group": group,
+            "count": len(items),
+            "min_gia": round(min(i["gia"] for i in items), 0),
+            "max_gia": round(max(i["gia"] for i in items), 0),
+            "avg_gia": robust_weighted_avg(prices),
+            "median_gia": weighted_median(prices),
+            "avg_price_day": robust_weighted_avg(pd_pairs),
+            "departure_monthly": round(freq_total, 1),
+            "avg_departures_per_month": round(freq_total / len(items), 1),
+        })
+    return sorted(rows, key=lambda x: -x["departure_monthly"])

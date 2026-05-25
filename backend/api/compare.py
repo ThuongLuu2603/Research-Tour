@@ -43,6 +43,7 @@ class CompareSummary(BaseModel):
     similar_count: int
     avg_gap_pct: float | None
     vtr_freq_monthly_total: float
+    vtr_avg_departures_per_month: float | None = None
     market_freq_monthly_total: float
     freq_leading_segments: int
     freq_lagging_segments: int
@@ -93,6 +94,7 @@ def compare_summary(
         similar_count=similar,
         avg_gap_pct=round(sum(gaps) / len(gaps), 1) if gaps else None,
         vtr_freq_monthly_total=round(vtr_freq, 1),
+        vtr_avg_departures_per_month=round(vtr_freq / vtr_count, 1) if vtr_count else None,
         market_freq_monthly_total=round(market_freq, 1),
         freq_leading_segments=freq_lead,
         freq_lagging_segments=freq_lag,

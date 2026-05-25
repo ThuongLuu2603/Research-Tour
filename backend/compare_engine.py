@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from config import settings
 from departure_parser import parse_departure_frequency, parse_departure_dates, schedules_overlap_vtr_period
 from models import Tour
+from stats_utils import robust_weighted_avg, weighted_avg, weighted_median
 
 COMPANY = settings.company_name
 NGUON_PRIORITY = {"FindTourGo": 3, "Vietravel": 2, "Main": 1, "Manual": 0}
@@ -123,19 +124,29 @@ class TourEntry:
     is_vietravel: bool
 
 
-def _weighted_avg(values: list[tuple[float, float]]) -> float | None:
-    if not values:
-        return None
-    total_w = sum(w for _, w in values)
-    if total_w <= 0:
-        return round(sum(v for v, _ in values) / len(values), 0)
-    return round(sum(v * w for v, w in values) / total_w, 0)
-
-
 def _median(values: list[float]) -> float | None:
     if not values:
         return None
     return round(statistics.median(values), 0)
+
+
+def _smart_price_avg(entries: list[TourEntry], *, vtr: bool) -> float | None:
+    """Giá TB có trọng số; thị trường dùng robust khi biên độ giá lớn."""
+    pairs = [(e.gia, e.freq_score) for e in entries]
+    if not pairs:
+        return None
+    if vtr or len(pairs) < 4:
+        return weighted_avg(pairs)
+    return robust_weighted_avg(pairs)
+
+
+def _smart_day_avg(entries: list[TourEntry], *, vtr: bool) -> float | None:
+    pairs = [(e.price_day, e.freq_score) for e in entries]
+    if not pairs:
+        return None
+    if vtr or len(pairs) < 4:
+        return weighted_avg(pairs)
+    return robust_weighted_avg(pairs)
 
 
 @dataclass
@@ -143,6 +154,7 @@ class CompanySegmentStats:
     cong_ty: str
     tour_count: int = 0
     freq_monthly: float = 0.0
+    avg_departures_per_month: float = 0.0
     avg_price_day: float | None = None
     median_price_day: float | None = None
     min_price_day: float | None = None
@@ -153,6 +165,7 @@ class CompanySegmentStats:
             "cong_ty": self.cong_ty,
             "tour_count": self.tour_count,
             "freq_monthly": round(self.freq_monthly, 1),
+            "avg_departures_per_month": round(self.avg_departures_per_month, 1),
             "avg_price_day": self.avg_price_day,
             "median_price_day": self.median_price_day,
             "min_price_day": self.min_price_day,
@@ -177,17 +190,17 @@ class SegmentStats:
     def market_entries(self) -> list[TourEntry]:
         return [e for e in self.entries if not e.is_vietravel]
 
-    def _full_price_stats(self, entries: list[TourEntry]) -> dict:
+    def _full_price_stats(self, entries: list[TourEntry], *, vtr: bool) -> dict:
         if not entries:
             return {"weighted_avg": None, "weighted_days": None}
         price_pairs = [(e.gia, e.freq_score) for e in entries]
         day_pairs = [(e.so_ngay, e.freq_score) for e in entries]
         return {
-            "weighted_avg": _weighted_avg(price_pairs),
-            "weighted_days": _weighted_avg(day_pairs),
+            "weighted_avg": _smart_price_avg(entries, vtr=vtr),
+            "weighted_days": weighted_avg(day_pairs),
         }
 
-    def _price_stats(self, entries: list[TourEntry]) -> dict:
+    def _price_stats(self, entries: list[TourEntry], *, vtr: bool = False) -> dict:
         if not entries:
             return {"avg": None, "median": None, "min": None, "max": None, "weighted_avg": None}
         pairs = [(e.price_day, e.freq_score) for e in entries]
@@ -197,7 +210,7 @@ class SegmentStats:
             "median": _median(prices),
             "min": round(min(prices), 0),
             "max": round(max(prices), 0),
-            "weighted_avg": _weighted_avg(pairs),
+            "weighted_avg": _smart_day_avg(entries, vtr=vtr),
         }
 
     def _freq_total(self, entries: list[TourEntry]) -> float:
@@ -209,11 +222,12 @@ class SegmentStats:
             by_co[e.cong_ty].append(e)
         result = {}
         for co, ents in by_co.items():
-            ps = self._price_stats(ents)
+            ps = self._price_stats(ents, vtr=is_vietravel(co))
             result[co] = CompanySegmentStats(
                 cong_ty=co,
                 tour_count=len(ents),
                 freq_monthly=self._freq_total(ents),
+                avg_departures_per_month=round(self._freq_total(ents) / len(ents), 1) if ents else 0,
                 avg_price_day=ps["weighted_avg"],
                 median_price_day=ps["median"],
                 min_price_day=ps["min"],
@@ -223,24 +237,24 @@ class SegmentStats:
 
     @property
     def vietravel_avg_day(self) -> float | None:
-        return self._price_stats(self.vtr_entries)["weighted_avg"]
+        return self._price_stats(self.vtr_entries, vtr=True)["weighted_avg"]
 
     @property
     def market_avg_day(self) -> float | None:
-        return self._price_stats(self.market_entries)["weighted_avg"]
+        return self._price_stats(self.market_entries, vtr=False)["weighted_avg"]
 
     @property
     def vtr_avg_price(self) -> float | None:
-        return self._full_price_stats(self.vtr_entries)["weighted_avg"]
+        return self._full_price_stats(self.vtr_entries, vtr=True)["weighted_avg"]
 
     @property
     def vtr_avg_days(self) -> float | None:
-        days = self._full_price_stats(self.vtr_entries)["weighted_days"]
+        days = self._full_price_stats(self.vtr_entries, vtr=True)["weighted_days"]
         return round(days, 1) if days else None
 
     @property
     def market_avg_days(self) -> float | None:
-        days = self._full_price_stats(self.market_entries)["weighted_days"]
+        days = self._full_price_stats(self.market_entries, vtr=False)["weighted_days"]
         return round(days, 1) if days else None
 
     @property
@@ -315,22 +329,30 @@ class SegmentStats:
 
     @property
     def freq_gap_pct(self) -> float | None:
-        """VTR tần suất so với TB tần suất mỗi đối thủ trong segment."""
-        vtr_f = self.vtr_freq_monthly
-        comps = [c for co, c in self._companies().items() if not is_vietravel(co)]
-        if not comps or vtr_f <= 0:
+        """VTR TB đoàn/tháng so với TB đoàn/tháng mỗi đối thủ trong segment."""
+        vtr_avg = self.vtr_avg_departures_per_month
+        comp_avgs = [c.avg_departures_per_month for co, c in self._companies().items() if not is_vietravel(co)]
+        comp_avgs = [x for x in comp_avgs if x > 0]
+        if not comp_avgs or vtr_avg <= 0:
             return None
-        avg_comp_freq = sum(c.freq_monthly for c in comps) / len(comps)
-        if avg_comp_freq <= 0:
-            return None
-        return round((vtr_f / avg_comp_freq - 1) * 100, 1)
+        avg_comp = sum(comp_avgs) / len(comp_avgs)
+        return round((vtr_avg / avg_comp - 1) * 100, 1)
+
+    @property
+    def vtr_avg_departures_per_month(self) -> float:
+        if not self.vtr_entries:
+            return 0.0
+        return round(self.vtr_freq_monthly / len(self.vtr_entries), 1)
 
     @property
     def market_freq_avg_per_company(self) -> float | None:
         comps = [c for co, c in self._companies().items() if not is_vietravel(co)]
         if not comps:
             return None
-        return round(sum(c.freq_monthly for c in comps) / len(comps), 1)
+        avgs = [c.avg_departures_per_month for c in comps if c.tour_count > 0]
+        if not avgs:
+            return None
+        return round(sum(avgs) / len(avgs), 1)
 
     def to_dict(self) -> dict:
         companies = self._companies()
@@ -370,6 +392,7 @@ class SegmentStats:
             "vietravel_count": len(self.vtr_entries),
             "market_count": len(self.market_entries),
             "vietravel_freq_monthly": round(self.vtr_freq_monthly, 1),
+            "vtr_avg_departures_per_month": self.vtr_avg_departures_per_month,
             "market_freq_monthly": round(self.market_freq_monthly, 1),
             "market_freq_avg_per_company": self.market_freq_avg_per_company,
             "freq_gap_pct": self.freq_gap_pct,
@@ -397,7 +420,7 @@ def _freq_position_label(gap: float | None) -> str:
         return "Ít đoàn hơn TB"
     if gap >= 20:
         return "Nhiều đoàn hơn TB"
-    return "Tần suất tương đương"
+    return "Tương đương"
 
 
 def _tour_to_entry(t: Tour, days: float) -> TourEntry:
@@ -457,10 +480,11 @@ def build_competitor_overview(tours: list[Tour], competitor: str) -> dict:
         if not comp_in_seg:
             continue
         vtr = seg.vtr_entries
-        comp_ps = seg._price_stats(comp_in_seg)
+        comp_ps = seg._price_stats(comp_in_seg, vtr=False)
         comp_compare_price = None
         if comp_ps["weighted_avg"] and seg.vtr_avg_days:
             comp_compare_price = round(comp_ps["weighted_avg"] * seg.vtr_avg_days, 0)
+        comp_avg_dep = round(sum(e.freq_score for e in comp_in_seg) / len(comp_in_seg), 1)
         overlap_segments.append({
             "segment_key": seg.key,
             "tuyen_tour": seg.tuyen_tour,
@@ -470,17 +494,19 @@ def build_competitor_overview(tours: list[Tour], competitor: str) -> dict:
             "comp_avg_day": comp_ps["weighted_avg"],
             "comp_compare_price": comp_compare_price,
             "comp_freq_monthly": round(sum(e.freq_score for e in comp_in_seg), 1),
+            "comp_avg_departures_per_month": comp_avg_dep,
             "vtr_avg_price": seg.vtr_avg_price,
             "vtr_avg_days": seg.vtr_avg_days,
             "vtr_freq_monthly": round(seg.vtr_freq_monthly, 1),
+            "vtr_avg_departures_per_month": seg.vtr_avg_departures_per_month,
             "price_gap_pct": _gap(seg.vtr_avg_price, comp_compare_price),
-            "freq_gap_pct": _gap(seg.vtr_freq_monthly, sum(e.freq_score for e in comp_in_seg)),
+            "freq_gap_pct": _gap(seg.vtr_avg_departures_per_month, comp_avg_dep),
             "comp_tour_count": len(comp_in_seg),
         })
 
     comp_entries = [_tour_to_entry(t, parse_duration_days(t.thoi_gian, t.so_ngay) or 1) for t in comp_tours if t.gia]
     total_freq = sum(e.freq_score for e in comp_entries)
-    avg_day = _weighted_avg([(e.price_day, e.freq_score) for e in comp_entries])
+    avg_day = _smart_day_avg(comp_entries, vtr=False) if comp_entries else None
 
     markets: dict[str, int] = defaultdict(int)
     for t in comp_tours:
@@ -517,11 +543,10 @@ def _gap(a: float | None, b: float | None) -> float | None:
 
 
 METHODOLOGY = (
-    "Segment = cùng Thị trường + Tuyến tour + Điểm KH + Số ngày. "
-    "Giá TB VTR = trung bình có trọng số theo tần suất KH. "
-    "Giá thị trường = Giá TB ngày TT × Số ngày TB TT. "
-    "Giá so sánh = Giá TB ngày TT × Số ngày TB VTR. "
-    "Chênh % = (Giá TB VTR ÷ Giá so sánh − 1) × 100. "
-    "Tour rẻ nhất TT: cùng giai đoạn KH với VTR (cùng tháng hoặc ±45 ngày). "
-    "Loại trùng theo mã tour/link."
+    "Nhóm so sánh = cùng Thị trường + Tuyến tour + Điểm khởi hành + Thời gian. "
+    "Mỗi dòng Tên Tour = 1 sản phẩm; nhiều ngày trong Lịch khởi hành = nhiều đoàn. "
+    "Tần suất = TB số đoàn/tháng/sản phẩm. "
+    "Giá TB có trọng số theo đoàn; khi chênh lệch luxury/phổ thông lớn dùng TB cắt biên 10% + median. "
+    "Giá so sánh = Giá TB/ngày thị trường × Số ngày TB Vietravel. "
+    "Chênh % = Giá TB VTR ÷ Giá so sánh − 1."
 )
