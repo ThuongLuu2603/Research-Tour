@@ -12,7 +12,7 @@ const NAV = [
   { to: "/price", icon: BarChart3, label: "Phân tích Giá" },
   { to: "/market", icon: PieChart, label: "Thị trường" },
   { to: "/competitor", icon: Building2, label: "Đối thủ" },
-  { to: "/compare", icon: Scale, label: "So sánh Vietravel" },
+  { to: "/compare", icon: Scale, label: "So sánh & Đối thủ" },
   { to: "/scraper", icon: Radio, label: "Scraper Hub" },
   { to: "/settings", icon: Settings, label: "Cài đặt" },
 ];

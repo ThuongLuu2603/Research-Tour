@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     gid_main: str = "1729132868"
     gid_vietravel: str = "620817544"
     gid_findtourgo: str = "408521834"
+    gid_route_rules: str = "58839224"
+    market_rules_sheet_name: str = "Quy tắc Thị trường"
 
     # Scraper schedule (cron, 24h format)
     scraper_schedule_hour: int = 7

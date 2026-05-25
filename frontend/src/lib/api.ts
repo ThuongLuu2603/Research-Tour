@@ -229,11 +229,17 @@ export const syncSheetData = async () => {
 export interface CompareSummary {
   company: string;
   total_vietravel_tours: number;
+  total_market_tours: number;
   segments_with_vietravel: number;
   cheaper_count: number;
   expensive_count: number;
   similar_count: number;
   avg_gap_pct: number | null;
+  vtr_freq_monthly_total: number;
+  market_freq_monthly_total: number;
+  freq_leading_segments: number;
+  freq_lagging_segments: number;
+  methodology: string;
 }
 
 export interface CompareSegment {
@@ -244,16 +250,24 @@ export interface CompareSegment {
   thi_truong: string;
   vietravel_avg_day: number | null;
   market_avg_day: number | null;
-  competitor_avg_day: number | null;
+  vietravel_median_day: number | null;
+  market_median_day: number | null;
   gap_pct: number | null;
   vietravel_count: number;
   market_count: number;
+  vietravel_freq_monthly: number;
+  market_freq_monthly: number;
+  market_freq_avg_per_company: number | null;
+  freq_gap_pct: number | null;
   position: string;
+  freq_position: string;
+  top_competitors: Array<{ cong_ty: string; tour_count: number; freq_monthly: number; avg_price_day: number | null }>;
 }
 
 export interface CompareFilters {
   thi_truong?: string[];
   tuyen_tour?: string;
+  diem_kh?: string;
   sort_by?: string;
   limit?: number;
 }
@@ -262,6 +276,7 @@ const buildCompareParams = (filters: CompareFilters = {}) => {
   const params = new URLSearchParams();
   filters.thi_truong?.forEach((m) => params.append("thi_truong", m));
   if (filters.tuyen_tour) params.set("tuyen_tour", filters.tuyen_tour);
+  if (filters.diem_kh) params.set("diem_kh", filters.diem_kh);
   if (filters.sort_by) params.set("sort_by", filters.sort_by);
   if (filters.limit) params.set("limit", String(filters.limit));
   return params.toString();
@@ -279,15 +294,26 @@ export const getCompareSegments = async (filters: CompareFilters = {}) => {
   return data as { methodology: string; items: CompareSegment[]; total: number };
 };
 
+export const getSegmentDetail = async (segmentKey: string) => {
+  const { data } = await api.get(`/compare/segment-detail?segment_key=${encodeURIComponent(segmentKey)}`);
+  return data;
+};
+
 export const getSegmentTours = async (segmentKey: string) => {
   const { data } = await api.get(`/compare/segment-tours?segment_key=${encodeURIComponent(segmentKey)}`);
-  return data as {
-    segment_key: string;
-    tours: Array<{
-      id: number; cong_ty: string; ten_tour: string; gia: number; gia_raw: string;
-      so_ngay: number; gia_per_day: number; diem_kh: string; link_url: string; is_vietravel: boolean;
-    }>;
-  };
+  return data;
+};
+
+export const getCompareCompetitors = async (filters: CompareFilters = {}) => {
+  const q = buildCompareParams(filters);
+  const { data } = await api.get(`/compare/competitors${q ? "?" + q : ""}`);
+  return data as { items: Array<{ cong_ty: string; tour_count: number; overlap_segments: number; freq_monthly: number; avg_price_day: number | null }>; total: number };
+};
+
+export const getCompareCompetitorDetail = async (company: string, filters: CompareFilters = {}) => {
+  const q = buildCompareParams(filters);
+  const { data } = await api.get(`/compare/competitor/${encodeURIComponent(company)}${q ? "?" + q : ""}`);
+  return data;
 };
 
 // ── Classification rules (admin) ──────────────────────────────────────────────
@@ -337,5 +363,30 @@ export const seedMarketDefaults = async () => {
 
 export const syncRouteFromSheet = async () => {
   const { data } = await api.post("/admin/rules/sync-route-from-sheet");
+  return data;
+};
+
+export const syncRouteToSheet = async () => {
+  const { data } = await api.post("/admin/rules/sync-route-to-sheet");
+  return data;
+};
+
+export const syncMarketFromSheet = async () => {
+  const { data } = await api.post("/admin/rules/sync-market-from-sheet");
+  return data;
+};
+
+export const syncMarketToSheet = async () => {
+  const { data } = await api.post("/admin/rules/sync-market-to-sheet");
+  return data;
+};
+
+export const syncAllFromSheet = async () => {
+  const { data } = await api.post("/admin/rules/sync-all-from-sheet");
+  return data;
+};
+
+export const syncAllToSheet = async () => {
+  const { data } = await api.post("/admin/rules/sync-all-to-sheet");
   return data;
 };
