@@ -172,6 +172,52 @@ def _median(values: list[float]) -> float | None:
     return round(statistics.median(values), 0)
 
 
+def _departure_weight(entry: TourEntry, vtr_dates: list, *, in_vtr_period: bool) -> float:
+    """Trọng số = số đoàn KH (ưu tiên đếm ngày cố định trong giai đoạn VTR)."""
+    if in_vtr_period and vtr_dates:
+        info = parse_departure_frequency_in_period(entry.lich_kh, vtr_dates)
+        explicit = info.get("explicit_dates") or 0
+        if explicit > 0:
+            return float(explicit)
+        est = info.get("monthly_estimate") or 0
+        if est > 0:
+            return float(est)
+    info = parse_departure_frequency(entry.lich_kh)
+    explicit = info.get("explicit_dates") or 0
+    if explicit > 0:
+        return float(explicit)
+    return max(float(info.get("monthly_estimate") or entry.freq_score or 1.0), 1.0)
+
+
+def _departure_weights(entries: list[TourEntry], vtr_dates: list, *, in_vtr_period: bool) -> list[float]:
+    return [_departure_weight(e, vtr_dates, in_vtr_period=in_vtr_period) for e in entries]
+
+
+def _route_avg_days(entries: list[TourEntry], weights: list[float]) -> float | None:
+    """Số ngày TB tuyến = Σ(đoàn × ngày) / Σ(đoàn)."""
+    total_w = sum(weights)
+    if total_w <= 0:
+        return None
+    return round(sum(e.so_ngay * w for e, w in zip(entries, weights)) / total_w, 1)
+
+
+def _route_avg_price_per_day(entries: list[TourEntry], weights: list[float]) -> float | None:
+    """Giá TB/ngày = Σ(giá tour × đoàn) / Σ(đoàn × ngày)."""
+    if not entries or not weights:
+        return None
+    num = sum(e.gia * w for e, w in zip(entries, weights))
+    den = sum(e.so_ngay * w for e, w in zip(entries, weights))
+    if den <= 0:
+        return None
+    return round(num / den, 0)
+
+
+def _route_total_price(avg_day: float | None, avg_days: float | None) -> float | None:
+    if avg_day is None or avg_days is None:
+        return None
+    return round(avg_day * avg_days, 0)
+
+
 def _smart_price_avg(entries: list[TourEntry], *, vtr: bool) -> float | None:
     """Giá TB có trọng số; thị trường dùng robust khi biên độ giá lớn."""
     pairs = [(e.gia, e.freq_score) for e in entries]
@@ -266,24 +312,37 @@ class SegmentStats:
     def _full_price_stats(self, entries: list[TourEntry], *, vtr: bool) -> dict:
         if not entries:
             return {"weighted_avg": None, "weighted_days": None}
-        price_pairs = [(e.gia, e.freq_score) for e in entries]
-        day_pairs = [(e.so_ngay, e.freq_score) for e in entries]
+        vtr_dates = self._vtr_period_dates()
+        weights = _departure_weights(entries, vtr_dates, in_vtr_period=True)
+        avg_day = _route_avg_price_per_day(entries, weights)
+        avg_days = _route_avg_days(entries, weights)
         return {
-            "weighted_avg": _smart_price_avg(entries, vtr=vtr),
-            "weighted_days": weighted_avg(day_pairs),
+            "weighted_avg": _route_total_price(avg_day, avg_days),
+            "weighted_days": avg_days,
         }
 
-    def _price_stats(self, entries: list[TourEntry], *, vtr: bool = False) -> dict:
+    def _price_stats(
+        self,
+        entries: list[TourEntry],
+        *,
+        vtr: bool = False,
+        use_route_formula: bool = True,
+    ) -> dict:
         if not entries:
             return {"avg": None, "median": None, "min": None, "max": None, "weighted_avg": None}
-        pairs = [(e.price_day, e.freq_score) for e in entries]
         prices = [e.price_day for e in entries]
+        weighted_avg = None
+        if use_route_formula:
+            weights = _departure_weights(entries, self._vtr_period_dates(), in_vtr_period=True)
+            weighted_avg = _route_avg_price_per_day(entries, weights)
+        else:
+            weighted_avg = _smart_day_avg(entries, vtr=vtr)
         return {
             "avg": round(sum(prices) / len(prices), 0),
             "median": _median(prices),
             "min": round(min(prices), 0),
             "max": round(max(prices), 0),
-            "weighted_avg": _smart_day_avg(entries, vtr=vtr),
+            "weighted_avg": weighted_avg,
         }
 
     def _freq_total(self, entries: list[TourEntry]) -> float:
@@ -315,35 +374,45 @@ class SegmentStats:
 
     @property
     def vietravel_avg_day(self) -> float | None:
-        return self._price_stats(self.vtr_entries, vtr=True)["weighted_avg"]
+        entries = self.vtr_entries
+        if not entries:
+            return None
+        weights = _departure_weights(entries, self._vtr_period_dates(), in_vtr_period=True)
+        return _route_avg_price_per_day(entries, weights)
 
     @property
     def market_avg_day(self) -> float | None:
-        return self._price_stats(self.market_entries_in_period, vtr=False)["weighted_avg"]
+        entries = self.market_entries_in_period
+        if not entries:
+            return None
+        weights = _departure_weights(entries, self._vtr_period_dates(), in_vtr_period=True)
+        return _route_avg_price_per_day(entries, weights)
 
     @property
     def vtr_avg_price(self) -> float | None:
-        return self._full_price_stats(self.vtr_entries, vtr=True)["weighted_avg"]
+        return _route_total_price(self.vietravel_avg_day, self.vtr_avg_days)
 
     @property
     def vtr_avg_days(self) -> float | None:
-        days = self._full_price_stats(self.vtr_entries, vtr=True)["weighted_days"]
-        days = _safe_num(days)
-        return round(days, 1) if days is not None else None
+        entries = self.vtr_entries
+        if not entries:
+            return None
+        weights = _departure_weights(entries, self._vtr_period_dates(), in_vtr_period=True)
+        days = _route_avg_days(entries, weights)
+        return _safe_num(days)
 
     @property
     def market_avg_days(self) -> float | None:
-        days = self._full_price_stats(self.market_entries_in_period, vtr=False)["weighted_days"]
-        days = _safe_num(days)
-        return round(days, 1) if days is not None else None
+        entries = self.market_entries_in_period
+        if not entries:
+            return None
+        weights = _departure_weights(entries, self._vtr_period_dates(), in_vtr_period=True)
+        days = _route_avg_days(entries, weights)
+        return _safe_num(days)
 
     @property
     def market_total_price(self) -> float | None:
-        d = self.market_avg_day
-        days = self.market_avg_days
-        if d is None or days is None:
-            return None
-        return round(d * days, 0)
+        return _route_total_price(self.market_avg_day, self.market_avg_days)
 
     @property
     def comparison_price(self) -> float | None:
@@ -652,11 +721,12 @@ def _gap(a: float | None, b: float | None) -> float | None:
 
 
 METHODOLOGY = (
-    "Nhóm so sánh = cùng Thị trường + Tuyến tour + Điểm khởi hành (gộp mọi số ngày trên tuyến). "
-    "Số ngày TB = trung bình có trọng số theo đoàn của các sản phẩm VTR trên tuyến. "
-    "Giai đoạn so sánh giá & tần suất = theo tháng ngày KH của tour VTR trong nhóm. "
-    "Tần suất VTR = TB đoàn/tháng/sản phẩm trong giai đoạn; so sánh với đối thủ có tần suất cao nhất trên tuyến. "
-    "Giá TB có trọng số theo đoàn; khi chênh lệch luxury/phổ thông lớn dùng TB cắt biên 10% + median. "
-    "Giá so sánh = Giá TB/ngày thị trường (cùng giai đoạn) × Số ngày TB Vietravel. "
-    "Chênh % = Giá TB VTR ÷ Giá so sánh − 1."
+    "Nhóm so sánh = cùng Thị trường + Tuyến tour + Điểm khởi hành (gộp mọi sản phẩm/thời gian trên tuyến). "
+    "Trọng số mỗi sản phẩm = số đoàn khởi hành (ưu tiên đếm ngày KH trong giai đoạn VTR). "
+    "Số ngày TB VTR = Σ(đoàn × ngày) ÷ Σ(đoàn). "
+    "Giá TB/ngày VTR = Σ(giá tour × đoàn) ÷ Σ(đoàn × ngày). "
+    "Giá TB tour VTR = Giá TB/ngày VTR × Số ngày TB VTR. "
+    "Giá TB/ngày TT = Σ(giá tour × đoàn) ÷ Σ(đoàn × ngày) của đối thủ cùng giai đoạn KH. "
+    "Giá so sánh = Giá TB/ngày TT × Số ngày TB VTR. "
+    "Chênh % = Giá TB tour VTR ÷ Giá so sánh − 1."
 )
