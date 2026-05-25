@@ -100,13 +100,19 @@ def segment_key(tour: Tour) -> str | None:
 
 
 def _dedup_key(t: Tour) -> str:
+    """Chỉ gộp trùng mã/link thật — không gộp mọi tour cùng CTY chỉ vì link placeholder."""
+    from link_utils import normalize_tour_link
+
     ma = (t.ma_tour or "").strip().lower()
-    link = (t.link_url or "").strip().lower()
+    link = normalize_tour_link(t.link_url)
     company = (t.cong_ty or "").strip().lower()
     if ma:
-        return f"{company}|{ma}"
+        return f"{company}|ma:{ma}"
     if link:
-        return f"{company}|{link}"
+        return f"{company}|{link.lower()}"
+    ten = re.sub(r"\s+", " ", (t.ten_tour or "").strip().lower())[:160]
+    if ten:
+        return f"{company}|name:{ten}"
     return f"{company}|id:{t.id}"
 
 

@@ -351,6 +351,18 @@ def start_import_background() -> bool:
         try:
             import_missing_sheets()
             with _import_lock:
+                _import_status["message"] = f"Import xong — đang đồng bộ Sheet live…"
+            try:
+                from sheets_tour_sync import merge_all_sheets_to_db
+                db = SessionLocal()
+                try:
+                    sync_result = merge_all_sheets_to_db(db)
+                    logger.info("Sheet live sync: %s", sync_result)
+                finally:
+                    db.close()
+            except Exception as sync_err:
+                logger.warning("Sheet live sync skipped: %s", sync_err)
+            with _import_lock:
                 _import_status["message"] = f"Import hoàn tất — {tour_count():,} tour"
         except Exception as e:
             logger.exception("Background import failed")
