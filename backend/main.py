@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from api import auth, tours, analytics, scraper as scraper_api, admin, compare, rules as rules_api
+from api import auth, tours, analytics, scraper as scraper_api, admin, compare, rules as rules_api, intelligence as intelligence_api
 from api.scraper import set_event_loop
 from database import init_db
 from scheduler import start_scheduler, stop_scheduler
@@ -28,6 +28,16 @@ async def lifespan(app: FastAPI):
     create_default_users()
     from seed import start_import_background
     start_import_background()
+    try:
+        from database import SessionLocal
+        from snapshot_service import capture_daily_snapshot
+        db = SessionLocal()
+        try:
+            capture_daily_snapshot(db)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("Initial snapshot skipped: %s", e)
     set_event_loop(asyncio.get_event_loop())
     start_scheduler()
     logger.info("OTA Research Platform started")
@@ -59,6 +69,7 @@ app.include_router(scraper_api.router)
 app.include_router(admin.router)
 app.include_router(compare.router)
 app.include_router(rules_api.router)
+app.include_router(intelligence_api.router)
 
 
 @app.get("/health")

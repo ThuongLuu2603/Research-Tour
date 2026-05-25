@@ -232,6 +232,23 @@ def apply_departure_aliases_to_tours(db) -> int:
     return count
 
 
+def apply_classification_rules_to_tours(db) -> dict:
+    """Áp dụng lại rules Thị trường + Tuyến tour cho toàn bộ tour."""
+    from models import Tour
+    market_n = route_n = 0
+    for t in db.query(Tour).all():
+        mk = resolve_thi_truong(t.ten_tour or "", t.lich_trinh or "")
+        rt = resolve_tuyen_tour(mk, t.ten_tour or "", t.lich_trinh or "")
+        if mk and mk != (t.thi_truong or ""):
+            t.thi_truong = mk[:128]
+            market_n += 1
+        if rt and rt != (t.tuyen_tour or ""):
+            t.tuyen_tour = rt[:256]
+            route_n += 1
+    db.commit()
+    return {"market_updated": market_n, "route_updated": route_n}
+
+
 def resolve_thi_truong(ten_tour: str, lich_trinh: str = "") -> str:
     combined = f"{ten_tour or ''} {lich_trinh or ''}".lower().strip()
     if not combined:

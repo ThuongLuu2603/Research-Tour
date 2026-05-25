@@ -28,6 +28,7 @@ def get_db():
 def init_db():
     """Create all tables and apply lightweight schema migrations."""
     from models import Tour, ScrapeJob, User, MarketKeywordRule, RouteKeywordRule, CompanyAliasRule, DepartureAliasRule  # noqa: F401
+    from models import DailySnapshot, SegmentSnapshot, IntelAlert, SavedView  # noqa: F401
     Base.metadata.create_all(bind=engine)
     _migrate_users_columns()
     try:

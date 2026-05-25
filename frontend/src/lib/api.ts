@@ -497,3 +497,72 @@ export const applyDepartureRulesToTours = async () => {
   const { data } = await api.post("/admin/rules/departure/apply-to-tours");
   return data;
 };
+
+// ── Intelligence hub ──────────────────────────────────────────────────────────
+
+export interface IntelInsight {
+  id: string; category: string; severity: string; title: string; description: string;
+  link_path: string; link_params?: Record<string, string>; priority?: number;
+}
+
+export interface HomeBrief {
+  snapshot_date: string;
+  kpis: Record<string, number | null>;
+  delta: Record<string, number | string | null> | null;
+  trend: Array<{ date: string; avg_gap_pct: number | null; cheaper_segments: number; expensive_segments: number }>;
+  insights: IntelInsight[];
+  alerts: Array<{ id: number; severity: string; category: string; title: string; message: string; link_path: string }>;
+}
+
+export const getHomeBrief = async (): Promise<HomeBrief> => {
+  const { data } = await api.get("/intelligence/home");
+  return data;
+};
+
+export const getCoverageMap = async () => {
+  const { data } = await api.get("/intelligence/coverage");
+  return data;
+};
+
+export const getDataQuality = async () => {
+  const { data } = await api.get("/intelligence/quality");
+  return data;
+};
+
+export const getMatcherSuggest = async () => {
+  const { data } = await api.get("/intelligence/matcher/suggest");
+  return data;
+};
+
+export const getMatcherDetail = async (tourId: number) => {
+  const { data } = await api.get(`/intelligence/matcher/${tourId}`);
+  return data;
+};
+
+export const captureSnapshot = async () => {
+  const { data } = await api.post("/intelligence/snapshot/capture");
+  return data;
+};
+
+export const markAlertRead = async (id: number) => {
+  const { data } = await api.post(`/intelligence/alerts/${id}/read`);
+  return data;
+};
+
+export const bulkPatchTours = async (body: { tour_ids: number[]; thi_truong?: string; tuyen_tour?: string; flagged?: boolean }) => {
+  const { data } = await api.post("/intelligence/tours/bulk-patch", body);
+  return data;
+};
+
+export const applyClassificationToTours = async () => {
+  const { data } = await api.post("/admin/rules/apply-classification-to-tours");
+  return data;
+};
+
+export const reportHtmlUrl = () =>
+  `/api/intelligence/report/html?access_token=${localStorage.getItem("access_token")}`;
+
+export const fetchReportHtml = async (): Promise<string> => {
+  const { data } = await api.get("/intelligence/report/html", { responseType: "text" });
+  return data;
+};

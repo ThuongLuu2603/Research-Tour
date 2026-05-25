@@ -8,6 +8,7 @@ import {
 import {
   getCompareSummary, getCompareSegments, getSegmentDetail,
   getCompareCompetitors, getCompareCompetitorDetail, getFilterOptions,
+  getCoverageMap, getMatcherSuggest, getMatcherDetail,
   CompareSegment,
 } from "@/lib/api";
 import { fmtVND, cn } from "@/lib/utils";
@@ -17,7 +18,7 @@ import {
   TrendingDown, TrendingUp, Minus, ExternalLink, Calendar, Building2,
 } from "lucide-react";
 
-type Tab = "overview" | "price" | "frequency" | "competitors";
+type Tab = "overview" | "price" | "frequency" | "competitors" | "coverage" | "matcher";
 
 function GapBadge({ pct }: { pct: number | null }) {
   if (pct === null) return <span className="badge bg-gray-100">N/A</span>;
@@ -36,8 +37,10 @@ function FreqBadge({ pct }: { pct: number | null }) {
 const TABS: { id: Tab; label: string; tip?: string }[] = [
   { id: "overview", label: "Tổng quan", tip: GLOSSARY.methodologyCompare },
   { id: "price", label: "So sánh giá", tip: GLOSSARY.giaSoSanh },
-  { id: "frequency", label: "Tần suất khởi hành", tip: GLOSSARY.tanSuat },
+  { id: "frequency", label: "Tần suất KH", tip: GLOSSARY.tanSuat },
   { id: "competitors", label: "Đối thủ", tip: GLOSSARY.segment },
+  { id: "coverage", label: "Phủ sóng", tip: GLOSSARY.thiTruong },
+  { id: "matcher", label: "Ghép SP", tip: GLOSSARY.tenTour },
 ];
 
 export default function VietravelCompare() {
@@ -50,6 +53,8 @@ export default function VietravelCompare() {
   const [diemKh, setDiemKh] = useState("");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [selectedCompetitor, setSelectedCompetitor] = useState("");
+
+  const [selectedMatcherTour, setSelectedMatcherTour] = useState<number | null>(null);
 
   const filters = useMemo(() => ({
     ...(thiTruong ? { thi_truong: [thiTruong] } : {}),
@@ -80,6 +85,13 @@ export default function VietravelCompare() {
     queryKey: ["segment-detail", selectedKey],
     queryFn: () => getSegmentDetail(selectedKey!),
     enabled: !!selectedKey,
+  });
+  const { data: coverage } = useQuery({ queryKey: ["coverage"], queryFn: getCoverageMap, enabled: tab === "coverage" });
+  const { data: matcherSuggest } = useQuery({ queryKey: ["matcher-suggest"], queryFn: getMatcherSuggest, enabled: tab === "matcher" });
+  const { data: matcherDetail } = useQuery({
+    queryKey: ["matcher-detail", selectedMatcherTour],
+    queryFn: () => getMatcherDetail(selectedMatcherTour!),
+    enabled: !!selectedMatcherTour,
   });
 
   const priceChart = (segments?.items ?? []).filter((s) => s.gap_pct != null).slice(0, 12).map((s) => ({
@@ -392,6 +404,145 @@ export default function VietravelCompare() {
                           <td className="px-2 py-2">{s.vtr_avg_departures_per_month ?? s.vtr_freq_monthly}</td>
                         </tr>
                       ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {tab === "coverage" && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="kpi-card"><span className="text-xs text-gray-500">Cả VTR & TT</span><p className="text-xl font-bold text-green-700">{coverage?.summary?.both ?? "—"}</p></div>
+            <div className="kpi-card"><span className="text-xs text-gray-500">Chỉ VTR</span><p className="text-xl font-bold text-blue-700">{coverage?.summary?.vtr_only ?? "—"}</p></div>
+            <div className="kpi-card"><span className="text-xs text-gray-500">Chỉ thị trường</span><p className="text-xl font-bold text-gray-700">{coverage?.summary?.market_only ?? "—"}</p></div>
+            <div className="kpi-card border-l-4 border-l-amber-500"><span className="text-xs text-gray-500 inline-flex items-center">Khoảng trống<InfoTip text="Tuyến đối thủ có SP, VTR chưa có" /></span><p className="text-xl font-bold text-amber-700">{coverage?.summary?.gap_opportunities ?? "—"}</p></div>
+          </div>
+          <div className="grid lg:grid-cols-2 gap-4">
+            <div className="card overflow-auto max-h-[420px]">
+              <div className="px-4 py-3 border-b font-semibold text-sm">Ma trận phủ sóng (top 80)</div>
+              <table className="w-full text-xs">
+                <thead className="bg-gray-50 sticky top-0"><tr>
+                  {[COL.thiTruong, COL.tuyenTour, "VTR", "TT", "ĐT", "Trạng thái"].map((h) => (
+                    <th key={h} className="px-2 py-2 text-left">{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {(coverage?.matrix ?? []).map((row: any) => (
+                    <tr key={`${row.thi_truong}-${row.tuyen_tour}`} className="border-t hover:bg-gray-50">
+                      <td className="px-2 py-2">{row.thi_truong}</td>
+                      <td className="px-2 py-2 max-w-[120px] truncate" title={row.tuyen_tour}>{row.tuyen_tour}</td>
+                      <td className="px-2 py-2 font-medium">{row.vtr_tours}</td>
+                      <td className="px-2 py-2">{row.market_tours}</td>
+                      <td className="px-2 py-2">{row.competitor_count}</td>
+                      <td className="px-2 py-2">
+                        <span className={cn("badge text-[10px]",
+                          row.status === "both" && "bg-green-100 text-green-800",
+                          row.status === "vtr_only" && "bg-blue-100 text-blue-800",
+                          row.status === "market_only" && "bg-amber-100 text-amber-800",
+                        )}>
+                          {row.status === "both" ? "Cả hai" : row.status === "vtr_only" ? "Chỉ VTR" : "Chỉ TT"}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="card overflow-auto max-h-[420px]">
+              <div className="px-4 py-3 border-b font-semibold text-sm text-amber-800">Cơ hội khoảng trống — VTR chưa có SP</div>
+              <table className="w-full text-xs">
+                <thead className="bg-amber-50 sticky top-0"><tr>
+                  {[COL.thiTruong, COL.tuyenTour, "SP đối thủ", "Số ĐT"].map((h) => (
+                    <th key={h} className="px-2 py-2 text-left">{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {(coverage?.gaps ?? []).map((g: any) => (
+                    <tr key={`${g.thi_truong}-${g.tuyen_tour}`} className="border-t">
+                      <td className="px-2 py-2">{g.thi_truong}</td>
+                      <td className="px-2 py-2 font-medium">{g.tuyen_tour}</td>
+                      <td className="px-2 py-2">{g.market_tours}</td>
+                      <td className="px-2 py-2">{g.companies}</td>
+                    </tr>
+                  ))}
+                  {!(coverage?.gaps?.length) && (
+                    <tr><td colSpan={4} className="px-4 py-8 text-center text-gray-400">Không có khoảng trống lớn</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === "matcher" && (
+        <div className="grid lg:grid-cols-3 gap-4">
+          <div className="card overflow-auto max-h-[520px]">
+            <div className="px-4 py-3 border-b font-semibold text-sm">Chọn tour Vietravel</div>
+            <div className="divide-y">
+              {(matcherSuggest?.items ?? []).map((t: any) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setSelectedMatcherTour(t.id)}
+                  className={cn("w-full text-left px-4 py-3 hover:bg-blue-50 text-xs", selectedMatcherTour === t.id && "bg-blue-50 border-l-4 border-l-primary-600")}
+                >
+                  <p className="font-medium line-clamp-2">{t.ten_tour}</p>
+                  <p className="text-gray-500 mt-1">{t.thi_truong} · {t.tuyen_tour} · {fmtVND(t.gia)}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="lg:col-span-2 space-y-4">
+            {!selectedMatcherTour && (
+              <div className="card p-12 text-center text-gray-400">
+                <Building2 size={40} className="mx-auto mb-3 opacity-40" />
+                <p>Chọn tour VTR để xem gợi ý ghép cặp với đối thủ</p>
+              </div>
+            )}
+            {matcherDetail?.found && (
+              <>
+                <div className="card p-4 bg-blue-50 border border-blue-200">
+                  <h3 className="font-semibold text-sm text-blue-900">{matcherDetail.vtr_tour?.ten_tour}</h3>
+                  <p className="text-xs text-blue-700 mt-1">
+                    {matcherDetail.vtr_tour?.thi_truong} · {matcherDetail.vtr_tour?.tuyen_tour} · {matcherDetail.vtr_tour?.diem_kh} · {matcherDetail.vtr_tour?.thoi_gian}
+                  </p>
+                  <div className="flex gap-4 mt-2 text-xs">
+                    <span>Giá: <strong>{fmtVND(matcherDetail.vtr_tour?.gia)}</strong></span>
+                    <span>Giá/ngày: <strong>{fmtVND(matcherDetail.vtr_tour?.price_day)}</strong></span>
+                    {matcherDetail.vtr_tour?.link_url && (
+                      <a href={matcherDetail.vtr_tour.link_url} target="_blank" rel="noopener noreferrer" className="text-primary-600 flex items-center gap-1"><ExternalLink size={12} /> Link</a>
+                    )}
+                  </div>
+                </div>
+                <div className="card overflow-auto">
+                  <div className="px-4 py-3 border-b font-semibold text-sm">Tour đối thủ gợi ý (theo điểm khớp)</div>
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50"><tr>
+                      {["Điểm", COL.congTy, COL.tenTour, COL.gia, COL.giaTbNgay, "Chênh %", COL.tbDoanThang, ""].map((h) => (
+                        <th key={h || "link"} className="px-2 py-2 text-left">{h}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>
+                      {(matcherDetail.matches ?? []).map((m: any) => (
+                        <tr key={m.tour_id} className="border-t hover:bg-gray-50">
+                          <td className="px-2 py-2 font-bold text-primary-700">{(m.match_score * 100).toFixed(0)}%</td>
+                          <td className="px-2 py-2">{m.cong_ty}</td>
+                          <td className="px-2 py-2 max-w-[180px] truncate" title={m.ten_tour}>{m.ten_tour}</td>
+                          <td className="px-2 py-2">{m.gia_raw || fmtVND(m.gia)}</td>
+                          <td className="px-2 py-2">{fmtVND(m.price_day)}</td>
+                          <td className="px-2 py-2"><GapBadge pct={m.price_gap_pct} /></td>
+                          <td className="px-2 py-2">{m.departures_monthly}</td>
+                          <td className="px-2 py-2">{m.link_url && <a href={m.link_url} target="_blank" rel="noopener noreferrer"><ExternalLink size={12} /></a>}</td>
+                        </tr>
+                      ))}
+                      {!(matcherDetail.matches?.length) && (
+                        <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">Không tìm thấy tour khớp đủ điểm</td></tr>
+                      )}
                     </tbody>
                   </table>
                 </div>

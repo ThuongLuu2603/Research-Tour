@@ -132,6 +132,12 @@ async def stream_job(job_id: int, _: User = Depends(get_current_user)):
     return StreamingResponse(event_gen(), media_type="text/event-stream")
 
 
+@router.get("/registry")
+def scraper_registry(_: User = Depends(get_current_user)):
+    from scrapers.registry import list_scrapers
+    return {"items": list_scrapers()}
+
+
 @router.get("/schedule")
 def get_schedule(_: User = Depends(get_current_user)):
     from scheduler import get_schedule_config
@@ -214,6 +220,11 @@ def _run_job(job_id: int, scraper_name: str):
         job.finished_at = datetime.utcnow()
         db.commit()
         _emit_done(job_id, added, updated)
+        try:
+            from snapshot_service import capture_daily_snapshot
+            capture_daily_snapshot(db)
+        except Exception:
+            pass
 
     except Exception as exc:
         db.rollback()

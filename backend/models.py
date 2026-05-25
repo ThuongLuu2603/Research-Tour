@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, date
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, ForeignKey
+from sqlalchemy import Boolean, Date, DateTime, Float, Integer, String, Text, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -125,3 +125,71 @@ class DepartureAliasRule(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DailySnapshot(Base):
+    """Snapshot KPI hàng ngày — trend & báo cáo."""
+    __tablename__ = "daily_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    snapshot_date: Mapped[date] = mapped_column(Date, index=True, unique=True)
+    total_tours: Mapped[int] = mapped_column(Integer, default=0)
+    vtr_tours: Mapped[int] = mapped_column(Integer, default=0)
+    segment_count: Mapped[int] = mapped_column(Integer, default=0)
+    cheaper_segments: Mapped[int] = mapped_column(Integer, default=0)
+    expensive_segments: Mapped[int] = mapped_column(Integer, default=0)
+    similar_segments: Mapped[int] = mapped_column(Integer, default=0)
+    avg_gap_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    freq_leading_segments: Mapped[int] = mapped_column(Integer, default=0)
+    freq_lagging_segments: Mapped[int] = mapped_column(Integer, default=0)
+    vtr_departures_monthly: Mapped[float] = mapped_column(Float, default=0)
+    unclassified_tours: Mapped[int] = mapped_column(Integer, default=0)
+    flagged_tours: Mapped[int] = mapped_column(Integer, default=0)
+    insights_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class SegmentSnapshot(Base):
+    __tablename__ = "segment_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    snapshot_date: Mapped[date] = mapped_column(Date, index=True)
+    segment_key: Mapped[str] = mapped_column(String(512), index=True)
+    thi_truong: Mapped[str] = mapped_column(String(128))
+    tuyen_tour: Mapped[str] = mapped_column(String(256))
+    diem_kh: Mapped[str] = mapped_column(String(128))
+    so_ngay: Mapped[float] = mapped_column(Float)
+    gap_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    freq_gap_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    vtr_avg_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    comparison_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    vtr_avg_departures: Mapped[float | None] = mapped_column(Float, nullable=True)
+    market_avg_departures: Mapped[float | None] = mapped_column(Float, nullable=True)
+    vtr_tour_count: Mapped[int] = mapped_column(Integer, default=0)
+    market_tour_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class IntelAlert(Base):
+    __tablename__ = "intel_alerts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    alert_type: Mapped[str] = mapped_column(String(64), index=True)
+    severity: Mapped[str] = mapped_column(String(16), default="info")
+    category: Mapped[str] = mapped_column(String(32), default="price")
+    title: Mapped[str] = mapped_column(String(512))
+    message: Mapped[str] = mapped_column(Text, default="")
+    link_path: Mapped[str] = mapped_column(String(256), default="")
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class SavedView(Base):
+    __tablename__ = "saved_views"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    page: Mapped[str] = mapped_column(String(64))
+    filters_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

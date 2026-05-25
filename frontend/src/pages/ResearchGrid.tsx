@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getTours, getFilterOptions, patchTour, syncToursFromGoogleSheet, Tour } from "@/lib/api";
+import { getTours, getFilterOptions, patchTour, syncToursFromGoogleSheet, bulkPatchTours, Tour } from "@/lib/api";
 import { fmtVND, segmentColor, cn } from "@/lib/utils";
 import { COL } from "@/lib/glossary";
 import { Search, Download, Flag, FlagOff, ChevronLeft, ChevronRight, ExternalLink, Pencil, Check, X, RefreshCw } from "lucide-react";
@@ -51,6 +51,9 @@ export default function ResearchGrid() {
   const [selNguon, setSelNguon] = useState<string[]>([]);
   const [onlyFlagged, setOnlyFlagged] = useState(false);
   const [toast, setToast] = useState("");
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [bulkMarket, setBulkMarket] = useState("");
+  const [bulkRoute, setBulkRoute] = useState("");
 
   const { data: opts } = useQuery({ queryKey: ["filter-options"], queryFn: getFilterOptions, staleTime: 60000 });
   const { data, isFetching } = useQuery({
@@ -84,6 +87,20 @@ export default function ResearchGrid() {
     },
   });
 
+  const bulkMutation = useMutation({
+    mutationFn: bulkPatchTours,
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["tours"] });
+      setSelectedIds([]);
+      setBulkMarket("");
+      setBulkRoute("");
+      setToast(`Đã cập nhật ${res.updated ?? selectedIds.length} tour`);
+    },
+    onError: (e: { response?: { data?: { detail?: string } } }) => {
+      setToast(e.response?.data?.detail || "Lỗi cập nhật hàng loạt");
+    },
+  });
+
   const totalPages = Math.ceil((data?.total ?? 0) / PAGE_SIZE);
 
   const handleExport = (type: "csv" | "excel") => {
@@ -98,6 +115,13 @@ export default function ResearchGrid() {
     set(arr.includes(val) ? arr.filter((x) => x !== val) : [...arr, val]);
     setPage(1);
   }, []);
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  };
+
+  const pageIds = (data?.items ?? []).map((t) => t.id);
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.includes(id));
 
   return (
     <div className="flex flex-col h-full p-6 space-y-4">
@@ -148,7 +172,7 @@ export default function ResearchGrid() {
         </div>
 
         {/* Source filter */}
-        <div className="flex gap-1">
+        <div className="flex gap-1 flex-wrap">
           {(opts?.nguon ?? []).map((n: string) => (
             <button
               key={n}
@@ -159,6 +183,38 @@ export default function ResearchGrid() {
             </button>
           ))}
         </div>
+
+        <select
+          className="input text-xs py-1.5 max-w-[160px]"
+          value=""
+          onChange={(e) => { if (e.target.value) toggleFilter(selMarkets, setSelMarkets, e.target.value); e.target.value = ""; }}
+        >
+          <option value="">{COL.thiTruong}{selMarkets.length ? ` (${selMarkets.length})` : ""}</option>
+          {(opts?.thi_truong ?? []).filter((m: string) => !selMarkets.includes(m)).map((m: string) => (
+            <option key={m} value={m}>{m}</option>
+          ))}
+        </select>
+        {selMarkets.map((m) => (
+          <button key={m} onClick={() => toggleFilter(selMarkets, setSelMarkets, m)} className="text-xs px-2 py-1 rounded-full bg-indigo-100 text-indigo-800 flex items-center gap-1">
+            {m}<X size={10} />
+          </button>
+        ))}
+
+        <select
+          className="input text-xs py-1.5 max-w-[160px]"
+          value=""
+          onChange={(e) => { if (e.target.value) toggleFilter(selCompanies, setSelCompanies, e.target.value); e.target.value = ""; }}
+        >
+          <option value="">{COL.congTy}{selCompanies.length ? ` (${selCompanies.length})` : ""}</option>
+          {(opts?.cong_ty ?? []).filter((c: string) => !selCompanies.includes(c)).slice(0, 200).map((c: string) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+        {selCompanies.map((c) => (
+          <button key={c} onClick={() => toggleFilter(selCompanies, setSelCompanies, c)} className="text-xs px-2 py-1 rounded-full bg-purple-100 text-purple-800 flex items-center gap-1">
+            {c}<X size={10} />
+          </button>
+        ))}
 
         <button
           onClick={() => { setOnlyFlagged((v) => !v); setPage(1); }}
@@ -179,11 +235,35 @@ export default function ResearchGrid() {
         {isFetching && <span className="text-xs text-gray-400 ml-auto animate-pulse">Đang tải...</span>}
       </div>
 
+      {selectedIds.length > 0 && (
+        <div className="card p-3 flex flex-wrap items-center gap-3 bg-slate-50 border border-slate-200">
+          <span className="text-xs font-medium">{selectedIds.length} tour đã chọn</span>
+          <input className="input text-xs py-1 w-40" placeholder={COL.thiTruong} value={bulkMarket} onChange={(e) => setBulkMarket(e.target.value)} />
+          <input className="input text-xs py-1 w-40" placeholder={COL.tuyenTour} value={bulkRoute} onChange={(e) => setBulkRoute(e.target.value)} />
+          <button
+            className="btn-primary text-xs"
+            disabled={bulkMutation.isPending || (!bulkMarket && !bulkRoute)}
+            onClick={() => bulkMutation.mutate({
+              tour_ids: selectedIds,
+              ...(bulkMarket ? { thi_truong: bulkMarket } : {}),
+              ...(bulkRoute ? { tuyen_tour: bulkRoute } : {}),
+            })}
+          >
+            Áp dụng hàng loạt
+          </button>
+          <button className="btn-secondary text-xs" onClick={() => bulkMutation.mutate({ tour_ids: selectedIds, flagged: true })}>Flag</button>
+          <button className="text-xs text-gray-500" onClick={() => setSelectedIds([])}>Bỏ chọn</button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="card overflow-auto flex-1 min-h-0">
         <table className="w-full text-sm border-collapse">
           <thead className="sticky top-0 z-10">
             <tr className="bg-gray-50 border-b border-gray-200">
+              <th className="px-3 py-2.5 text-left">
+                <input type="checkbox" checked={allPageSelected} onChange={() => setSelectedIds(allPageSelected ? selectedIds.filter((id) => !pageIds.includes(id)) : [...new Set([...selectedIds, ...pageIds])])} />
+              </th>
               {["#", COL.tenTour, COL.congTy, COL.thiTruong, COL.tuyenTour, COL.thoiGian, COL.gia, "Phân khúc", "Nguồn", "Ghi chú", "Flag", COL.linkTour].map((h) => (
                 <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap">{h}</th>
               ))}
@@ -191,7 +271,10 @@ export default function ResearchGrid() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {(data?.items ?? []).map((tour, i) => (
-              <tr key={tour.id} className={cn("hover:bg-blue-50 transition-colors", tour.flagged && "bg-amber-50")}>
+              <tr key={tour.id} className={cn("hover:bg-blue-50 transition-colors", tour.flagged && "bg-amber-50", selectedIds.includes(tour.id) && "bg-blue-50/60")}>
+                <td className="px-3 py-2">
+                  <input type="checkbox" checked={selectedIds.includes(tour.id)} onChange={() => toggleSelect(tour.id)} />
+                </td>
                 <td className="px-3 py-2 text-xs text-gray-400">{(page - 1) * PAGE_SIZE + i + 1}</td>
                 <td className="px-3 py-2 max-w-xs">
                   <p className="font-medium text-gray-900 text-xs leading-snug line-clamp-2">{tour.ten_tour}</p>

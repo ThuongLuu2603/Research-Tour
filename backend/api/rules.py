@@ -8,6 +8,7 @@ from api.auth import require_admin
 from classification import (
     apply_company_aliases_to_tours,
     apply_departure_aliases_to_tours,
+    apply_classification_rules_to_tours,
     invalidate_classification_cache,
     seed_company_aliases_from_defaults,
     seed_departure_aliases_from_defaults,
@@ -429,3 +430,9 @@ def seed_departure_defaults(_: User = Depends(require_admin), db: Session = Depe
 def apply_departure_rules_to_tours(_: User = Depends(require_admin), db: Session = Depends(get_db)):
     updated = apply_departure_aliases_to_tours(db)
     return {"updated": updated, "message": f"Đã chuẩn hóa điểm khởi hành cho {updated} tour"}
+
+
+@router.post("/apply-classification-to-tours")
+def apply_classification_endpoint(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    result = apply_classification_rules_to_tours(db)
+    return {**result, "message": f"Đã cập nhật {result['market_updated']} thị trường, {result['route_updated']} tuyến tour"}

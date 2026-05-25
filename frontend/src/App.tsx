@@ -3,23 +3,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import Layout from "@/components/Layout";
 import LoginPage from "@/pages/LoginPage";
-import Dashboard from "@/pages/Dashboard";
+import IntelligenceHome from "@/pages/IntelligenceHome";
 import ResearchGrid from "@/pages/ResearchGrid";
-import PriceAnalysis from "@/pages/PriceAnalysis";
-import MarketShare from "@/pages/MarketShare";
-import Competitor from "@/pages/Competitor";
+import VietravelCompare from "@/pages/VietravelCompare";
+import ReportsPage from "@/pages/ReportsPage";
 import ScraperHub from "@/pages/ScraperHub";
 import SettingsPage from "@/pages/SettingsPage";
-import VietravelCompare from "@/pages/VietravelCompare";
 import RulesAdminPage from "@/pages/RulesAdminPage";
 
 const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 30_000,
-      retry: 1,
-    },
-  },
+  defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
 });
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -43,23 +36,20 @@ export default function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
-            <Route
-              path="/"
-              element={
-                <PrivateRoute>
-                  <Layout />
-                </PrivateRoute>
-              }
-            >
-              <Route index element={<Dashboard />} />
+            <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>
+              <Route index element={<IntelligenceHome />} />
               <Route path="data" element={<ResearchGrid />} />
-              <Route path="price" element={<PriceAnalysis />} />
-              <Route path="market" element={<MarketShare />} />
-              <Route path="competitor" element={<Competitor />} />
               <Route path="compare" element={<VietravelCompare />} />
+              <Route path="reports" element={<ReportsPage />} />
+              <Route path="ops" element={<ScraperHub />} />
+              <Route path="scraper" element={<Navigate to="/ops" replace />} />
               <Route path="rules" element={<RulesAdminPage />} />
-              <Route path="scraper" element={<ScraperHub />} />
               <Route path="settings" element={<SettingsPage />} />
+              {/* Legacy redirects */}
+              <Route path="price" element={<Navigate to="/compare?tab=price" replace />} />
+              <Route path="market" element={<Navigate to="/compare?tab=overview" replace />} />
+              <Route path="competitor" element={<Navigate to="/compare?tab=competitors" replace />} />
+              <Route path="dashboard" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>
         </BrowserRouter>

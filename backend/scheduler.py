@@ -52,6 +52,19 @@ async def _auto_scrape(scraper_name: str):
     logger.info("Auto-scrape triggered: %s job_id=%d", scraper_name, job_id)
 
 
+async def _daily_snapshot():
+    from database import SessionLocal
+    from snapshot_service import capture_daily_snapshot
+    db = SessionLocal()
+    try:
+        capture_daily_snapshot(db)
+        logger.info("Daily intelligence snapshot captured")
+    except Exception as e:
+        logger.exception("Daily snapshot failed: %s", e)
+    finally:
+        db.close()
+
+
 def start_scheduler():
     global _scheduler
     _scheduler = AsyncIOScheduler()
@@ -67,6 +80,12 @@ def start_scheduler():
         CronTrigger(hour=_schedule_hour, minute=_schedule_minute + 20),
         id="daily_findtourgo",
         args=["findtourgo"],
+        replace_existing=True,
+    )
+    _scheduler.add_job(
+        _daily_snapshot,
+        CronTrigger(hour=8, minute=30),
+        id="daily_intel_snapshot",
         replace_existing=True,
     )
     _scheduler.start()

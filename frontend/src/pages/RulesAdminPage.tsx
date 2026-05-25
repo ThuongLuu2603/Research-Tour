@@ -8,7 +8,7 @@ import {
   listCompanyRules, createCompanyRule, deleteCompanyRule,
   listDepartureRules, createDepartureRule, deleteDepartureRule,
   seedMarketDefaults, seedCompanyDefaults, seedDepartureDefaults,
-  applyCompanyRulesToTours, applyDepartureRulesToTours,
+  applyCompanyRulesToTours, applyDepartureRulesToTours, applyClassificationToTours,
   syncRouteFromSheet, syncRouteToSheet,
   syncMarketFromSheet, syncMarketToSheet,
   syncAllFromSheet, syncAllToSheet,
@@ -84,6 +84,9 @@ export default function RulesAdminPage() {
           </button>
           <button onClick={() => onSync(syncAllToSheet, "OK")} className="btn-secondary text-xs flex items-center gap-1">
             <Upload size={13} /> Đẩy tất cả App → Sheet
+          </button>
+          <button onClick={() => onSync(applyClassificationToTours, "Đã áp dụng phân loại lên toàn bộ tour")} className="btn-primary text-xs flex items-center gap-1">
+            <RefreshCw size={13} /> Áp dụng phân loại → tour
           </button>
         </div>
         <p className="text-xs text-gray-500">
