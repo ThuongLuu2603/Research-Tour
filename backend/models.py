@@ -76,3 +76,28 @@ class Tour(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class MarketKeywordRule(Base):
+    """Quy tắc keyword → Thị trường (thay thế hardcode market_rules.py)."""
+    __tablename__ = "market_keyword_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    market: Mapped[str] = mapped_column(String(128), index=True)
+    keyword: Mapped[str] = mapped_column(String(256), index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class RouteKeywordRule(Base):
+    """Quy tắc keyword → Tuyến tour (trong 1 thị trường). Keywords: comma-separated, ALL must match."""
+    __tablename__ = "route_keyword_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    thi_truong: Mapped[str] = mapped_column(String(128), index=True)
+    tuyen_tour: Mapped[str] = mapped_column(String(256), index=True)
+    keywords: Mapped[str] = mapped_column(String(512))  # e.g. "bangkok,pattaya"
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -223,3 +223,119 @@ export const syncSheetData = async () => {
   const { data } = await api.post("/admin/sync-data");
   return data;
 };
+
+// ── Compare (Vietravel vs market) ─────────────────────────────────────────────
+
+export interface CompareSummary {
+  company: string;
+  total_vietravel_tours: number;
+  segments_with_vietravel: number;
+  cheaper_count: number;
+  expensive_count: number;
+  similar_count: number;
+  avg_gap_pct: number | null;
+}
+
+export interface CompareSegment {
+  segment_key: string;
+  tuyen_tour: string;
+  diem_kh: string;
+  so_ngay: number;
+  thi_truong: string;
+  vietravel_avg_day: number | null;
+  market_avg_day: number | null;
+  competitor_avg_day: number | null;
+  gap_pct: number | null;
+  vietravel_count: number;
+  market_count: number;
+  position: string;
+}
+
+export interface CompareFilters {
+  thi_truong?: string[];
+  tuyen_tour?: string;
+  sort_by?: string;
+  limit?: number;
+}
+
+const buildCompareParams = (filters: CompareFilters = {}) => {
+  const params = new URLSearchParams();
+  filters.thi_truong?.forEach((m) => params.append("thi_truong", m));
+  if (filters.tuyen_tour) params.set("tuyen_tour", filters.tuyen_tour);
+  if (filters.sort_by) params.set("sort_by", filters.sort_by);
+  if (filters.limit) params.set("limit", String(filters.limit));
+  return params.toString();
+};
+
+export const getCompareSummary = async (filters: CompareFilters = {}): Promise<CompareSummary> => {
+  const q = buildCompareParams(filters);
+  const { data } = await api.get(`/compare/summary${q ? "?" + q : ""}`);
+  return data;
+};
+
+export const getCompareSegments = async (filters: CompareFilters = {}) => {
+  const q = buildCompareParams(filters);
+  const { data } = await api.get(`/compare/segments${q ? "?" + q : ""}`);
+  return data as { methodology: string; items: CompareSegment[]; total: number };
+};
+
+export const getSegmentTours = async (segmentKey: string) => {
+  const { data } = await api.get(`/compare/segment-tours?segment_key=${encodeURIComponent(segmentKey)}`);
+  return data as {
+    segment_key: string;
+    tours: Array<{
+      id: number; cong_ty: string; ten_tour: string; gia: number; gia_raw: string;
+      so_ngay: number; gia_per_day: number; diem_kh: string; link_url: string; is_vietravel: boolean;
+    }>;
+  };
+};
+
+// ── Classification rules (admin) ──────────────────────────────────────────────
+
+export interface MarketRule {
+  id: number; market: string; keyword: string; active: boolean; sort_order: number;
+}
+
+export interface RouteRule {
+  id: number; thi_truong: string; tuyen_tour: string; keywords: string; active: boolean; sort_order: number;
+}
+
+export const listMarketRules = async (): Promise<MarketRule[]> => {
+  const { data } = await api.get("/admin/rules/market");
+  return data;
+};
+
+export const createMarketRule = async (body: { market: string; keyword: string }) => {
+  const { data } = await api.post("/admin/rules/market", body);
+  return data;
+};
+
+export const deleteMarketRule = async (id: number) => {
+  const { data } = await api.delete(`/admin/rules/market/${id}`);
+  return data;
+};
+
+export const listRouteRules = async (): Promise<RouteRule[]> => {
+  const { data } = await api.get("/admin/rules/route");
+  return data;
+};
+
+export const createRouteRule = async (body: { thi_truong: string; tuyen_tour: string; keywords: string }) => {
+  const { data } = await api.post("/admin/rules/route", body);
+  return data;
+};
+
+export const deleteRouteRule = async (id: number) => {
+  const { data } = await api.delete(`/admin/rules/route/${id}`);
+  return data;
+};
+
+export const seedMarketDefaults = async () => {
+  const { data } = await api.post("/admin/rules/seed-market-defaults");
+  return data;
+};
+
+export const syncRouteFromSheet = async () => {
+  const { data } = await api.post("/admin/rules/sync-route-from-sheet");
+  return data;
+};

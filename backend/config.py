@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     scraper_schedule_hour: int = 7
     scraper_schedule_minute: int = 0
 
+    # Công ty của bạn (dùng cho so sánh đối thủ)
+    company_name: str = "Vietravel"
+
     @field_validator("database_url", mode="before")
     @classmethod
     def fix_postgres_url(cls, v: str) -> str:

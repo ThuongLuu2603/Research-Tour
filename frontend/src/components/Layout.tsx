@@ -2,7 +2,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   LayoutDashboard, Table2, BarChart3, PieChart,
-  Building2, Radio, LogOut, User, Settings
+  Building2, Radio, LogOut, User, Settings, Scale, Tags
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -12,12 +12,18 @@ const NAV = [
   { to: "/price", icon: BarChart3, label: "Phân tích Giá" },
   { to: "/market", icon: PieChart, label: "Thị trường" },
   { to: "/competitor", icon: Building2, label: "Đối thủ" },
+  { to: "/compare", icon: Scale, label: "So sánh Vietravel" },
   { to: "/scraper", icon: Radio, label: "Scraper Hub" },
   { to: "/settings", icon: Settings, label: "Cài đặt" },
 ];
 
+const ADMIN_NAV = [
+  { to: "/rules", icon: Tags, label: "Quy tắc phân loại" },
+];
+
 export default function Layout() {
   const { user, logout } = useAuth();
+  const isAdmin = user?.role === "admin";
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">
@@ -36,7 +42,7 @@ export default function Layout() {
 
         {/* Navigation */}
         <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
-          {NAV.map(({ to, icon: Icon, label }) => (
+          {[...NAV, ...(isAdmin ? ADMIN_NAV : [])].map(({ to, icon: Icon, label }) => (
             <NavLink
               key={to}
               to={to}

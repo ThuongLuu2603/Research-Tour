@@ -27,9 +27,14 @@ def get_db():
 
 def init_db():
     """Create all tables and apply lightweight schema migrations."""
-    from models import Tour, ScrapeJob, User  # noqa: F401
+    from models import Tour, ScrapeJob, User, MarketKeywordRule, RouteKeywordRule  # noqa: F401
     Base.metadata.create_all(bind=engine)
     _migrate_users_columns()
+    try:
+        from classification import seed_market_rules_from_hardcode
+        seed_market_rules_from_hardcode()
+    except Exception:
+        pass
 
 
 def _migrate_users_columns():

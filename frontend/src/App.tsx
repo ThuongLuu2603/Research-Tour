@@ -10,6 +10,8 @@ import MarketShare from "@/pages/MarketShare";
 import Competitor from "@/pages/Competitor";
 import ScraperHub from "@/pages/ScraperHub";
 import SettingsPage from "@/pages/SettingsPage";
+import VietravelCompare from "@/pages/VietravelCompare";
+import RulesAdminPage from "@/pages/RulesAdminPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -54,6 +56,8 @@ export default function App() {
               <Route path="price" element={<PriceAnalysis />} />
               <Route path="market" element={<MarketShare />} />
               <Route path="competitor" element={<Competitor />} />
+              <Route path="compare" element={<VietravelCompare />} />
+              <Route path="rules" element={<RulesAdminPage />} />
               <Route path="scraper" element={<ScraperHub />} />
               <Route path="settings" element={<SettingsPage />} />
             </Route>

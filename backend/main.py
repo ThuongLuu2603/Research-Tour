@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from api import auth, tours, analytics, scraper as scraper_api, admin
+from api import auth, tours, analytics, scraper as scraper_api, admin, compare, rules as rules_api
 from api.scraper import set_event_loop
 from database import init_db
 from scheduler import start_scheduler, stop_scheduler
@@ -57,6 +57,8 @@ app.include_router(tours.router)
 app.include_router(analytics.router)
 app.include_router(scraper_api.router)
 app.include_router(admin.router)
+app.include_router(compare.router)
+app.include_router(rules_api.router)
 
 
 @app.get("/health")

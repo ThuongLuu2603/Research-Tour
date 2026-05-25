@@ -65,6 +65,11 @@ def resolve_tuyen_tour(
     rules: dict[str, list[dict[str, Any]]] | None = None,
 ) -> str:
     """First matching rule wins; default = thị trường."""
+    try:
+        from classification import resolve_tuyen_tour as _resolve
+        return _resolve(thi_truong, ten_tour, lich_trinh)
+    except Exception:
+        pass
     if rules is None:
         rules = load_route_rules()
 

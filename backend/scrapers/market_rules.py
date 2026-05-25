@@ -52,6 +52,11 @@ def _build_sorted_keywords() -> list[tuple[str, str]]:
 
 def resolve_thi_truong(ten_tour: str, lich_trinh: str = "") -> str:
     """Map tour name + itinerary to Thị trường label."""
+    try:
+        from classification import resolve_thi_truong as _resolve
+        return _resolve(ten_tour, lich_trinh)
+    except Exception:
+        pass
     global _SORTED_KEYWORDS
     if not _SORTED_KEYWORDS:
         _SORTED_KEYWORDS = _build_sorted_keywords()
