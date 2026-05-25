@@ -65,6 +65,20 @@ async def _daily_snapshot():
         db.close()
 
 
+async def _daily_sheet_sync():
+    from database import SessionLocal
+    from sheets_tour_sync import merge_all_sheets_to_db
+
+    db = SessionLocal()
+    try:
+        result = merge_all_sheets_to_db(db)
+        logger.info("Daily sheet sync: updated=%s inserted=%s", result.get("total_updated"), result.get("total_inserted"))
+    except Exception as e:
+        logger.exception("Daily sheet sync failed: %s", e)
+    finally:
+        db.close()
+
+
 def start_scheduler():
     global _scheduler
     _scheduler = AsyncIOScheduler()
@@ -86,6 +100,12 @@ def start_scheduler():
         _daily_snapshot,
         CronTrigger(hour=8, minute=30),
         id="daily_intel_snapshot",
+        replace_existing=True,
+    )
+    _scheduler.add_job(
+        _daily_sheet_sync,
+        CronTrigger(hour=9, minute=0),
+        id="daily_sheet_sync",
         replace_existing=True,
     )
     _scheduler.start()

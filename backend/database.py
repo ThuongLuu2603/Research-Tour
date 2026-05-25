@@ -28,9 +28,14 @@ def get_db():
 def init_db():
     """Create all tables and apply lightweight schema migrations."""
     from models import Tour, ScrapeJob, User, MarketKeywordRule, RouteKeywordRule, CompanyAliasRule, DepartureAliasRule, DurationAliasRule  # noqa: F401
-    from models import DailySnapshot, SegmentSnapshot, IntelAlert, SavedView  # noqa: F401
+    from models import DailySnapshot, SegmentSnapshot, IntelAlert, SavedView, Workspace, WorkspaceMember, TourOverride  # noqa: F401
     Base.metadata.create_all(bind=engine)
     _migrate_users_columns()
+    from migrations import _migrate_tour_columns, _migrate_saved_views, _backfill_external_ids, _ensure_default_workspaces
+    _migrate_tour_columns()
+    _migrate_saved_views()
+    _backfill_external_ids()
+    _ensure_default_workspaces()
     try:
         from classification import seed_market_rules_from_hardcode, seed_company_aliases_from_defaults, seed_departure_aliases_from_defaults, seed_duration_aliases_from_defaults
         seed_market_rules_from_hardcode()

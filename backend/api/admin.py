@@ -109,6 +109,8 @@ def create_user(req: CreateUserRequest, admin: User = Depends(require_admin), db
     db.add(user)
     db.commit()
     db.refresh(user)
+    from workspace_service import ensure_personal_workspace
+    ensure_personal_workspace(db, user)
     return UserAdminOut(
         id=user.id, username=user.username, display_name=user.display_name,
         role=user.role, avatar_url=user.avatar_url or "", is_active=user.is_active, last_login=None,

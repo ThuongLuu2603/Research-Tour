@@ -159,13 +159,19 @@ def patch_tour(
     tour_id: int,
     patch: TourPatch,
     db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ):
     from classification import resolve_company_name
+    from fastapi import HTTPException
+
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Chỉ admin sửa dữ liệu chung. Dùng workspace trên tab Sản phẩm & Data.",
+        )
 
     tour = db.query(Tour).filter(Tour.id == tour_id).first()
     if not tour:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Tour không tồn tại")
 
     data = patch.model_dump(exclude_none=True)

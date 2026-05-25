@@ -117,12 +117,12 @@ export default function VietravelCompare() {
     queryFn: () => getCompareSummary(filters),
     staleTime: compareStale,
   });
-  const { data: segments, isLoading: segmentsLoading, isError: segmentsError } = useQuery({
+  const { data: segments, isLoading: segmentsLoading, isError: segmentsError, refetch: refetchSegments } = useQuery({
     queryKey: ["compare-segments", segmentQueryFilters],
     queryFn: () => getCompareSegments(segmentQueryFilters),
     enabled: needsSegments,
     staleTime: compareStale,
-    placeholderData: (prev) => prev,
+    retry: 1,
   });
   const { data: classGaps } = useQuery({
     queryKey: ["compare-class-gaps", filters],
@@ -242,6 +242,15 @@ export default function VietravelCompare() {
       </div>
     );
   };
+
+  const SegmentsErrorBanner = () => (
+    segmentsError ? (
+      <div className="card p-4 border border-red-200 bg-red-50 text-sm text-red-800 flex flex-wrap items-center justify-between gap-2">
+        <span>Không tải được bảng so sánh — thử làm mới hoặc liên hệ admin.</span>
+        <button type="button" className="btn btn-sm" onClick={() => refetchSegments()}>Thử lại</button>
+      </div>
+    ) : null
+  );
 
   const PriceTable = () => (
     <div className="card overflow-auto max-h-[520px]">
@@ -458,8 +467,9 @@ export default function VietravelCompare() {
 
       {tab === "price" && (
         <div className="space-y-3">
+          <SegmentsErrorBanner />
           <h3 className="font-semibold mb-2 text-sm inline-flex items-center">
-            Bảng so sánh giá ({segments?.total ?? 0} nhóm)
+            Bảng so sánh giá ({segmentsLoading ? "…" : segments?.total ?? summary?.segments_with_vietravel ?? 0} nhóm)
             <InfoTip text={GLOSSARY.giaSoSanh} />
           </h3>
           <PriceTable />
@@ -469,6 +479,7 @@ export default function VietravelCompare() {
 
       {tab === "frequency" && (
         <div className="space-y-4">
+          <SegmentsErrorBanner />
           <div className="card p-5">
             <h3 className="font-semibold mb-3 flex items-center gap-2">
               <Calendar size={16} /> {COL.tbDoanThang} — VTR vs đối thủ (%)

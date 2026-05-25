@@ -7,6 +7,7 @@ from datetime import datetime
 
 from config import settings
 from models import Tour
+from tour_identity import compute_content_hash, compute_external_id
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +137,11 @@ def _row_to_fields(row: list[str]) -> dict | None:
     }
 
 
-def _find_db_tour(db, nguon: str, fields: dict) -> Tour | None:
+def _find_db_tour(db, nguon: str, fields: dict, external_id: str) -> Tour | None:
+    tour = db.query(Tour).filter(Tour.external_id == external_id).first()
+    if tour:
+        return tour
+
     ma = fields.get("ma_tour") or ""
     link = fields.get("link_url") or ""
     if ma:
@@ -171,10 +176,21 @@ def _find_db_tour(db, nguon: str, fields: dict) -> Tour | None:
 
 
 def _apply_fields_to_tour(
-    tour: Tour, fields: dict, nguon: str, now: datetime, *, preserve_nguon: bool = False
+    tour: Tour,
+    fields: dict,
+    nguon: str,
+    now: datetime,
+    *,
+    preserve_nguon: bool = False,
+    preserve_analyst: bool = True,
+    external_id: str = "",
+    sheet_row: int | None = None,
 ) -> None:
     from classification import resolve_company_name, resolve_departure_point
     from seed import parse_ngay, price_segment
+
+    note = tour.analyst_note
+    flagged = tour.flagged
 
     tour.cong_ty = resolve_company_name(fields["cong_ty"])[:256]
     tour.thi_truong = fields["thi_truong"][:128]
@@ -196,6 +212,16 @@ def _apply_fields_to_tour(
     tour.phan_khuc = price_segment(fields["gia"])
     if not preserve_nguon:
         tour.nguon = nguon
+    if external_id:
+        tour.external_id = external_id[:128]
+    tour.sheet_source = nguon
+    if sheet_row is not None:
+        tour.sheet_row = sheet_row
+    tour.content_hash = compute_content_hash(fields)
+    tour.last_synced_at = now
+    if preserve_analyst:
+        tour.analyst_note = note
+        tour.flagged = flagged
     tour.updated_at = now
 
 
@@ -209,17 +235,24 @@ def merge_sheet_source_to_db(db, nguon: str) -> dict:
     ws = _worksheet(nguon)
     rows = ws.get_all_values()
     if len(rows) < 2:
-        return {"nguon": nguon, "updated": 0, "inserted": 0, "skipped": 0}
+        return {"nguon": nguon, "updated": 0, "inserted": 0, "skipped": 0, "unchanged": 0}
 
-    updated = inserted = skipped = 0
+    updated = inserted = skipped = unchanged = 0
     now = datetime.utcnow()
-    for row in rows[1:]:
+    for row_idx, row in enumerate(rows[1:], start=2):
         fields = _row_to_fields(row)
         if not fields:
             skipped += 1
             continue
-        tour = _find_db_tour(db, nguon, fields)
-        if not tour:
+        external_id = compute_external_id(
+            nguon,
+            ma_tour=fields.get("ma_tour", ""),
+            link_url=fields.get("link_url", ""),
+            ten_tour=fields.get("ten_tour", ""),
+        )
+        tour = _find_db_tour(db, nguon, fields, external_id)
+        is_new = tour is None
+        if is_new:
             if not fields.get("gia"):
                 skipped += 1
                 continue
@@ -227,6 +260,10 @@ def merge_sheet_source_to_db(db, nguon: str) -> dict:
             db.add(tour)
             inserted += 1
         else:
+            new_hash = compute_content_hash(fields)
+            if tour.content_hash == new_hash and tour.sheet_source == nguon:
+                unchanged += 1
+                continue
             updated += 1
 
         _apply_fields_to_tour(
@@ -234,16 +271,32 @@ def merge_sheet_source_to_db(db, nguon: str) -> dict:
             fields,
             nguon,
             now,
-            preserve_nguon=(tour.nguon not in ("", nguon)),
+            preserve_nguon=(not is_new and tour.nguon not in ("", nguon)),
+            external_id=external_id,
+            sheet_row=row_idx,
         )
 
     db.commit()
+    logger.info(
+        "Sheet sync %s: inserted=%s updated=%s unchanged=%s skipped=%s",
+        nguon, inserted, updated, unchanged, skipped,
+    )
+    return {
+        "nguon": nguon,
+        "updated": updated,
+        "inserted": inserted,
+        "skipped": skipped,
+        "unchanged": unchanged,
+    }
+
+
+def _post_sync_cache(db) -> None:
     try:
-        from compare_cache import invalidate_compare_cache
+        from compare_cache import invalidate_compare_cache, prewarm_compare_cache
         invalidate_compare_cache()
-    except Exception:
-        pass
-    return {"nguon": nguon, "updated": updated, "inserted": inserted, "skipped": skipped}
+        prewarm_compare_cache(db)
+    except Exception as e:
+        logger.warning("post-sync cache refresh failed: %s", e)
 
 
 def merge_all_sheets_to_db(db) -> dict:
@@ -252,5 +305,13 @@ def merge_all_sheets_to_db(db) -> dict:
         try:
             results.append(merge_sheet_source_to_db(db, nguon))
         except Exception as e:
+            logger.exception("Sheet sync failed for %s", nguon)
             results.append({"nguon": nguon, "error": str(e)})
-    return {"sources": results, "total_updated": sum(r.get("updated", 0) for r in results), "total_inserted": sum(r.get("inserted", 0) for r in results)}
+    _post_sync_cache(db)
+    return {
+        "sources": results,
+        "total_updated": sum(r.get("updated", 0) for r in results),
+        "total_inserted": sum(r.get("inserted", 0) for r in results),
+        "total_unchanged": sum(r.get("unchanged", 0) for r in results),
+        "total_skipped": sum(r.get("skipped", 0) for r in results),
+    }

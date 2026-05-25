@@ -140,6 +140,9 @@ def create_default_users() -> None:
                     existing.role = "admin"
                 logger.info("User already exists: %s", u["username"])
         db.commit()
+        from workspace_service import ensure_personal_workspace
+        for u in db.query(User).all():
+            ensure_personal_workspace(db, u)
     finally:
         db.close()
 

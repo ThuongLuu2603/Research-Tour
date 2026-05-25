@@ -1,8 +1,9 @@
 """In-memory cache for compare engine — tránh load + tính lại toàn bộ tour mỗi request."""
 from __future__ import annotations
 
+import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import Lock
 
 from sqlalchemy import func
@@ -11,7 +12,19 @@ from sqlalchemy.orm import Session
 from compare_engine import SegmentStats, build_segment_stats, deduplicate_tours
 from models import Tour
 
+logger = logging.getLogger(__name__)
+
 TTL_SECONDS = 120
+
+
+def _segments_to_rows(segments: list[SegmentStats]) -> list[dict]:
+    rows: list[dict] = []
+    for seg in segments:
+        try:
+            rows.append(seg.to_dict())
+        except Exception as e:
+            logger.warning("segment to_dict failed key=%s: %s", seg.key, e)
+    return rows
 
 
 @dataclass
@@ -19,6 +32,7 @@ class CompareContext:
     tours: list[Tour]
     segments: list[SegmentStats]
     segment_by_key: dict[str, SegmentStats]
+    segment_rows: list[dict] = field(default_factory=list)
 
 
 _lock = Lock()
@@ -79,10 +93,12 @@ def get_compare_context(
     raw = load_tours(db, thi_truong, tuyen_tour, diem_kh)
     tours = deduplicate_tours(raw)
     segments = build_segment_stats(tours, dedup=False)
+    segment_rows = _segments_to_rows(segments)
     ctx = CompareContext(
         tours=tours,
         segments=segments,
         segment_by_key={s.key: s for s in segments},
+        segment_rows=segment_rows,
     )
 
     with _lock:
@@ -104,3 +120,8 @@ def invalidate_compare_cache() -> None:
     with _lock:
         _cache.clear()
     _fingerprint_cache = None
+
+
+def prewarm_compare_cache(db: Session) -> None:
+    """Build default compare context after sync/scrape to avoid cold-request timeouts."""
+    get_compare_context(db, [], "", "")

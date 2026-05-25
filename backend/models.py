@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, date
 
-from sqlalchemy import Boolean, Date, DateTime, Float, Integer, String, Text, ForeignKey
+from sqlalchemy import Boolean, Date, DateTime, Float, Integer, String, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -74,8 +74,17 @@ class Tour(Base):
     analyst_note: Mapped[str] = mapped_column(Text, default="")
     flagged: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Stable identity & sheet sync metadata
+    external_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    sheet_source: Mapped[str] = mapped_column(String(64), default="")
+    sheet_row: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64), default="")
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    overrides: Mapped[list[TourOverride]] = relationship("TourOverride", back_populates="tour")
 
 
 class MarketKeywordRule(Base):
@@ -204,4 +213,50 @@ class SavedView(Base):
     name: Mapped[str] = mapped_column(String(128))
     page: Mapped[str] = mapped_column(String(64))
     filters_json: Mapped[str] = mapped_column(Text, default="{}")
+    workspace_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("workspaces.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class Workspace(Base):
+    __tablename__ = "workspaces"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(128), default="Workspace của tôi")
+    visibility: Mapped[str] = mapped_column(String(32), default="private")  # private | shared
+    is_personal: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    owner: Mapped[User] = relationship("User", foreign_keys=[owner_user_id])
+    members: Mapped[list[WorkspaceMember]] = relationship("WorkspaceMember", back_populates="workspace")
+    overrides: Mapped[list[TourOverride]] = relationship("TourOverride", back_populates="workspace")
+
+
+class WorkspaceMember(Base):
+    __tablename__ = "workspace_members"
+    __table_args__ = (UniqueConstraint("workspace_id", "user_id", name="uq_workspace_member"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(Integer, ForeignKey("workspaces.id"), index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), index=True)
+    permission: Mapped[str] = mapped_column(String(16), default="view")  # view | edit | copy
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    workspace: Mapped[Workspace] = relationship("Workspace", back_populates="members")
+    user: Mapped[User] = relationship("User", foreign_keys=[user_id])
+
+
+class TourOverride(Base):
+    __tablename__ = "tour_overrides"
+    __table_args__ = (UniqueConstraint("workspace_id", "tour_id", name="uq_workspace_tour_override"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(Integer, ForeignKey("workspaces.id"), index=True)
+    tour_id: Mapped[int] = mapped_column(Integer, ForeignKey("tours.id"), index=True)
+    updated_by: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    overrides_json: Mapped[str] = mapped_column(Text, default="{}")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    workspace: Mapped[Workspace] = relationship("Workspace", back_populates="overrides")
+    tour: Mapped[Tour] = relationship("Tour", back_populates="overrides")
+    editor: Mapped[User] = relationship("User", foreign_keys=[updated_by])

@@ -2,6 +2,23 @@ import axios from "axios";
 
 const api = axios.create({ baseURL: "/api" });
 
+const compareApi = axios.create({ baseURL: "/api", timeout: 90_000 });
+compareApi.interceptors.request.use((cfg) => {
+  const token = localStorage.getItem("access_token");
+  if (token) cfg.headers.Authorization = `Bearer ${token}`;
+  return cfg;
+});
+compareApi.interceptors.response.use(
+  (r) => r,
+  (err) => {
+    if (err.response?.status === 401) {
+      localStorage.removeItem("access_token");
+      window.location.href = "/login";
+    }
+    return Promise.reject(err);
+  }
+);
+
 // Attach token from localStorage
 api.interceptors.request.use((cfg) => {
   const token = localStorage.getItem("access_token");
@@ -73,11 +90,12 @@ export const updateUser = async (id: number, patch: Partial<{ display_name: stri
 // ── Tours ─────────────────────────────────────────────────────────────────────
 
 export interface Tour {
-  id: number; cong_ty: string; thi_truong: string; tuyen_tour: string;
+  id: number; external_id?: string; cong_ty: string; thi_truong: string; tuyen_tour: string;
   ten_tour: string; lich_trinh: string; diem_kh: string; thoi_gian: string;
   gia: number | null; gia_raw: string; lich_kh: string; link_url: string;
   ma_tour: string; khach_san: string; hang_khong: string; so_ngay: number | null;
   phan_khuc: string; nguon: string; analyst_note: string; flagged: boolean;
+  has_override?: boolean; canonical_id?: number;
   sheet_sync?: { ok: boolean; message: string; row?: number } | null;
 }
 
@@ -339,7 +357,7 @@ const buildCompareParams = (filters: CompareFilters = {}) => {
 };
 
 export const getCompareFilterOptions = async () => {
-  const { data } = await api.get("/compare/filter-options");
+  const { data } = await compareApi.get("/compare/filter-options");
   return data as {
     thi_truong: string[];
     tuyen_tour: string[];
@@ -350,7 +368,7 @@ export const getCompareFilterOptions = async () => {
 
 export const getCompareClassificationGaps = async (filters: CompareFilters = {}) => {
   const q = buildCompareParams(filters);
-  const { data } = await api.get(`/compare/classification-gaps${q ? "?" + q : ""}`);
+  const { data } = await compareApi.get(`/compare/classification-gaps${q ? "?" + q : ""}`);
   return data as {
     cong_ty: Array<{ value: string; count: number }>;
     diem_kh: Array<{ value: string; count: number }>;
@@ -360,13 +378,13 @@ export const getCompareClassificationGaps = async (filters: CompareFilters = {})
 
 export const getCompareSummary = async (filters: CompareFilters = {}): Promise<CompareSummary> => {
   const q = buildCompareParams(filters);
-  const { data } = await api.get(`/compare/summary${q ? "?" + q : ""}`);
+  const { data } = await compareApi.get(`/compare/summary${q ? "?" + q : ""}`);
   return data;
 };
 
 export const getCompareSegments = async (filters: CompareFilters = {}) => {
   const q = buildCompareParams(filters);
-  const { data } = await api.get(`/compare/segments${q ? "?" + q : ""}`);
+  const { data } = await compareApi.get(`/compare/segments${q ? "?" + q : ""}`);
   return data as { methodology: string; items: CompareSegment[]; total: number };
 };
 
@@ -389,29 +407,29 @@ export interface WeekdayDistribution {
 
 export const getCompareWeekdayDistribution = async (filters: CompareFilters = {}): Promise<WeekdayDistribution> => {
   const q = buildCompareParams(filters);
-  const { data } = await api.get(`/compare/weekday-distribution${q ? "?" + q : ""}`);
+  const { data } = await compareApi.get(`/compare/weekday-distribution${q ? "?" + q : ""}`);
   return data;
 };
 
 export const getSegmentDetail = async (segmentKey: string) => {
-  const { data } = await api.get(`/compare/segment-detail?segment_key=${encodeURIComponent(segmentKey)}`);
+  const { data } = await compareApi.get(`/compare/segment-detail?segment_key=${encodeURIComponent(segmentKey)}`);
   return data;
 };
 
 export const getSegmentTours = async (segmentKey: string) => {
-  const { data } = await api.get(`/compare/segment-tours?segment_key=${encodeURIComponent(segmentKey)}`);
+  const { data } = await compareApi.get(`/compare/segment-tours?segment_key=${encodeURIComponent(segmentKey)}`);
   return data;
 };
 
 export const getCompareCompetitors = async (filters: CompareFilters = {}) => {
   const q = buildCompareParams(filters);
-  const { data } = await api.get(`/compare/competitors${q ? "?" + q : ""}`);
+  const { data } = await compareApi.get(`/compare/competitors${q ? "?" + q : ""}`);
   return data as { items: Array<{ cong_ty: string; tour_count: number; overlap_segments: number; freq_monthly: number; avg_price_day: number | null }>; total: number };
 };
 
 export const getCompareCompetitorDetail = async (company: string, filters: CompareFilters = {}) => {
   const q = buildCompareParams(filters);
-  const { data } = await api.get(`/compare/competitor/${encodeURIComponent(company)}${q ? "?" + q : ""}`);
+  const { data } = await compareApi.get(`/compare/competitor/${encodeURIComponent(company)}${q ? "?" + q : ""}`);
   return data;
 };
 
@@ -663,6 +681,74 @@ export const markAlertRead = async (id: number) => {
 export const bulkPatchTours = async (body: { tour_ids: number[]; thi_truong?: string; tuyen_tour?: string; flagged?: boolean }) => {
   const { data } = await api.post("/intelligence/tours/bulk-patch", body);
   return data;
+};
+
+// ── Workspaces ────────────────────────────────────────────────────────────────
+
+export interface WorkspaceInfo {
+  id: number;
+  name: string;
+  owner_user_id: number;
+  is_personal: boolean;
+  visibility: string;
+  permission: "view" | "edit" | "copy";
+  is_owner: boolean;
+}
+
+export interface WorkspaceTourFilters {
+  page?: number; page_size?: number; search?: string;
+  thi_truong?: string[]; tuyen_tour?: string[]; cong_ty?: string[];
+  nguon?: string[]; flagged?: boolean; only_overridden?: boolean;
+  sort_by?: string; sort_dir?: string;
+}
+
+export const listWorkspaces = async (): Promise<WorkspaceInfo[]> => {
+  const { data } = await api.get("/workspaces");
+  return data;
+};
+
+export const getWorkspaceTours = async (workspaceId: number, filters: WorkspaceTourFilters = {}) => {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([k, v]) => {
+    if (v === undefined || v === null) return;
+    if (Array.isArray(v)) v.forEach((item) => params.append(k, item));
+    else params.append(k, String(v));
+  });
+  const { data } = await api.get(`/workspaces/${workspaceId}/tours?${params}`);
+  return data as { items: Tour[]; total: number; page: number; page_size: number; workspace_id: number };
+};
+
+export const patchWorkspaceTour = async (workspaceId: number, tourId: number, patch: Partial<Tour>) => {
+  const { data } = await api.patch(`/workspaces/${workspaceId}/tours/${tourId}`, patch);
+  return data as Tour;
+};
+
+export const bulkPatchWorkspaceTours = async (
+  workspaceId: number,
+  body: { tour_ids: number[]; thi_truong?: string; tuyen_tour?: string; flagged?: boolean; analyst_note?: string },
+) => {
+  const { data } = await api.post(`/workspaces/${workspaceId}/tours/bulk-patch`, body);
+  return data;
+};
+
+export const shareWorkspace = async (workspaceId: number, username: string, permission: "view" | "edit" | "copy") => {
+  const { data } = await api.post(`/workspaces/${workspaceId}/share`, { username, permission });
+  return data;
+};
+
+export const listWorkspaceMembers = async (workspaceId: number) => {
+  const { data } = await api.get(`/workspaces/${workspaceId}/members`);
+  return data as { workspace_id: number; members: Array<{ user_id: number; username: string; display_name: string; permission: string; is_owner: boolean }> };
+};
+
+export const revokeWorkspaceShare = async (workspaceId: number, memberUserId: number) => {
+  const { data } = await api.delete(`/workspaces/${workspaceId}/share/${memberUserId}`);
+  return data;
+};
+
+export const copyWorkspaceOverrides = async (workspaceId: number, sourceWorkspaceId: number) => {
+  const { data } = await api.post(`/workspaces/${workspaceId}/copy-from`, { source_workspace_id: sourceWorkspaceId });
+  return data as { copied: number; destination_workspace_id: number };
 };
 
 export const applyClassificationToTours = async () => {

@@ -153,7 +153,9 @@ def delete_view(view_id: int, db: Session = Depends(get_db), user: User = Depend
 
 
 @router.post("/tours/bulk-patch")
-def bulk_patch_tours(body: BulkTourPatch, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def bulk_patch_tours(body: BulkTourPatch, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if user.role != "admin":
+        raise HTTPException(403, "Chỉ admin sửa dữ liệu chung. Dùng workspace trên Sản phẩm & Data.")
     if not body.tour_ids:
         raise HTTPException(400, "Chưa chọn tour")
     patch = body.model_dump(exclude={"tour_ids"}, exclude_none=True)

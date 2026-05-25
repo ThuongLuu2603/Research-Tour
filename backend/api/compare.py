@@ -148,7 +148,7 @@ def compare_segments(
     _: User = Depends(get_current_user),
 ):
     ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh)
-    rows = [s.to_dict() for s in ctx.segments]
+    rows = list(ctx.segment_rows)
 
     sort_key = {
         "gap_pct": lambda r: r.get("gap_pct") if r.get("gap_pct") is not None else -999,
