@@ -340,6 +340,7 @@ def _upsert_tours(db: Session, df, nguon: str, job_id: int, emit_job_id: int) ->
             existing = db.query(Tour).filter(Tour.ma_tour == ma_tour, Tour.nguon == nguon).first()
 
         from classification import resolve_company_name, resolve_departure_point
+        from link_utils import normalize_tour_link
 
         data = dict(
             cong_ty=resolve_company_name(str(row.get("cong_ty") or "").strip())[:256],
@@ -352,7 +353,7 @@ def _upsert_tours(db: Session, df, nguon: str, job_id: int, emit_job_id: int) ->
             gia_raw=gia_raw,
             gia=gia,
             lich_kh=str(row.get("lich_kh") or "").strip(),
-            link_url=str(row.get("link_url") or "").strip(),
+            link_url=normalize_tour_link(str(row.get("link_url") or "").strip()),
             ma_tour=ma_tour,
             khach_san=str(row.get("khach_san") or "").strip(),
             hang_khong=str(row.get("hang_khong") or "").strip(),

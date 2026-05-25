@@ -37,14 +37,8 @@ def _worksheet(nguon: str):
 
 
 def _extract_url(cell: str) -> str:
-    if not cell:
-        return ""
-    m = re.search(r'HYPERLINK\("([^"]+)"', cell, re.I)
-    if m:
-        return m.group(1)
-    if cell.startswith("http"):
-        return cell.strip()
-    return cell.strip()
+    from link_utils import normalize_tour_link
+    return normalize_tour_link(cell)
 
 
 def _find_row_index(ws, tour: Tour) -> int | None:

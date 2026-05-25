@@ -158,7 +158,8 @@ def _row_to_mapping(row: dict[str, str], nguon: str) -> dict | None:
     gia_raw = str(row.get("gia_raw") or "").strip()
     gia = parse_price(gia_raw)
     thoi_gian = str(row.get("thoi_gian") or "").strip()
-    link_url = str(row.get("link_url") or "").strip() or str(row.get("link_raw") or "").strip()
+    from link_utils import normalize_tour_link
+    link_url = normalize_tour_link(str(row.get("link_url") or "").strip()) or normalize_tour_link(str(row.get("link_raw") or "").strip())
     now = datetime.utcnow()
 
     return {

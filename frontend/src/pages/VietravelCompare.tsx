@@ -182,13 +182,16 @@ export default function VietravelCompare() {
       name: s.tuyen_tour,
     }));
 
-  const LinkCell = ({ url, title }: { url?: string; title?: string }) => url ? (
-    <a href={url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-primary-600 hover:text-primary-800" title={title}>
+  const LinkCell = ({ url, title }: { url?: string; title?: string }) => {
+    const href = url && /^https?:\/\//i.test(url) ? url : undefined;
+    return href ? (
+    <a href={href} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-primary-600 hover:text-primary-800" title={title}>
       <ExternalLink size={12} />
     </a>
   ) : (
     <span className="text-gray-400 text-[10px]" title={title || "Chưa có link — kiểm tra dữ liệu scrape"}>—</span>
   );
+  };
 
   const UnmatchedPanel = () => {
     const hasAny = (classGaps?.cong_ty?.length || classGaps?.diem_kh?.length || classGaps?.thoi_gian?.length);

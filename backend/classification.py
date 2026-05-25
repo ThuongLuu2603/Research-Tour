@@ -392,19 +392,35 @@ def apply_departure_aliases_to_tours(db) -> int:
 
 def apply_classification_rules_to_tours(db) -> dict:
     """Áp dụng lại rules Thị trường + Tuyến tour cho toàn bộ tour."""
+    from link_utils import normalize_tour_link
     from models import Tour
-    market_n = route_n = 0
+
+    market_n = route_n = link_n = 0
     for t in db.query(Tour).all():
         mk = resolve_thi_truong(t.ten_tour or "", t.lich_trinh or "")
         rt = resolve_tuyen_tour(mk, t.ten_tour or "", t.lich_trinh or "")
         if mk and mk != (t.thi_truong or ""):
             t.thi_truong = mk[:128]
             market_n += 1
-        if rt and rt != (t.tuyen_tour or ""):
-            t.tuyen_tour = rt[:256]
-            route_n += 1
+        current_route = (t.tuyen_tour or "").strip()
+        if rt and rt != current_route:
+            # Không thay tuyến cụ thể (vd. Bờ Đông) bằng nhãn thị trường chung (Châu Mỹ)
+            if rt == mk and current_route and current_route.casefold() not in {mk.casefold(), "khác", "khac"}:
+                pass
+            else:
+                t.tuyen_tour = rt[:256]
+                route_n += 1
+        fixed_link = normalize_tour_link(t.link_url)
+        if fixed_link != (t.link_url or ""):
+            t.link_url = fixed_link
+            link_n += 1
     db.commit()
-    return {"market_updated": market_n, "route_updated": route_n}
+    try:
+        from compare_cache import invalidate_compare_cache
+        invalidate_compare_cache()
+    except Exception:
+        pass
+    return {"market_updated": market_n, "route_updated": route_n, "links_repaired": link_n}
 
 
 def resolve_thi_truong(ten_tour: str, lich_trinh: str = "") -> str:

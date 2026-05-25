@@ -34,6 +34,21 @@ def normalize_route(tuyen_tour: str) -> str:
     return re.sub(r"\s+", " ", (tuyen_tour or "").strip())[:256]
 
 
+def route_for_segment(t: Tour) -> str:
+    """Tuyến dùng để gom nhóm — ưu tiên cột Tuyến tour, không ghi đè bằng tên thị trường."""
+    from classification import resolve_tuyen_tour
+
+    market = (t.thi_truong or "").strip() or "Khác"
+    explicit = normalize_route(t.tuyen_tour)
+    generic = {market.casefold(), "khác", "khac", ""}
+    if explicit and explicit.casefold() not in generic:
+        return explicit
+    resolved = normalize_route(resolve_tuyen_tour(market, t.ten_tour or "", t.lich_trinh or ""))
+    if resolved and resolved.casefold() not in generic:
+        return resolved
+    return explicit or resolved or market
+
+
 def is_vietravel(cong_ty: str) -> bool:
     from classification import resolve_company_name
     resolved = resolve_company_name(cong_ty or "")
@@ -73,7 +88,7 @@ def parse_segment_key(key: str) -> tuple[str, str, str] | None:
 
 
 def segment_key(tour: Tour) -> str | None:
-    route = normalize_route(tour.tuyen_tour)
+    route = route_for_segment(tour)
     depart = normalize_departure(tour.diem_kh)
     market = (tour.thi_truong or "").strip() or "Khác"
     if not route or not tour.gia or tour.gia <= 0:
@@ -480,8 +495,10 @@ def _freq_position_label(gap: float | None) -> str:
 
 
 def _tour_to_entry(t: Tour, days: float) -> TourEntry:
+    from link_utils import normalize_tour_link
+
     freq = parse_departure_frequency(t.lich_kh)
-    link = (t.link_url or "").strip()
+    link = normalize_tour_link(t.link_url)
     if not link and t.ma_tour and is_vietravel(t.cong_ty):
         link = f"https://travel.com.vn/tour/{t.ma_tour.strip()}"
     return TourEntry(
@@ -517,7 +534,7 @@ def build_segment_stats(tours: list[Tour], *, dedup: bool = True) -> list[Segmen
             buckets[key] = SegmentStats(
                 key=key,
                 thi_truong=market,
-                tuyen_tour=normalize_route(t.tuyen_tour),
+                tuyen_tour=route_for_segment(t),
                 diem_kh=normalize_departure(t.diem_kh),
                 so_ngay=0,
             )
