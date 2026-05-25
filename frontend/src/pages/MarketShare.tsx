@@ -9,7 +9,10 @@ const COLORS = ["#003580","#1a75d2","#3d8ee6","#66aaf5","#99c4f8","#bbdafb","#d1
 
 export default function MarketShare() {
   const [tab, setTab] = useState<"departures" | "price" | "routes">("departures");
-  const { data } = useQuery({ queryKey: ["market-intelligence"], queryFn: getMarketIntelligence });
+  const { data } = useQuery({
+    queryKey: ["market-intelligence"],
+    queryFn: () => getMarketIntelligence(),
+  });
 
   const totalDepartures = data?.totals?.departure_monthly ?? 0;
 

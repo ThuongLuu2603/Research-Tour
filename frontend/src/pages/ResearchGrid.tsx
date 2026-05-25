@@ -1,8 +1,8 @@
 import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getTours, getFilterOptions, patchTour, Tour } from "@/lib/api";
+import { getTours, getFilterOptions, patchTour, syncToursFromGoogleSheet, Tour } from "@/lib/api";
 import { fmtVND, segmentColor, cn } from "@/lib/utils";
-import { Search, Download, Flag, FlagOff, ChevronLeft, ChevronRight, ExternalLink, Pencil, Check, X } from "lucide-react";
+import { Search, Download, Flag, FlagOff, ChevronLeft, ChevronRight, ExternalLink, Pencil, Check, X, RefreshCw } from "lucide-react";
 
 const PAGE_SIZE = 50;
 
@@ -49,6 +49,7 @@ export default function ResearchGrid() {
   const [selCompanies, setSelCompanies] = useState<string[]>([]);
   const [selNguon, setSelNguon] = useState<string[]>([]);
   const [onlyFlagged, setOnlyFlagged] = useState(false);
+  const [toast, setToast] = useState("");
 
   const { data: opts } = useQuery({ queryKey: ["filter-options"], queryFn: getFilterOptions, staleTime: 60000 });
   const { data, isFetching } = useQuery({
@@ -59,7 +60,27 @@ export default function ResearchGrid() {
 
   const mutation = useMutation({
     mutationFn: ({ id, patch }: { id: number; patch: Partial<Tour> }) => patchTour(id, patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["tours"] }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["tours"] });
+      if (res.sheet_sync) {
+        setToast(res.sheet_sync.ok ? `Sheet: ${res.sheet_sync.message}` : `Sheet lỗi: ${res.sheet_sync.message}`);
+      }
+    },
+    onError: (e: { response?: { data?: { detail?: string } } }) => {
+      setToast(e.response?.data?.detail || "Lỗi lưu tour");
+    },
+  });
+
+  const syncMutation = useMutation({
+    mutationFn: syncToursFromGoogleSheet,
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["tours"] });
+      qc.invalidateQueries({ queryKey: ["filter-options"] });
+      setToast(`Đã kéo ${res.total_updated} tour từ Google Sheet`);
+    },
+    onError: (e: { response?: { data?: { detail?: string } } }) => {
+      setToast(e.response?.data?.detail || "Lỗi đồng bộ từ Sheet");
+    },
   });
 
   const totalPages = Math.ceil((data?.total ?? 0) / PAGE_SIZE);
@@ -84,10 +105,19 @@ export default function ResearchGrid() {
         <div>
           <h1 className="text-xl font-bold text-gray-900">Research Grid</h1>
           <p className="text-sm text-gray-500">
-            {(data?.total ?? 0).toLocaleString("vi-VN")} tour · Chỉnh sửa trực tiếp Thị trường, Tuyến, Ghi chú
+            {(data?.total ?? 0).toLocaleString("vi-VN")} tour · Chỉnh Thị trường/Tuyến → tự đẩy lên Sheet
           </p>
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={() => syncMutation.mutate()}
+            disabled={syncMutation.isPending}
+            className="btn-secondary text-xs flex items-center gap-1"
+            title="Kéo thay đổi từ Google Sheet về app"
+          >
+            <RefreshCw size={14} className={syncMutation.isPending ? "animate-spin" : ""} />
+            Kéo từ Sheet
+          </button>
           <button onClick={() => handleExport("csv")} className="btn-secondary text-xs">
             <Download size={14} /> CSV
           </button>
@@ -96,6 +126,13 @@ export default function ResearchGrid() {
           </button>
         </div>
       </div>
+
+      {toast && (
+        <p className="text-xs px-3 py-2 rounded bg-blue-50 text-blue-800 flex items-center justify-between">
+          {toast}
+          <button onClick={() => setToast("")} className="text-blue-600 hover:text-blue-900 ml-4"><X size={12} /></button>
+        </p>
+      )}
 
       {/* Filters bar */}
       <div className="card p-4 flex flex-wrap gap-3 items-center">

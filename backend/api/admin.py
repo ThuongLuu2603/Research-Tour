@@ -67,6 +67,16 @@ def data_status(_: User = Depends(get_current_user)):
     return _status_payload()
 
 
+@router.post("/sync-tours-from-google-sheet")
+def sync_tours_from_google_sheet(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Kéo thay đổi từ Google Sheet (live) → DB Research Grid."""
+    from sheets_tour_sync import merge_all_sheets_to_db
+    try:
+        return merge_all_sheets_to_db(db)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Lỗi đồng bộ Sheet → App: {e}") from e
+
+
 @router.get("/users", response_model=list[UserAdminOut])
 def list_users(_: User = Depends(require_admin), db: Session = Depends(get_db)):
     users = db.query(User).order_by(User.id).all()

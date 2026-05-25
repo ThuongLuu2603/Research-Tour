@@ -78,6 +78,7 @@ export interface Tour {
   gia: number | null; gia_raw: string; lich_kh: string; link_url: string;
   ma_tour: string; khach_san: string; hang_khong: string; so_ngay: number | null;
   phan_khuc: string; nguon: string; analyst_note: string; flagged: boolean;
+  sheet_sync?: { ok: boolean; message: string; row?: number } | null;
 }
 
 export interface PaginatedTours { items: Tour[]; total: number; page: number; page_size: number }
@@ -106,9 +107,14 @@ export const getFilterOptions = async () => {
   return data;
 };
 
-export const patchTour = async (id: number, patch: Partial<Tour>) => {
+export const patchTour = async (id: number, patch: Partial<Tour>): Promise<Tour> => {
   const { data } = await api.patch(`/tours/${id}`, patch);
   return data;
+};
+
+export const syncToursFromGoogleSheet = async () => {
+  const { data } = await api.post("/admin/sync-tours-from-google-sheet");
+  return data as { total_updated: number; sources: Array<{ nguon: string; updated?: number; error?: string }> };
 };
 
 export const exportUrl = (type: "csv" | "excel", params: Record<string, string>) => {
@@ -427,5 +433,34 @@ export const syncAllFromSheet = async () => {
 
 export const syncAllToSheet = async () => {
   const { data } = await api.post("/admin/rules/sync-all-to-sheet");
+  return data;
+};
+
+export interface CompanyRule {
+  id: number; canonical_name: string; alias: string; active: boolean; sort_order: number;
+}
+
+export const listCompanyRules = async (): Promise<CompanyRule[]> => {
+  const { data } = await api.get("/admin/rules/company");
+  return data;
+};
+
+export const createCompanyRule = async (body: { canonical_name: string; alias: string }) => {
+  const { data } = await api.post("/admin/rules/company", body);
+  return data;
+};
+
+export const deleteCompanyRule = async (id: number) => {
+  const { data } = await api.delete(`/admin/rules/company/${id}`);
+  return data;
+};
+
+export const seedCompanyDefaults = async () => {
+  const { data } = await api.post("/admin/rules/company/seed-defaults");
+  return data;
+};
+
+export const applyCompanyRulesToTours = async () => {
+  const { data } = await api.post("/admin/rules/company/apply-to-tours");
   return data;
 };

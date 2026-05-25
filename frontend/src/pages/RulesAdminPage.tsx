@@ -5,11 +5,12 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   listMarketRules, createMarketRule, deleteMarketRule,
   listRouteRules, createRouteRule, deleteRouteRule,
-  seedMarketDefaults,
+  listCompanyRules, createCompanyRule, deleteCompanyRule,
+  seedMarketDefaults, seedCompanyDefaults, applyCompanyRulesToTours,
   syncRouteFromSheet, syncRouteToSheet,
   syncMarketFromSheet, syncMarketToSheet,
   syncAllFromSheet, syncAllToSheet,
-  MarketRule, RouteRule,
+  MarketRule, RouteRule, CompanyRule,
 } from "@/lib/api";
 import { Plus, Trash2, RefreshCw, Database, Upload, Download, ArrowLeftRight } from "lucide-react";
 
@@ -17,20 +18,24 @@ export default function RulesAdminPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const isAdmin = user?.role === "admin";
-  const [tab, setTab] = useState<"market" | "route">("market");
+  const [tab, setTab] = useState<"market" | "route" | "company">("market");
   const [syncMsg, setSyncMsg] = useState("");
   const [mMarket, setMMarket] = useState("");
   const [mKeyword, setMKeyword] = useState("");
   const [rMarket, setRMarket] = useState("");
   const [rRoute, setRRoute] = useState("");
   const [rKeywords, setRKeywords] = useState("");
+  const [cCanonical, setCCanonical] = useState("");
+  const [cAlias, setCAlias] = useState("");
 
   const { data: marketRules } = useQuery({ queryKey: ["market-rules"], queryFn: listMarketRules, enabled: isAdmin });
   const { data: routeRules } = useQuery({ queryKey: ["route-rules"], queryFn: listRouteRules, enabled: isAdmin });
+  const { data: companyRules } = useQuery({ queryKey: ["company-rules"], queryFn: listCompanyRules, enabled: isAdmin });
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["market-rules"] });
     qc.invalidateQueries({ queryKey: ["route-rules"] });
+    qc.invalidateQueries({ queryKey: ["company-rules"] });
   };
 
   const onSync = (fn: () => Promise<{ message?: string }>, label: string) =>
@@ -43,6 +48,10 @@ export default function RulesAdminPage() {
   const addRoute = useMutation({
     mutationFn: () => createRouteRule({ thi_truong: rMarket, tuyen_tour: rRoute, keywords: rKeywords }),
     onSuccess: () => { invalidate(); setRKeywords(""); setSyncMsg("Đã lưu DB và tự động ghi lên Sheet 'Điểm tuyến Tour'"); },
+  });
+  const addCompany = useMutation({
+    mutationFn: () => createCompanyRule({ canonical_name: cCanonical, alias: cAlias }),
+    onSuccess: () => { invalidate(); setCAlias(""); setSyncMsg("Đã thêm alias công ty — áp dụng khi import/scrape hoặc bấm 'Áp dụng lại'"); },
   });
 
   if (!isAdmin) return <Navigate to="/" replace />;
@@ -72,10 +81,10 @@ export default function RulesAdminPage() {
       </div>
 
       <div className="flex gap-2">
-        {(["market", "route"] as const).map((t) => (
+        {(["market", "route", "company"] as const).map((t) => (
           <button key={t} onClick={() => setTab(t)}
             className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === t ? "bg-primary-600 text-white" : "bg-gray-100"}`}>
-            {t === "market" ? "Thị trường" : "Tuyến tour"}
+            {t === "market" ? "Thị trường" : t === "route" ? "Tuyến tour" : "Công ty"}
           </button>
         ))}
       </div>
@@ -150,6 +159,44 @@ export default function RulesAdminPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {tab === "company" && (
+        <div className="space-y-4">
+          <div className="card p-4 flex flex-wrap gap-2 items-end">
+            <div><label className="text-xs text-gray-500">Tên chính thức</label>
+              <input className="input text-sm" value={cCanonical} onChange={(e) => setCCanonical(e.target.value)} placeholder="Vietravel" /></div>
+            <div className="flex-1 min-w-[200px]"><label className="text-xs text-gray-500">Alias (tên từ nguồn khác)</label>
+              <input className="input text-sm" value={cAlias} onChange={(e) => setCAlias(e.target.value)} placeholder="vietravel, vtr, viet travel..." /></div>
+            <button onClick={() => addCompany.mutate()} disabled={!cCanonical || !cAlias} className="btn-primary text-sm"><Plus size={14} /> Thêm</button>
+            <button onClick={() => onSync(seedCompanyDefaults, "Import xong")} className="btn-secondary text-sm"><Database size={14} /> Alias mặc định</button>
+            <button onClick={() => onSync(applyCompanyRulesToTours, "OK")} className="btn-secondary text-sm"><RefreshCw size={14} /> Áp dụng lại toàn bộ tour</button>
+          </div>
+          <p className="text-xs text-gray-500">
+            Chuẩn hóa tên công ty khi import Sheet, scrape, hoặc sửa Research Grid. So khớp không phân biệt hoa thường; alias dài được ưu tiên trước.
+          </p>
+          <div className="card overflow-auto max-h-[500px]">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 sticky top-0"><tr>
+                <th className="px-3 py-2 text-left">Tên chính thức</th><th className="px-3 py-2 text-left">Alias</th><th></th>
+              </tr></thead>
+              <tbody>
+                {(companyRules ?? []).map((r: CompanyRule) => (
+                  <tr key={r.id} className="border-t">
+                    <td className="px-3 py-2 font-medium">{r.canonical_name}</td>
+                    <td className="px-3 py-2 font-mono text-xs">{r.alias}</td>
+                    <td className="px-3 py-2">
+                      <button className="text-red-500" onClick={() => deleteCompanyRule(r.id).then(() => { invalidate(); setSyncMsg("Đã xóa alias"); })}>
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="text-xs text-gray-400 p-3">{(companyRules ?? []).length} alias rules</p>
           </div>
         </div>
       )}

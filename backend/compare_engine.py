@@ -40,7 +40,9 @@ def normalize_route(tuyen_tour: str) -> str:
 
 
 def is_vietravel(cong_ty: str) -> bool:
-    return COMPANY.lower() in (cong_ty or "").lower()
+    from classification import resolve_company_name
+    resolved = resolve_company_name(cong_ty or "")
+    return settings.company_name.lower() in resolved.lower()
 
 
 def parse_duration_days(thoi_gian: str, so_ngay: float | None) -> float | None:

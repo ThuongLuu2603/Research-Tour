@@ -149,6 +149,8 @@ def _map_row(raw: dict[str, str]) -> dict[str, str]:
 
 
 def _row_to_mapping(row: dict[str, str], nguon: str) -> dict | None:
+    from classification import resolve_company_name
+
     ten_tour = str(row.get("ten_tour") or "").strip()
     if not ten_tour or ten_tour.lower() in ("nan", "tên tour"):
         return None
@@ -160,7 +162,7 @@ def _row_to_mapping(row: dict[str, str], nguon: str) -> dict | None:
     now = datetime.utcnow()
 
     return {
-        "cong_ty": str(row.get("cong_ty") or "").strip()[:256],
+        "cong_ty": resolve_company_name(str(row.get("cong_ty") or "").strip())[:256],
         "thi_truong": str(row.get("thi_truong") or "").strip()[:128],
         "tuyen_tour": str(row.get("tuyen_tour") or "").strip()[:256],
         "ten_tour": ten_tour[:512],

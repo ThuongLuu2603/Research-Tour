@@ -40,6 +40,7 @@ class TourOut(BaseModel):
     nguon: str
     analyst_note: str
     flagged: bool
+    sheet_sync: dict | None = None
 
     model_config = {"from_attributes": True}
 
@@ -47,8 +48,10 @@ class TourOut(BaseModel):
 class TourPatch(BaseModel):
     thi_truong: str | None = None
     tuyen_tour: str | None = None
+    cong_ty: str | None = None
     analyst_note: str | None = None
     flagged: bool | None = None
+    sync_sheet: bool = True
 
 
 class PaginatedTours(BaseModel):
@@ -158,16 +161,30 @@ def patch_tour(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    from classification import resolve_company_name
+
     tour = db.query(Tour).filter(Tour.id == tour_id).first()
     if not tour:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Tour không tồn tại")
 
-    for field, value in patch.model_dump(exclude_none=True).items():
+    data = patch.model_dump(exclude_none=True)
+    sync_sheet = data.pop("sync_sheet", True)
+    if "cong_ty" in data and data["cong_ty"]:
+        data["cong_ty"] = resolve_company_name(data["cong_ty"])
+
+    sheet_fields_changed = any(k in data for k in ("thi_truong", "tuyen_tour", "cong_ty"))
+    for field, value in data.items():
         setattr(tour, field, value)
     db.commit()
     db.refresh(tour)
-    return tour
+
+    sheet_sync = None
+    if sync_sheet and sheet_fields_changed:
+        from sheets_tour_sync import push_tour_to_sheet
+        sheet_sync = push_tour_to_sheet(tour)
+
+    return TourOut.model_validate(tour).model_copy(update={"sheet_sync": sheet_sync})
 
 
 @router.get("/export/csv")

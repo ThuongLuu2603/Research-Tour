@@ -6,7 +6,7 @@ import logging
 from functools import lru_cache
 
 from database import SessionLocal
-from models import MarketKeywordRule, RouteKeywordRule
+from models import MarketKeywordRule, RouteKeywordRule, CompanyAliasRule
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,84 @@ def _market_keyword_pairs() -> tuple[tuple[str, str], ...]:
 def invalidate_classification_cache() -> None:
     _market_keyword_pairs.cache_clear()
     _route_rules_from_db.cache_clear()
+    _company_alias_pairs.cache_clear()
+
+
+DEFAULT_COMPANY_ALIASES: list[tuple[str, list[str]]] = [
+    ("Vietravel", ["vietravel", "viet travel", "travel.com.vn", "cong ty co phan vietravel"]),
+    ("Saigontourist", ["saigontourist", "sai gon tourist", "sgt"]),
+    ("Fiditour", ["fiditour", "fidi tour"]),
+    ("Tugo", ["tugo", "tu go"]),
+    ("Hanoitourist", ["hanoitourist", "ha noi tourist"]),
+    ("Ben Thanh Tourist", ["ben thanh tourist", "benthancorp", "ben thanh"]),
+    ("Transviet", ["transviet", "trans viet"]),
+    ("Luxury Travel", ["luxury travel", "luxurytravel"]),
+]
+
+
+@lru_cache(maxsize=1)
+def _company_alias_pairs() -> tuple[tuple[str, str], ...]:
+    db = SessionLocal()
+    try:
+        rules = (
+            db.query(CompanyAliasRule)
+            .filter(CompanyAliasRule.active == True)
+            .order_by(CompanyAliasRule.sort_order, CompanyAliasRule.id)
+            .all()
+        )
+        pairs = [(r.alias.lower().strip(), r.canonical_name.strip()) for r in rules if r.alias.strip()]
+        pairs.sort(key=lambda x: len(x[0]), reverse=True)
+        if pairs:
+            return tuple(pairs)
+    finally:
+        db.close()
+    pairs = []
+    for canonical, aliases in DEFAULT_COMPANY_ALIASES:
+        for a in aliases:
+            pairs.append((a.lower().strip(), canonical))
+    pairs.sort(key=lambda x: len(x[0]), reverse=True)
+    return tuple(pairs)
+
+
+def resolve_company_name(raw_name: str) -> str:
+    """Chuẩn hóa tên công ty từ alias → tên chính thức."""
+    s = (raw_name or "").strip()
+    if not s:
+        return ""
+    lower = s.lower()
+    for alias, canonical in _company_alias_pairs():
+        if alias == lower or alias in lower:
+            return canonical
+    return s
+
+
+def seed_company_aliases_from_defaults() -> int:
+    db = SessionLocal()
+    try:
+        if db.query(CompanyAliasRule).count() > 0:
+            return 0
+        order = 0
+        for canonical, aliases in DEFAULT_COMPANY_ALIASES:
+            for a in aliases:
+                db.add(CompanyAliasRule(canonical_name=canonical, alias=a, sort_order=order))
+                order += 1
+        db.commit()
+        invalidate_classification_cache()
+        return order
+    finally:
+        db.close()
+
+
+def apply_company_aliases_to_tours(db) -> int:
+    from models import Tour
+    count = 0
+    for t in db.query(Tour).all():
+        resolved = resolve_company_name(t.cong_ty)
+        if resolved and resolved != t.cong_ty:
+            t.cong_ty = resolved[:256]
+            count += 1
+    db.commit()
+    return count
 
 
 def resolve_thi_truong(ten_tour: str, lich_trinh: str = "") -> str:

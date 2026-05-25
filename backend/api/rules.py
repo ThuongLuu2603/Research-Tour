@@ -5,9 +5,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from api.auth import require_admin
-from classification import invalidate_classification_cache, seed_market_rules_from_hardcode
+from classification import (
+    apply_company_aliases_to_tours,
+    invalidate_classification_cache,
+    seed_company_aliases_from_defaults,
+    seed_market_rules_from_hardcode,
+)
 from database import get_db
-from models import MarketKeywordRule, RouteKeywordRule, User
+from models import CompanyAliasRule, MarketKeywordRule, RouteKeywordRule, User
 from sheets_rules_sync import (
     import_market_rules_from_sheet,
     import_route_rules_to_db,
@@ -272,3 +277,78 @@ def sync_all_to_sheet_endpoint(_: User = Depends(require_admin), db: Session = D
         return {**result, "message": "Đã đồng bộ DB → Sheet (thị trường + tuyến tour)"}
     except Exception as e:
         raise HTTPException(502, f"Lỗi đồng bộ lên Sheet: {e}") from e
+
+
+# ── Company alias rules ──────────────────────────────────────────────────────
+
+class CompanyRuleOut(BaseModel):
+    id: int
+    canonical_name: str
+    alias: str
+    active: bool
+    sort_order: int
+    model_config = {"from_attributes": True}
+
+
+class CompanyRuleIn(BaseModel):
+    canonical_name: str = Field(max_length=128)
+    alias: str = Field(max_length=256)
+    active: bool = True
+    sort_order: int = 0
+
+
+@router.get("/company", response_model=list[CompanyRuleOut])
+def list_company_rules(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return (
+        db.query(CompanyAliasRule)
+        .order_by(CompanyAliasRule.sort_order, CompanyAliasRule.canonical_name, CompanyAliasRule.alias)
+        .all()
+    )
+
+
+@router.post("/company", response_model=CompanyRuleOut)
+def create_company_rule(body: CompanyRuleIn, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    rule = CompanyAliasRule(**body.model_dump())
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    invalidate_classification_cache()
+    return rule
+
+
+@router.put("/company/{rule_id}", response_model=CompanyRuleOut)
+def update_company_rule(
+    rule_id: int, body: CompanyRuleIn, _: User = Depends(require_admin), db: Session = Depends(get_db)
+):
+    rule = db.query(CompanyAliasRule).filter(CompanyAliasRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(404, "Rule không tồn tại")
+    for k, v in body.model_dump().items():
+        setattr(rule, k, v)
+    db.commit()
+    db.refresh(rule)
+    invalidate_classification_cache()
+    return rule
+
+
+@router.delete("/company/{rule_id}")
+def delete_company_rule(rule_id: int, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    rule = db.query(CompanyAliasRule).filter(CompanyAliasRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(404, "Rule không tồn tại")
+    db.delete(rule)
+    db.commit()
+    invalidate_classification_cache()
+    return {"deleted": rule_id}
+
+
+@router.post("/company/seed-defaults")
+def seed_company_defaults(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    added = seed_company_aliases_from_defaults()
+    return {"added": added, "message": f"Đã thêm {added} alias mặc định"}
+
+
+@router.post("/company/apply-to-tours")
+def apply_company_rules_to_tours(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    updated = apply_company_aliases_to_tours(db)
+    return {"updated": updated, "message": f"Đã chuẩn hóa tên công ty cho {updated} tour"}
