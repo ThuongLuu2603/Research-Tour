@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from functools import lru_cache
 
 from database import SessionLocal
-from models import MarketKeywordRule, RouteKeywordRule, CompanyAliasRule
+from models import MarketKeywordRule, RouteKeywordRule, CompanyAliasRule, DepartureAliasRule
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ def invalidate_classification_cache() -> None:
     _market_keyword_pairs.cache_clear()
     _route_rules_from_db.cache_clear()
     _company_alias_pairs.cache_clear()
+    _departure_alias_pairs.cache_clear()
 
 
 DEFAULT_COMPANY_ALIASES: list[tuple[str, list[str]]] = [
@@ -128,6 +130,103 @@ def apply_company_aliases_to_tours(db) -> int:
         resolved = resolve_company_name(t.cong_ty)
         if resolved and resolved != t.cong_ty:
             t.cong_ty = resolved[:256]
+            count += 1
+    db.commit()
+    return count
+
+
+DEFAULT_DEPARTURE_ALIASES: list[tuple[str, list[str]]] = [
+    ("TP.HCM", ["hồ chí minh", "tp.hcm", "tp hcm", "sài gòn", "sai gon", "tphcm", "hcm", "sgn", "tân sơn nhất"]),
+    ("Hà Nội", ["hà nội", "ha noi", "hn", "nội bài", "noi bai"]),
+    ("Đà Nẵng", ["đà nẵng", "da nang", "dng"]),
+    ("Cần Thơ", ["cần thơ", "can tho"]),
+    ("Nha Trang", ["nha trang", "cam ranh"]),
+    ("Huế", ["huế", "hue", "phú bài"]),
+    ("Hải Phòng", ["hải phòng", "hai phong", "hp"]),
+    ("Vinh", ["vinh", "nghệ an", "nghe an"]),
+    ("Phú Quốc", ["phú quốc", "phu quoc"]),
+    ("Đà Lạt", ["đà lạt", "da lat", "lâm đồng", "lam dong"]),
+    ("Quy Nhon", ["quy nhon", "quy nhơn", "bình định"]),
+    ("Pleiku", ["pleiku", "gia lai"]),
+    ("Buôn Ma Thuột", ["buôn ma thuột", "buon ma thuot", "dak lak"]),
+]
+
+
+@lru_cache(maxsize=1)
+def _departure_alias_pairs() -> tuple[tuple[str, str], ...]:
+    db = SessionLocal()
+    try:
+        rules = (
+            db.query(DepartureAliasRule)
+            .filter(DepartureAliasRule.active == True)
+            .order_by(DepartureAliasRule.sort_order, DepartureAliasRule.id)
+            .all()
+        )
+        pairs = [(r.alias.lower().strip(), r.canonical_name.strip()) for r in rules if r.alias.strip()]
+        pairs.sort(key=lambda x: len(x[0]), reverse=True)
+        if pairs:
+            return tuple(pairs)
+    finally:
+        db.close()
+    pairs = []
+    for canonical, aliases in DEFAULT_DEPARTURE_ALIASES:
+        for a in aliases:
+            pairs.append((a.lower().strip(), canonical))
+    pairs.sort(key=lambda x: len(x[0]), reverse=True)
+    return tuple(pairs)
+
+
+def _match_departure_alias(text: str) -> str | None:
+    lower = (text or "").strip().lower()
+    if not lower:
+        return None
+    for alias, canonical in _departure_alias_pairs():
+        if alias == lower or alias in lower:
+            return canonical
+    return None
+
+
+def resolve_departure_point(raw: str) -> str:
+    """Chuẩn hóa điểm khởi hành từ alias → tên chính thức."""
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    matched = _match_departure_alias(s)
+    if matched:
+        return matched
+    head = re.split(r"[,|\-–—/]", s)[0].strip()
+    if head and head != s:
+        matched = _match_departure_alias(head)
+        if matched:
+            return matched
+        return head[:256]
+    return s[:256]
+
+
+def seed_departure_aliases_from_defaults() -> int:
+    db = SessionLocal()
+    try:
+        if db.query(DepartureAliasRule).count() > 0:
+            return 0
+        order = 0
+        for canonical, aliases in DEFAULT_DEPARTURE_ALIASES:
+            for a in aliases:
+                db.add(DepartureAliasRule(canonical_name=canonical, alias=a, sort_order=order))
+                order += 1
+        db.commit()
+        invalidate_classification_cache()
+        return order
+    finally:
+        db.close()
+
+
+def apply_departure_aliases_to_tours(db) -> int:
+    from models import Tour
+    count = 0
+    for t in db.query(Tour).all():
+        resolved = resolve_departure_point(t.diem_kh)
+        if resolved and resolved != t.diem_kh:
+            t.diem_kh = resolved[:256]
             count += 1
     db.commit()
     return count

@@ -7,12 +7,14 @@ from sqlalchemy.orm import Session
 from api.auth import require_admin
 from classification import (
     apply_company_aliases_to_tours,
+    apply_departure_aliases_to_tours,
     invalidate_classification_cache,
     seed_company_aliases_from_defaults,
+    seed_departure_aliases_from_defaults,
     seed_market_rules_from_hardcode,
 )
 from database import get_db
-from models import CompanyAliasRule, MarketKeywordRule, RouteKeywordRule, User
+from models import CompanyAliasRule, DepartureAliasRule, MarketKeywordRule, RouteKeywordRule, User
 from sheets_rules_sync import (
     import_market_rules_from_sheet,
     import_route_rules_to_db,
@@ -352,3 +354,78 @@ def seed_company_defaults(_: User = Depends(require_admin), db: Session = Depend
 def apply_company_rules_to_tours(_: User = Depends(require_admin), db: Session = Depends(get_db)):
     updated = apply_company_aliases_to_tours(db)
     return {"updated": updated, "message": f"Đã chuẩn hóa tên công ty cho {updated} tour"}
+
+
+# ── Departure alias rules (Điểm KH) ──────────────────────────────────────────
+
+class DepartureRuleOut(BaseModel):
+    id: int
+    canonical_name: str
+    alias: str
+    active: bool
+    sort_order: int
+    model_config = {"from_attributes": True}
+
+
+class DepartureRuleIn(BaseModel):
+    canonical_name: str = Field(max_length=128)
+    alias: str = Field(max_length=256)
+    active: bool = True
+    sort_order: int = 0
+
+
+@router.get("/departure", response_model=list[DepartureRuleOut])
+def list_departure_rules(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return (
+        db.query(DepartureAliasRule)
+        .order_by(DepartureAliasRule.sort_order, DepartureAliasRule.canonical_name, DepartureAliasRule.alias)
+        .all()
+    )
+
+
+@router.post("/departure", response_model=DepartureRuleOut)
+def create_departure_rule(body: DepartureRuleIn, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    rule = DepartureAliasRule(**body.model_dump())
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    invalidate_classification_cache()
+    return rule
+
+
+@router.put("/departure/{rule_id}", response_model=DepartureRuleOut)
+def update_departure_rule(
+    rule_id: int, body: DepartureRuleIn, _: User = Depends(require_admin), db: Session = Depends(get_db)
+):
+    rule = db.query(DepartureAliasRule).filter(DepartureAliasRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(404, "Rule không tồn tại")
+    for k, v in body.model_dump().items():
+        setattr(rule, k, v)
+    db.commit()
+    db.refresh(rule)
+    invalidate_classification_cache()
+    return rule
+
+
+@router.delete("/departure/{rule_id}")
+def delete_departure_rule(rule_id: int, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+    rule = db.query(DepartureAliasRule).filter(DepartureAliasRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(404, "Rule không tồn tại")
+    db.delete(rule)
+    db.commit()
+    invalidate_classification_cache()
+    return {"deleted": rule_id}
+
+
+@router.post("/departure/seed-defaults")
+def seed_departure_defaults(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    added = seed_departure_aliases_from_defaults()
+    return {"added": added, "message": f"Đã thêm {added} alias điểm KH mặc định"}
+
+
+@router.post("/departure/apply-to-tours")
+def apply_departure_rules_to_tours(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    updated = apply_departure_aliases_to_tours(db)
+    return {"updated": updated, "message": f"Đã chuẩn hóa điểm khởi hành cho {updated} tour"}

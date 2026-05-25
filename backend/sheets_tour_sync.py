@@ -160,7 +160,7 @@ def _find_db_tour(db, nguon: str, fields: dict) -> Tour | None:
 
 
 def merge_sheet_source_to_db(db, nguon: str) -> dict:
-    from classification import resolve_company_name
+    from classification import resolve_company_name, resolve_departure_point
     from seed import parse_ngay, price_segment
 
     ws = _worksheet(nguon)
@@ -185,7 +185,7 @@ def merge_sheet_source_to_db(db, nguon: str) -> dict:
         tour.tuyen_tour = fields["tuyen_tour"][:256]
         tour.ten_tour = fields["ten_tour"][:512]
         tour.lich_trinh = fields["lich_trinh"]
-        tour.diem_kh = fields["diem_kh"][:256]
+        tour.diem_kh = resolve_departure_point(fields["diem_kh"])[:256]
         tour.thoi_gian = fields["thoi_gian"][:64]
         tour.gia_raw = fields["gia_raw"][:64]
         tour.gia = fields["gia"]

@@ -468,3 +468,32 @@ export const applyCompanyRulesToTours = async () => {
   const { data } = await api.post("/admin/rules/company/apply-to-tours");
   return data;
 };
+
+export interface DepartureRule {
+  id: number; canonical_name: string; alias: string; active: boolean; sort_order: number;
+}
+
+export const listDepartureRules = async (): Promise<DepartureRule[]> => {
+  const { data } = await api.get("/admin/rules/departure");
+  return data;
+};
+
+export const createDepartureRule = async (body: { canonical_name: string; alias: string }) => {
+  const { data } = await api.post("/admin/rules/departure", body);
+  return data;
+};
+
+export const deleteDepartureRule = async (id: number) => {
+  const { data } = await api.delete(`/admin/rules/departure/${id}`);
+  return data;
+};
+
+export const seedDepartureDefaults = async () => {
+  const { data } = await api.post("/admin/rules/departure/seed-defaults");
+  return data;
+};
+
+export const applyDepartureRulesToTours = async () => {
+  const { data } = await api.post("/admin/rules/departure/apply-to-tours");
+  return data;
+};

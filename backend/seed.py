@@ -149,7 +149,7 @@ def _map_row(raw: dict[str, str]) -> dict[str, str]:
 
 
 def _row_to_mapping(row: dict[str, str], nguon: str) -> dict | None:
-    from classification import resolve_company_name
+    from classification import resolve_company_name, resolve_departure_point
 
     ten_tour = str(row.get("ten_tour") or "").strip()
     if not ten_tour or ten_tour.lower() in ("nan", "tên tour"):
@@ -167,7 +167,7 @@ def _row_to_mapping(row: dict[str, str], nguon: str) -> dict | None:
         "tuyen_tour": str(row.get("tuyen_tour") or "").strip()[:256],
         "ten_tour": ten_tour[:512],
         "lich_trinh": str(row.get("lich_trinh") or "").strip(),
-        "diem_kh": str(row.get("diem_kh") or "").strip()[:256],
+        "diem_kh": resolve_departure_point(str(row.get("diem_kh") or "").strip())[:256],
         "thoi_gian": thoi_gian[:64],
         "gia_raw": gia_raw[:64],
         "gia": gia,

@@ -14,26 +14,13 @@ from stats_utils import robust_weighted_avg, weighted_avg, weighted_median
 COMPANY = settings.company_name
 NGUON_PRIORITY = {"FindTourGo": 3, "Vietravel": 2, "Main": 1, "Manual": 0}
 
-DEPART_ALIASES: list[tuple[str, str]] = [
-    ("hồ chí minh", "TP.HCM"), ("tp.hcm", "TP.HCM"), ("tp hcm", "TP.HCM"),
-    ("sài gòn", "TP.HCM"), ("sai gon", "TP.HCM"), ("tphcm", "TP.HCM"), ("hcm", "TP.HCM"),
-    ("hà nội", "Hà Nội"), ("ha noi", "Hà Nội"),
-    ("đà nẵng", "Đà Nẵng"), ("da nang", "Đà Nẵng"),
-    ("cần thơ", "Cần Thơ"), ("can tho", "Cần Thơ"),
-    ("nha trang", "Nha Trang"), ("huế", "Huế"),
-    ("hải phòng", "Hải Phòng"), ("vinh", "Vinh"),
-]
+DEPART_ALIASES: list[tuple[str, str]] = []  # legacy; dùng classification.resolve_departure_point
 
 
 def normalize_departure(diem_kh: str) -> str:
-    s = (diem_kh or "").strip().lower()
-    if not s:
-        return "Khác"
-    for alias, label in DEPART_ALIASES:
-        if alias in s:
-            return label
-    head = re.split(r"[,|\-–—]", diem_kh)[0].strip()
-    return head[:64] if head else "Khác"
+    from classification import resolve_departure_point
+    resolved = resolve_departure_point(diem_kh or "")
+    return resolved or "Khác"
 
 
 def normalize_route(tuyen_tour: str) -> str:

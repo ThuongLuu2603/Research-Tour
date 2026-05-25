@@ -113,3 +113,15 @@ class CompanyAliasRule(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DepartureAliasRule(Base):
+    """Chuẩn hóa điểm khởi hành từ nhiều nguồn → tên chính thức."""
+    __tablename__ = "departure_alias_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    canonical_name: Mapped[str] = mapped_column(String(256), index=True)
+    alias: Mapped[str] = mapped_column(String(256), index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

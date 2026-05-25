@@ -328,13 +328,15 @@ def _upsert_tours(db: Session, df, nguon: str, job_id: int, emit_job_id: int) ->
         if ma_tour:
             existing = db.query(Tour).filter(Tour.ma_tour == ma_tour, Tour.nguon == nguon).first()
 
+        from classification import resolve_company_name, resolve_departure_point
+
         data = dict(
-            cong_ty=str(row.get("cong_ty") or "").strip(),
+            cong_ty=resolve_company_name(str(row.get("cong_ty") or "").strip())[:256],
             thi_truong=str(row.get("thi_truong") or "").strip(),
             tuyen_tour=str(row.get("tuyen_tour") or "").strip(),
             ten_tour=str(row.get("ten_tour") or "").strip(),
             lich_trinh=str(row.get("lich_trinh") or "").strip(),
-            diem_kh=str(row.get("diem_kh") or "").strip(),
+            diem_kh=resolve_departure_point(str(row.get("diem_kh") or "").strip())[:256],
             thoi_gian=thoi_gian,
             gia_raw=gia_raw,
             gia=gia,
