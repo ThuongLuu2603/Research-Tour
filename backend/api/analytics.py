@@ -238,6 +238,20 @@ def treemap(
     return nodes
 
 
+@router.get("/market-intelligence")
+def market_intelligence(
+    nguon: list[str] = Query([]),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    from market_analytics import build_market_intelligence
+
+    q = db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+    if nguon:
+        q = q.filter(Tour.nguon.in_(nguon))
+    return build_market_intelligence(q.all())
+
+
 @router.get("/competitor/{company}", response_model=dict)
 def competitor_profile(
     company: str,

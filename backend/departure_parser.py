@@ -2,10 +2,56 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 
 DATE_RE = re.compile(r"\b(\d{1,2}/\d{1,2}/(?:\d{2}|\d{4}))\b")
 EXTRA_DATES_RE = re.compile(r"\(\+(\d+)\s*ngày khác\)", re.I)
 WEEKDAY_RE = re.compile(r"thứ\s*(\d|cn|chủ nhật)", re.I)
+PERIOD_WINDOW_DAYS = 45
+
+
+def parse_departure_dates(lich_kh: str) -> list[datetime]:
+    """Trích ngày khởi hành cố định dd/mm/yyyy từ lich_kh."""
+    dates: list[datetime] = []
+    for m in DATE_RE.finditer(lich_kh or ""):
+        parts = m.group(1).split("/")
+        if len(parts) != 3:
+            continue
+        d, mo, y = int(parts[0]), int(parts[1]), int(parts[2])
+        if y < 100:
+            y += 2000
+        try:
+            dates.append(datetime(y, mo, d))
+        except ValueError:
+            continue
+    return dates
+
+
+def has_recurring_schedule(lich_kh: str) -> bool:
+    lower = (lich_kh or "").lower()
+    return "hàng ngày" in lower or "hang ngay" in lower or "theo thứ" in lower or bool(WEEKDAY_RE.search(lower))
+
+
+def schedules_overlap_vtr_period(vtr_dates: list[datetime], market_lich_kh: str) -> bool:
+    """
+    Tour thị trường có ngày KH cùng giai đoạn với VTR:
+    cùng tháng/năm hoặc trong ±45 ngày; nếu VTR chỉ có lịch theo thứ/hàng ngày thì chấp nhận lịch tương tự.
+    """
+    if not vtr_dates:
+        return has_recurring_schedule(market_lich_kh) or bool(parse_departure_dates(market_lich_kh))
+
+    mkt_dates = parse_departure_dates(market_lich_kh)
+    if not mkt_dates:
+        return has_recurring_schedule(market_lich_kh)
+
+    vtr_months = {(d.year, d.month) for d in vtr_dates}
+    for md in mkt_dates:
+        if (md.year, md.month) in vtr_months:
+            return True
+        for vd in vtr_dates:
+            if abs((md - vd).days) <= PERIOD_WINDOW_DAYS:
+                return True
+    return False
 
 
 def parse_departure_frequency(lich_kh: str) -> dict:

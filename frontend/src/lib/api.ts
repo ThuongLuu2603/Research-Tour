@@ -160,6 +160,35 @@ export const getTreemap = async (nguon?: string[]) => {
   return data;
 };
 
+export interface MarketIntelRow {
+  label: string;
+  tour_count: number;
+  departure_monthly: number;
+  departure_share_pct?: number;
+  tour_share_pct?: number;
+  avg_price: number | null;
+  avg_days: number | null;
+  avg_price_day: number | null;
+  market_price: number | null;
+  is_vietravel?: boolean;
+}
+
+export interface MarketIntelligence {
+  methodology: string;
+  totals: { tours: number; departure_monthly: number; markets: number; companies: number };
+  vietravel: MarketIntelRow;
+  market_avg: MarketIntelRow;
+  markets: MarketIntelRow[];
+  companies: MarketIntelRow[];
+  routes: Array<MarketIntelRow & { thi_truong: string; tuyen_tour: string }>;
+}
+
+export const getMarketIntelligence = async (nguon?: string[]): Promise<MarketIntelligence> => {
+  const p = nguon?.map((n) => `nguon=${encodeURIComponent(n)}`).join("&") ?? "";
+  const { data } = await api.get(`/analytics/market-intelligence${p ? "?" + p : ""}`);
+  return data;
+};
+
 export const getCompetitorProfile = async (company: string) => {
   const { data } = await api.get(`/analytics/competitor/${encodeURIComponent(company)}`);
   return data;
@@ -248,10 +277,20 @@ export interface CompareSegment {
   diem_kh: string;
   so_ngay: number;
   thi_truong: string;
-  vietravel_avg_day: number | null;
+  vietravel_avg_price: number | null;
+  vietravel_avg_days: number | null;
+  vietravel_min_price: number | null;
+  vietravel_min_link: string;
+  vietravel_min_tour: string;
+  market_total_price: number | null;
+  comparison_price: number | null;
+  market_min_price: number | null;
+  market_min_link: string;
+  market_min_tour: string;
+  market_min_company: string;
   market_avg_day: number | null;
-  vietravel_median_day: number | null;
-  market_median_day: number | null;
+  market_avg_days: number | null;
+  vietravel_avg_day: number | null;
   gap_pct: number | null;
   vietravel_count: number;
   market_count: number;

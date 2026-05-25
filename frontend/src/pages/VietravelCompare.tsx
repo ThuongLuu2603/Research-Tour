@@ -93,14 +93,64 @@ export default function VietravelCompare() {
   }));
 
   const scatterData = (segments?.items ?? [])
-    .filter((s) => s.vietravel_avg_day && s.market_avg_day)
+    .filter((s) => s.comparison_price && s.vietravel_avg_price)
     .slice(0, 80)
     .map((s) => ({
-      x: s.market_avg_day,
-      y: s.vietravel_avg_day,
+      x: s.comparison_price,
+      y: s.vietravel_avg_price,
       z: s.vietravel_freq_monthly,
       name: s.tuyen_tour,
     }));
+
+  const LinkCell = ({ url }: { url?: string }) => url ? (
+    <a href={url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-primary-600 hover:text-primary-800">
+      <ExternalLink size={12} />
+    </a>
+  ) : <span className="text-gray-300">—</span>;
+
+  const PriceTable = () => (
+    <div className="card overflow-auto max-h-[520px]">
+      <table className="w-full text-xs min-w-[1100px]">
+        <thead className="bg-gray-50 sticky top-0">
+          <tr>
+            <th colSpan={4} className="px-2 py-1 text-left text-gray-400 font-normal border-b">Segment</th>
+            <th colSpan={4} className="px-2 py-1 text-left text-blue-700 font-semibold border-b bg-blue-50">Vietravel</th>
+            <th colSpan={4} className="px-2 py-1 text-left text-gray-700 font-semibold border-b bg-gray-100">Thị trường</th>
+            <th colSpan={2} className="px-2 py-1 text-left border-b">So sánh</th>
+          </tr>
+          <tr className="border-b">
+            {["TT", "Tuyến", "Điểm KH", "Ngày", "Giá TB", "Ngày TB", "Rẻ nhất", "Link", "Giá TT", "Giá SS", "Rẻ nhất", "Link", "Chênh %", ""].map((h) => (
+              <th key={h} className="px-2 py-2 text-left font-semibold text-gray-600 whitespace-nowrap">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {(segments?.items ?? []).map((s: CompareSegment) => (
+            <tr
+              key={s.segment_key}
+              className={cn("border-t hover:bg-blue-50 cursor-pointer", selectedKey === s.segment_key && "bg-blue-50")}
+              onClick={() => setSelectedKey(s.segment_key)}
+            >
+              <td className="px-2 py-2">{s.thi_truong}</td>
+              <td className="px-2 py-2 max-w-[110px] truncate" title={s.tuyen_tour}>{s.tuyen_tour}</td>
+              <td className="px-2 py-2">{s.diem_kh}</td>
+              <td className="px-2 py-2">{s.so_ngay}N</td>
+              <td className="px-2 py-2 font-medium text-blue-900">{fmtVND(s.vietravel_avg_price)}</td>
+              <td className="px-2 py-2">{s.vietravel_avg_days ?? s.so_ngay}N</td>
+              <td className="px-2 py-2">{fmtVND(s.vietravel_min_price)}</td>
+              <td className="px-2 py-2"><LinkCell url={s.vietravel_min_link} /></td>
+              <td className="px-2 py-2">{fmtVND(s.market_total_price)}</td>
+              <td className="px-2 py-2 font-medium">{fmtVND(s.comparison_price)}</td>
+              <td className="px-2 py-2">{fmtVND(s.market_min_price)}</td>
+              <td className="px-2 py-2"><LinkCell url={s.market_min_link} /></td>
+              <td className="px-2 py-2"><GapBadge pct={s.gap_pct} /></td>
+              <td className="px-2 py-2 text-gray-400">{s.position}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 
   const SegmentTable = ({ cols, sortKey }: { cols: string[]; sortKey?: string }) => (
     <div className="card overflow-auto max-h-[480px]">
@@ -155,7 +205,7 @@ export default function VietravelCompare() {
           <p className="font-medium">Phương pháp phân tích</p>
           <p className="text-blue-800 mt-1">{summary?.methodology || segments?.methodology}</p>
           <ul className="text-xs text-blue-700 mt-2 list-disc ml-4 space-y-0.5">
-            <li>Giá TB có trọng số theo số đoàn/ngày KH ước tính từ lịch khởi hành</li>
+            <li>Chênh % = Giá TB VTR ÷ Giá so sánh (TB ngày TT × ngày TB VTR)</li>
             <li>Loại trùng tour theo mã tour / link trước khi tính</li>
             <li>Tần suất: ước tính lượt KH/tháng (Hàng ngày, Theo thứ, ngày cố định…)</li>
           </ul>
@@ -207,7 +257,7 @@ export default function VietravelCompare() {
       {tab === "overview" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div className="card p-5">
-            <h3 className="font-semibold mb-3">Giá/ngày — Top chênh lệch (%)</h3>
+            <h3 className="font-semibold mb-3">Chênh giá TB VTR vs Giá so sánh (%)</h3>
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={priceChart} layout="vertical"><XAxis type="number" tickFormatter={(v) => `${v}%`} />
                 <YAxis dataKey="name" type="category" width={130} tick={{ fontSize: 9 }} />
@@ -217,10 +267,10 @@ export default function VietravelCompare() {
             </ResponsiveContainer>
           </div>
           <div className="card p-5">
-            <h3 className="font-semibold mb-3">Ma trận Giá VTR vs TT (bubble = tần suất VTR)</h3>
+            <h3 className="font-semibold mb-3">Ma trận Giá TB VTR vs Giá so sánh</h3>
             <ResponsiveContainer width="100%" height={280}>
-              <ScatterChart><XAxis dataKey="x" name="TT/ngày" tickFormatter={(v) => `${(v / 1e6).toFixed(1)}tr`} />
-                <YAxis dataKey="y" name="VTR/ngày" tickFormatter={(v) => `${(v / 1e6).toFixed(1)}tr`} />
+              <ScatterChart><XAxis dataKey="x" name="Giá so sánh" tickFormatter={(v) => `${(v / 1e6).toFixed(1)}tr`} />
+                <YAxis dataKey="y" name="Giá TB VTR" tickFormatter={(v) => `${(v / 1e6).toFixed(1)}tr`} />
                 <ZAxis dataKey="z" range={[30, 400]} /><Tooltip cursor={{ strokeDasharray: "3 3" }} />
                 <Scatter data={scatterData} fill="#003580" /></ScatterChart>
             </ResponsiveContainer>
@@ -230,18 +280,20 @@ export default function VietravelCompare() {
       )}
 
       {tab === "price" && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-2">
-            <h3 className="font-semibold mb-2 text-sm">Bảng so sánh giá/ngày ({segments?.total ?? 0} segment)</h3>
-            <SegmentTable cols={["TT", "Tuyến", "Điểm KH", "Ngày", "VTR/ngày", "TT/ngày", "Chênh %", ""]} />
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+          <div className="lg:col-span-3">
+            <h3 className="font-semibold mb-2 text-sm">Bảng so sánh giá ({segments?.total ?? 0} segment)</h3>
+            <PriceTable />
           </div>
           <div className="card p-4">
             <h3 className="font-semibold text-sm mb-3">Hướng dẫn đọc</h3>
-            <p className="text-xs text-gray-600 space-y-2">
-              <span className="block">Chỉ so sánh tour <strong>cùng segment</strong>: Thị trường + Tuyến + Điểm KH + Số ngày.</span>
-              <span className="block">Giá trung bình có trọng số — tour nhiều đoàn/ngày KH được tính nặng hơn.</span>
-              <span className="block">Click 1 dòng để xem chi tiết từng công ty và lịch trình.</span>
-            </p>
+            <ul className="text-xs text-gray-600 space-y-2 list-disc ml-4">
+              <li><strong>Giá TB VTR</strong>: giá tour trung bình có trọng số theo tần suất KH</li>
+              <li><strong>Giá TT</strong> = Giá TB ngày TT × Số ngày TB thị trường</li>
+              <li><strong>Giá so sánh</strong> = Giá TB ngày TT × Số ngày TB VTR</li>
+              <li><strong>Chênh %</strong> = Giá TB VTR ÷ Giá so sánh − 1</li>
+              <li><strong>Rẻ nhất TT</strong>: tour cùng giai đoạn KH với VTR</li>
+            </ul>
           </div>
         </div>
       )}
@@ -325,7 +377,7 @@ export default function VietravelCompare() {
                   <div className="px-4 py-3 border-b font-semibold text-sm">Segment trùng — so sánh giá & tần suất vs VTR</div>
                   <table className="w-full text-xs">
                     <thead className="bg-gray-50 sticky top-0"><tr>
-                      {["Tuyến", "Điểm KH", "Ngày", "ĐT/ngày", "VTR/ngày", "Chênh giá", "ĐT lượt/th", "VTR lượt/th"].map((h) => (
+                      {["Tuyến", "Điểm KH", "Ngày", "Giá SS ĐT", "Giá TB VTR", "Chênh giá", "ĐT lượt/th", "VTR lượt/th"].map((h) => (
                         <th key={h} className="px-2 py-2 text-left">{h}</th>
                       ))}
                     </tr></thead>
@@ -335,8 +387,8 @@ export default function VietravelCompare() {
                           <td className="px-2 py-2 max-w-[100px] truncate">{s.tuyen_tour}</td>
                           <td className="px-2 py-2">{s.diem_kh}</td>
                           <td className="px-2 py-2">{s.so_ngay}N</td>
-                          <td className="px-2 py-2">{fmtVND(s.comp_avg_day)}</td>
-                          <td className="px-2 py-2">{fmtVND(s.vtr_avg_day)}</td>
+                          <td className="px-2 py-2">{fmtVND(s.comp_compare_price)}</td>
+                          <td className="px-2 py-2">{fmtVND(s.vtr_avg_price)}</td>
                           <td className="px-2 py-2"><GapBadge pct={s.price_gap_pct} /></td>
                           <td className="px-2 py-2">{s.comp_freq_monthly}</td>
                           <td className="px-2 py-2">{s.vtr_freq_monthly}</td>
@@ -362,8 +414,8 @@ export default function VietravelCompare() {
             <button className="text-xs text-gray-400 hover:text-gray-600" onClick={() => setSelectedKey(null)}>Đóng</button>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-            <div className="bg-blue-50 rounded-lg p-3"><span className="text-xs text-blue-600">VTR giá/ngày</span><p className="font-bold">{fmtVND(detail.segment?.vietravel_avg_day)}</p></div>
-            <div className="bg-gray-50 rounded-lg p-3"><span className="text-xs text-gray-600">TT giá/ngày</span><p className="font-bold">{fmtVND(detail.segment?.market_avg_day)}</p></div>
+            <div className="bg-blue-50 rounded-lg p-3"><span className="text-xs text-blue-600">Giá TB VTR</span><p className="font-bold">{fmtVND(detail.segment?.vietravel_avg_price)}</p></div>
+            <div className="bg-gray-50 rounded-lg p-3"><span className="text-xs text-gray-600">Giá so sánh</span><p className="font-bold">{fmtVND(detail.segment?.comparison_price)}</p></div>
             <div className="bg-blue-50 rounded-lg p-3"><span className="text-xs text-blue-600">VTR lượt KH/th</span><p className="font-bold">{detail.segment?.vietravel_freq_monthly}</p></div>
             <div className="bg-gray-50 rounded-lg p-3"><span className="text-xs text-gray-600">Chênh giá</span><p className="font-bold"><GapBadge pct={detail.segment?.gap_pct} /></p></div>
           </div>
