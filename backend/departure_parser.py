@@ -10,6 +10,22 @@ WEEKDAY_RE = re.compile(r"thứ\s*(\d|cn|chủ nhật)", re.I)
 PERIOD_WINDOW_DAYS = 45
 
 
+def vtr_period_months(vtr_dates: list[datetime]) -> set[tuple[int, int]]:
+    return {(d.year, d.month) for d in vtr_dates}
+
+
+def vtr_period_label(vtr_dates: list[datetime]) -> str:
+    if not vtr_dates:
+        return ""
+    months = sorted(vtr_period_months(vtr_dates))
+    if len(months) == 1:
+        y, m = months[0]
+        return f"T{m}/{y}"
+    y0, m0 = months[0]
+    y1, m1 = months[-1]
+    return f"T{m0}/{y0}–T{m1}/{y1}"
+
+
 def parse_departure_dates(lich_kh: str) -> list[datetime]:
     """Trích ngày khởi hành cố định dd/mm/yyyy từ lich_kh."""
     dates: list[datetime] = []
@@ -52,6 +68,36 @@ def schedules_overlap_vtr_period(vtr_dates: list[datetime], market_lich_kh: str)
             if abs((md - vd).days) <= PERIOD_WINDOW_DAYS:
                 return True
     return False
+
+
+def parse_departure_frequency_in_period(lich_kh: str, vtr_dates: list[datetime]) -> dict:
+    """Tần suất trong giai đoạn so sánh (theo tháng KH của VTR)."""
+    if not vtr_dates:
+        return parse_departure_frequency(lich_kh)
+
+    months = vtr_period_months(vtr_dates)
+    explicit = parse_departure_dates(lich_kh)
+    in_period = [d for d in explicit if (d.year, d.month) in months]
+
+    if in_period:
+        n_months = max(len(months), 1)
+        monthly = max(1.0, round(len(in_period) / n_months, 1))
+        return {
+            "monthly_estimate": monthly,
+            "explicit_dates": len(in_period),
+            "pattern": "in_vtr_period",
+            "label": f"~{monthly} đoàn/tháng ({len(in_period)} ngày trong giai đoạn VTR)",
+        }
+
+    if schedules_overlap_vtr_period(vtr_dates, lich_kh):
+        return parse_departure_frequency(lich_kh)
+
+    return {
+        "monthly_estimate": 0.0,
+        "explicit_dates": 0,
+        "pattern": "outside_period",
+        "label": "Ngoài giai đoạn VTR",
+    }
 
 
 def parse_departure_frequency(lich_kh: str) -> dict:

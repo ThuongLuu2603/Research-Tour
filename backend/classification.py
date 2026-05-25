@@ -56,6 +56,114 @@ def invalidate_classification_cache() -> None:
     _route_rules_from_db.cache_clear()
     _company_alias_pairs.cache_clear()
     _departure_alias_pairs.cache_clear()
+    _duration_alias_pairs.cache_clear()
+
+
+DEFAULT_DURATION_ALIASES: list[tuple[float, list[str]]] = [
+    (3.0, ["3n2d", "3n/2d", "3 ngày 2 đêm", "3 ngày 2 dem", "3n 2d"]),
+    (4.0, ["4n3d", "4n/3d", "4 ngày 3 đêm", "4 ngày 3 dem", "4n 3d"]),
+    (5.0, ["5n4d", "5n/4d", "5 ngày 4 đêm", "5 ngày 4 dem", "5n 4d", "5n4đ"]),
+    (6.0, ["6n5d", "6n/5d", "6 ngày 5 đêm", "6 ngày 5 dem"]),
+    (7.0, ["7n6d", "7n/6d", "7 ngày 6 đêm", "7 ngày 6 dem"]),
+    (8.0, ["8n7d", "8n/7d", "8 ngày 7 đêm"]),
+    (9.0, ["9n8d", "9 ngày 8 đêm"]),
+    (10.0, ["10n9d", "10 ngày 9 đêm"]),
+]
+
+
+@lru_cache(maxsize=1)
+def _duration_alias_pairs() -> tuple[tuple[str, float], ...]:
+    pairs: list[tuple[str, float]] = []
+    for days, aliases in DEFAULT_DURATION_ALIASES:
+        for a in aliases:
+            pairs.append((a.lower().strip(), days))
+    pairs.sort(key=lambda x: len(x[0]), reverse=True)
+    return tuple(pairs)
+
+
+def is_company_alias_matched(raw_name: str) -> bool:
+    lower = (raw_name or "").strip().lower()
+    if not lower:
+        return False
+    for alias, _canonical in _company_alias_pairs():
+        if alias == lower or alias in lower:
+            return True
+    return False
+
+
+def is_departure_alias_matched(raw: str) -> bool:
+    return _match_departure_alias(raw) is not None
+
+
+def is_duration_alias_matched(thoi_gian: str, so_ngay: float | None) -> bool:
+    if so_ngay and 0 < so_ngay <= 45:
+        return True
+    text = re.sub(r"\s+", " ", (thoi_gian or "").strip().lower())
+    if not text:
+        return False
+    for alias, _days in _duration_alias_pairs():
+        if alias == text or alias in text:
+            return True
+    return False
+
+
+def resolve_duration_days(thoi_gian: str, so_ngay: float | None) -> tuple[float | None, bool]:
+    """Trả về (số ngày, đã khớp alias/so_ngay chuẩn)."""
+    if so_ngay and 0 < so_ngay <= 45:
+        return round(float(so_ngay), 1), True
+    text = re.sub(r"\s+", " ", (thoi_gian or "").strip().lower())
+    if text:
+        for alias, days in _duration_alias_pairs():
+            if alias == text or alias in text:
+                return days, True
+    if not thoi_gian:
+        return None, False
+    s = thoi_gian.strip().lower()
+    m = re.search(r"(\d+)\s*n\s*(\d+)\s*đ", s)
+    if m:
+        return float(m.group(1)), False
+    m = re.search(r"(\d+)\s*ngày", s)
+    if m:
+        d = float(m.group(1))
+        return (d, False) if 0 < d <= 45 else (None, False)
+    m = re.search(r"(\d+)\s*n\b", s)
+    if m:
+        d = float(m.group(1))
+        return (d, False) if 0 < d <= 45 else (None, False)
+    return None, False
+
+
+def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
+    """Giá trị chưa khớp alias — Công ty, Điểm KH, Thời gian."""
+    from compare_engine import is_vietravel
+
+    cong_ty: dict[str, int] = {}
+    diem_kh: dict[str, int] = {}
+    thoi_gian: dict[str, int] = {}
+
+    for t in tours:
+        if vtr_only and not is_vietravel(t.cong_ty):
+            continue
+        raw_co = (t.cong_ty or "").strip()
+        if raw_co and not is_company_alias_matched(raw_co):
+            cong_ty[raw_co] = cong_ty.get(raw_co, 0) + 1
+        raw_dep = (t.diem_kh or "").strip()
+        if raw_dep and not is_departure_alias_matched(raw_dep):
+            diem_kh[raw_dep] = diem_kh.get(raw_dep, 0) + 1
+        raw_tg = (t.thoi_gian or "").strip()
+        days, matched = resolve_duration_days(raw_tg, t.so_ngay)
+        if days is None or (raw_tg and not matched):
+            key = raw_tg or (f"so_ngay={t.so_ngay}" if t.so_ngay else "—")
+            thoi_gian[key] = thoi_gian.get(key, 0) + 1
+
+    def _rows(d: dict[str, int]) -> list[dict]:
+        return sorted([{"value": k, "count": v} for k, v in d.items()], key=lambda x: -x["count"])[:40]
+
+    return {
+        "cong_ty": _rows(cong_ty),
+        "diem_kh": _rows(diem_kh),
+        "thoi_gian": _rows(thoi_gian),
+    }
 
 
 DEFAULT_COMPANY_ALIASES: list[tuple[str, list[str]]] = [

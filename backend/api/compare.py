@@ -13,8 +13,11 @@ from compare_engine import (
     build_segment_stats,
     deduplicate_tours,
     is_vietravel,
+    normalize_departure,
+    normalize_route,
     segment_key,
 )
+from classification import collect_unmatched_values, resolve_company_name
 from config import settings
 from database import get_db
 from models import Tour, User
@@ -48,6 +51,45 @@ class CompareSummary(BaseModel):
     freq_leading_segments: int
     freq_lagging_segments: int
     methodology: str
+
+
+def _load_vtr_tours(db: Session, thi_truong: list[str], tuyen_tour: str = "", diem_kh: str = "") -> list[Tour]:
+    tours = deduplicate_tours(_load_tours(db, thi_truong, tuyen_tour, diem_kh))
+    return [t for t in tours if is_vietravel(t.cong_ty)]
+
+
+@router.get("/filter-options")
+def compare_filter_options(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    vtr_tours = _load_vtr_tours(db, [])
+    markets = sorted({(t.thi_truong or "Khác").strip() for t in vtr_tours})
+    routes_by_market: dict[str, list[str]] = defaultdict(list)
+    all_routes: set[str] = set()
+    deps: set[str] = set()
+    for t in vtr_tours:
+        m = (t.thi_truong or "Khác").strip()
+        route = normalize_route(t.tuyen_tour) or m
+        all_routes.add(route)
+        if route not in routes_by_market[m]:
+            routes_by_market[m].append(route)
+        deps.add(normalize_departure(t.diem_kh))
+    for m in routes_by_market:
+        routes_by_market[m] = sorted(routes_by_market[m])
+    return {
+        "thi_truong": markets,
+        "tuyen_tour": sorted(all_routes),
+        "diem_kh": sorted(deps),
+        "routes_by_market": dict(routes_by_market),
+    }
+
+
+@router.get("/classification-gaps")
+def classification_gaps(
+    thi_truong: list[str] = Query([]),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    tours = _load_vtr_tours(db, thi_truong)
+    return collect_unmatched_values(tours, vtr_only=True)
 
 
 @router.get("/summary", response_model=CompareSummary)
@@ -108,6 +150,7 @@ def compare_segments(
     tuyen_tour: str = Query(""),
     diem_kh: str = Query(""),
     sort_by: str = Query("gap_pct"),
+    sort_dir: str = Query("desc"),
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
@@ -120,11 +163,17 @@ def compare_segments(
         "gap_pct": lambda r: r.get("gap_pct") if r.get("gap_pct") is not None else -999,
         "freq_gap_pct": lambda r: r.get("freq_gap_pct") if r.get("freq_gap_pct") is not None else -999,
         "vietravel_avg": lambda r: r.get("vietravel_avg_day") or 0,
+        "vietravel_avg_price": lambda r: r.get("vietravel_avg_price") or 0,
+        "comparison_price": lambda r: r.get("comparison_price") or 0,
+        "market_min_price": lambda r: r.get("market_min_price") or 0,
         "market_avg": lambda r: r.get("market_avg_day") or 0,
         "vietravel_freq": lambda r: r.get("vietravel_freq_monthly") or 0,
+        "thi_truong": lambda r: r.get("thi_truong") or "",
         "tuyen_tour": lambda r: r.get("tuyen_tour") or "",
+        "diem_kh": lambda r: r.get("diem_kh") or "",
+        "so_ngay": lambda r: r.get("so_ngay") or 0,
     }.get(sort_by, lambda r: r.get("gap_pct") or -999)
-    reverse = sort_by != "tuyen_tour"
+    reverse = sort_dir != "asc"
     rows.sort(key=sort_key, reverse=reverse)
     return {"methodology": METHODOLOGY, "items": rows[:limit], "total": len(rows)}
 
@@ -216,7 +265,7 @@ def list_competitors(
 
     for seg in segments:
         for e in seg.market_entries:
-            co = e.cong_ty
+            co = resolve_company_name(e.cong_ty)
             if is_vietravel(co):
                 continue
             if co not in stats:
@@ -235,7 +284,7 @@ def list_competitors(
     for seg in segments:
         for e in seg.entries:
             if not e.is_vietravel:
-                seg_companies[e.cong_ty].add(seg.key)
+                seg_companies[resolve_company_name(e.cong_ty)].add(seg.key)
 
     rows = []
     for co, s in stats.items():

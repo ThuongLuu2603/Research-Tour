@@ -7,7 +7,8 @@ import {
 } from "recharts";
 import {
   getCompareSummary, getCompareSegments, getSegmentDetail,
-  getCompareCompetitors, getCompareCompetitorDetail, getFilterOptions,
+  getCompareCompetitors, getCompareCompetitorDetail,
+  getCompareFilterOptions, getCompareClassificationGaps,
   getCoverageMap, getMatcherSuggest, getMatcherDetail,
   CompareSegment,
 } from "@/lib/api";
@@ -15,7 +16,7 @@ import { fmtVND, cn } from "@/lib/utils";
 import { COL, GLOSSARY } from "@/lib/glossary";
 import { InfoTip, PageTitle, ThTip } from "@/components/InfoTip";
 import {
-  TrendingDown, TrendingUp, Minus, ExternalLink, Calendar, Building2,
+  TrendingDown, TrendingUp, Minus, ExternalLink, Calendar, Building2, ArrowUpDown,
 } from "lucide-react";
 
 type Tab = "overview" | "price" | "frequency" | "competitors" | "coverage" | "matcher";
@@ -32,6 +33,28 @@ function FreqBadge({ pct }: { pct: number | null }) {
   if (pct >= 20) return <span className="badge bg-emerald-100 text-emerald-800">+{pct}% đoàn</span>;
   if (pct <= -20) return <span className="badge bg-amber-100 text-amber-800">{pct}% đoàn</span>;
   return <span className="badge bg-gray-100 text-gray-700">{pct}%</span>;
+}
+
+type SortCol = "thi_truong" | "tuyen_tour" | "diem_kh" | "so_ngay" | "vietravel_avg_price" | "comparison_price" | "market_min_price" | "gap_pct" | "freq_gap_pct";
+
+function SortTh({
+  col, label, tip, sortBy, sortDir, onSort,
+}: {
+  col: SortCol; label: string; tip?: string; sortBy: SortCol; sortDir: "asc" | "desc"; onSort: (c: SortCol) => void;
+}) {
+  const active = sortBy === col;
+  return (
+    <th
+      className="px-2 py-2 text-left font-semibold text-gray-600 whitespace-nowrap cursor-pointer select-none hover:bg-gray-100"
+      onClick={() => onSort(col)}
+    >
+      <span className="inline-flex items-center gap-1">
+        <ThTip label={label} tip={tip} />
+        <ArrowUpDown size={11} className={cn(active ? "text-primary-600" : "text-gray-300")} />
+        {active && <span className="text-primary-600 text-[10px]">{sortDir === "asc" ? "↑" : "↓"}</span>}
+      </span>
+    </th>
+  );
 }
 
 const TABS: { id: Tab; label: string; tip?: string }[] = [
@@ -55,6 +78,13 @@ export default function VietravelCompare() {
   const [selectedCompetitor, setSelectedCompetitor] = useState("");
 
   const [selectedMatcherTour, setSelectedMatcherTour] = useState<number | null>(null);
+  const [sortBy, setSortBy] = useState<SortCol>("gap_pct");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const handleSort = (col: SortCol) => {
+    if (sortBy === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortBy(col); setSortDir(col === "tuyen_tour" || col === "diem_kh" || col === "thi_truong" ? "asc" : "desc"); }
+  };
 
   const filters = useMemo(() => ({
     ...(thiTruong ? { thi_truong: [thiTruong] } : {}),
@@ -62,15 +92,28 @@ export default function VietravelCompare() {
     ...(diemKh ? { diem_kh: diemKh } : {}),
   }), [thiTruong, tuyenTour, diemKh]);
 
-  const { data: filterOpts } = useQuery({ queryKey: ["filter-options"], queryFn: getFilterOptions });
+  const segmentQueryFilters = useMemo(() => ({
+    ...filters,
+    sort_by: tab === "frequency" ? "freq_gap_pct" : sortBy,
+    sort_dir: sortDir,
+    limit: 300,
+  }), [filters, tab, sortBy, sortDir]);
+
+  const { data: filterOpts } = useQuery({ queryKey: ["compare-filter-options"], queryFn: getCompareFilterOptions });
+  const routeOptions = useMemo(() => {
+    if (!thiTruong) return filterOpts?.tuyen_tour ?? [];
+    return filterOpts?.routes_by_market?.[thiTruong] ?? [];
+  }, [thiTruong, filterOpts]);
+
   const { data: summary } = useQuery({ queryKey: ["compare-summary", filters], queryFn: () => getCompareSummary(filters) });
   const { data: segments } = useQuery({
-    queryKey: ["compare-segments", filters, tab],
-    queryFn: () => getCompareSegments({
-      ...filters,
-      sort_by: tab === "frequency" ? "freq_gap_pct" : "gap_pct",
-      limit: 300,
-    }),
+    queryKey: ["compare-segments", segmentQueryFilters, tab],
+    queryFn: () => getCompareSegments(segmentQueryFilters),
+  });
+  const { data: classGaps } = useQuery({
+    queryKey: ["compare-class-gaps", filters],
+    queryFn: () => getCompareClassificationGaps(filters),
+    enabled: tab === "price" || tab === "frequency",
   });
   const { data: competitors } = useQuery({
     queryKey: ["compare-competitors", filters],
@@ -116,35 +159,73 @@ export default function VietravelCompare() {
       name: s.tuyen_tour,
     }));
 
-  const LinkCell = ({ url }: { url?: string }) => url ? (
-    <a href={url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-primary-600 hover:text-primary-800">
+  const LinkCell = ({ url, title }: { url?: string; title?: string }) => url ? (
+    <a href={url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-primary-600 hover:text-primary-800" title={title}>
       <ExternalLink size={12} />
     </a>
-  ) : <span className="text-gray-300">—</span>;
+  ) : (
+    <span className="text-gray-400 text-[10px]" title={title || "Chưa có link — kiểm tra dữ liệu scrape"}>—</span>
+  );
 
-  const priceHeaders: [string, string?][] = [
-    [COL.thiTruong, GLOSSARY.thiTruong], [COL.tuyenTour, GLOSSARY.tuyenTour], [COL.diemKhoiHanh, GLOSSARY.diemKhoiHanh], [COL.thoiGian, GLOSSARY.thoiGian],
-    [COL.giaTbVtr, GLOSSARY.giaTbVtr], [COL.ngayTb, GLOSSARY.thoiGian], ["Rẻ nhất VTR", GLOSSARY.reNhat], ["Link"],
-    [COL.giaThiTruong, GLOSSARY.giaThiTruong], [COL.giaSoSanh, GLOSSARY.giaSoSanh], ["Rẻ nhất TT", GLOSSARY.reNhat], ["Link"],
-    [COL.chenhPct, GLOSSARY.chenhGia], [""],
-  ];
+  const UnmatchedPanel = () => {
+    const hasAny = (classGaps?.cong_ty?.length || classGaps?.diem_kh?.length || classGaps?.thoi_gian?.length);
+    if (!hasAny) return null;
+    return (
+      <div className="card p-4 border border-amber-200 bg-amber-50/50 space-y-3">
+        <p className="text-sm font-semibold text-amber-900 inline-flex items-center gap-1">
+          Giá trị chưa khớp alias (tour VTR)
+          <InfoTip text="Bổ sung alias tại Quy tắc phân loại để gom nhóm chính xác hơn" />
+        </p>
+        <div className="grid md:grid-cols-3 gap-4 text-xs">
+          {([
+            { label: COL.congTy, items: classGaps?.cong_ty },
+            { label: COL.diemKhoiHanh, items: classGaps?.diem_kh },
+            { label: COL.thoiGian, items: classGaps?.thoi_gian },
+          ] as const).map(({ label, items }) => (
+            <div key={label}>
+              <p className="font-medium text-gray-700 mb-1">{label}</p>
+              <ul className="space-y-1 max-h-32 overflow-auto">
+                {(items ?? []).map((x) => (
+                  <li key={x.value} className="flex justify-between gap-2 bg-white/80 px-2 py-1 rounded border border-amber-100">
+                    <span className="truncate" title={x.value}>{x.value || "—"}</span>
+                    <span className="text-gray-500 shrink-0">{x.count}</span>
+                  </li>
+                ))}
+                {!(items?.length) && <li className="text-gray-400">Đã khớp hết</li>}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   const PriceTable = () => (
     <div className="card overflow-auto max-h-[520px]">
-      <table className="w-full text-xs min-w-[1100px]">
+      <table className="w-full text-xs min-w-[1200px]">
         <thead className="bg-gray-50 sticky top-0">
           <tr>
-            <th colSpan={4} className="px-2 py-1 text-left text-gray-400 font-normal border-b"><ThTip label="Nhóm so sánh" tip={GLOSSARY.segment} /></th>
+            <th colSpan={5} className="px-2 py-1 text-left text-gray-400 font-normal border-b"><ThTip label="Nhóm so sánh" tip={GLOSSARY.segment} /></th>
             <th colSpan={4} className="px-2 py-1 text-left text-blue-700 font-semibold border-b bg-blue-50">Vietravel</th>
-            <th colSpan={4} className="px-2 py-1 text-left text-gray-700 font-semibold border-b bg-gray-100">Thị trường</th>
+            <th colSpan={4} className="px-2 py-1 text-left text-gray-700 font-semibold border-b bg-gray-100">Thị trường (giai đoạn VTR)</th>
             <th colSpan={2} className="px-2 py-1 text-left border-b">Kết quả</th>
           </tr>
           <tr className="border-b">
-            {priceHeaders.map(([h, tip]) => (
-              <th key={h || "x"} className="px-2 py-2 text-left font-semibold text-gray-600 whitespace-nowrap">
-                {h ? <ThTip label={h} tip={tip} /> : null}
-              </th>
-            ))}
+            <SortTh col="thi_truong" label={COL.thiTruong} tip={GLOSSARY.thiTruong} sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="tuyen_tour" label={COL.tuyenTour} tip={GLOSSARY.tuyenTour} sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="diem_kh" label={COL.diemKhoiHanh} tip={GLOSSARY.diemKhoiHanh} sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="so_ngay" label={COL.thoiGian} tip={GLOSSARY.thoiGian} sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-2 py-2 text-left font-semibold text-gray-600 whitespace-nowrap"><ThTip label="Giai đoạn" tip="Theo ngày KH tour VTR — VD: T5–T8/2025" /></th>
+            <SortTh col="vietravel_avg_price" label={COL.giaTbVtr} tip={GLOSSARY.giaTbVtr} sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-2 py-2 text-left font-semibold text-gray-600 whitespace-nowrap"><ThTip label={COL.ngayTb} tip={GLOSSARY.thoiGian} /></th>
+            <th className="px-2 py-2 text-left font-semibold text-gray-600 whitespace-nowrap"><ThTip label="Rẻ nhất VTR" tip={GLOSSARY.reNhat} /></th>
+            <th className="px-2 py-2 text-left font-semibold text-gray-600">Link</th>
+            <th className="px-2 py-2 text-left font-semibold text-gray-600 whitespace-nowrap"><ThTip label={COL.giaThiTruong} tip={GLOSSARY.giaThiTruong} /></th>
+            <SortTh col="comparison_price" label={COL.giaSoSanh} tip={GLOSSARY.giaSoSanh} sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+            <SortTh col="market_min_price" label="Rẻ nhất TT" tip={GLOSSARY.reNhat} sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-2 py-2 text-left font-semibold text-gray-600">Link</th>
+            <SortTh col="gap_pct" label={COL.chenhPct} tip={GLOSSARY.chenhGia} sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+            <th className="px-2 py-2 text-left font-semibold text-gray-600"></th>
           </tr>
         </thead>
         <tbody>
@@ -158,14 +239,17 @@ export default function VietravelCompare() {
               <td className="px-2 py-2 max-w-[110px] truncate" title={s.tuyen_tour}>{s.tuyen_tour}</td>
               <td className="px-2 py-2">{s.diem_kh}</td>
               <td className="px-2 py-2">{s.so_ngay}N</td>
+              <td className="px-2 py-2 text-[10px] text-gray-600 whitespace-nowrap">{s.vtr_comparison_period || "—"}</td>
               <td className="px-2 py-2 font-medium text-blue-900">{fmtVND(s.vietravel_avg_price)}</td>
               <td className="px-2 py-2">{s.vietravel_avg_days ?? s.so_ngay}N</td>
               <td className="px-2 py-2">{fmtVND(s.vietravel_min_price)}</td>
-              <td className="px-2 py-2"><LinkCell url={s.vietravel_min_link} /></td>
+              <td className="px-2 py-2"><LinkCell url={s.vietravel_min_link} title={s.vietravel_min_tour} /></td>
               <td className="px-2 py-2">{fmtVND(s.market_total_price)}</td>
               <td className="px-2 py-2 font-medium">{fmtVND(s.comparison_price)}</td>
               <td className="px-2 py-2">{fmtVND(s.market_min_price)}</td>
-              <td className="px-2 py-2"><LinkCell url={s.market_min_link} /></td>
+              <td className="px-2 py-2">
+                <LinkCell url={s.market_min_link} title={s.market_min_has_link ? s.market_min_tour : `${s.market_min_tour || "Tour rẻ nhất"} — chưa có URL`} />
+              </td>
               <td className="px-2 py-2"><GapBadge pct={s.gap_pct} /></td>
               <td className="px-2 py-2 text-gray-400">{s.position}</td>
             </tr>
@@ -239,19 +323,26 @@ export default function VietravelCompare() {
       <div className="card p-4 flex flex-wrap gap-3 items-end">
         <div>
           <label className="text-xs text-gray-500 inline-flex items-center">{COL.thiTruong}<InfoTip text={GLOSSARY.thiTruong} /></label>
-          <select className="input w-44 text-sm" value={thiTruong} onChange={(e) => setThiTruong(e.target.value)}>
-            <option value="">Tất cả</option>
+          <select className="input w-44 text-sm" value={thiTruong} onChange={(e) => { setThiTruong(e.target.value); setTuyenTour(""); }}>
+            <option value="">Tất cả thị trường VTR</option>
             {(filterOpts?.thi_truong ?? []).map((m: string) => <option key={m} value={m}>{m}</option>)}
           </select>
         </div>
         <div>
           <label className="text-xs text-gray-500 inline-flex items-center">{COL.tuyenTour}<InfoTip text={GLOSSARY.tuyenTour} /></label>
-          <input className="input w-44 text-sm" placeholder="Tìm tuyến..." value={tuyenTour} onChange={(e) => setTuyenTour(e.target.value)} />
+          <select className="input w-52 text-sm" value={tuyenTour} onChange={(e) => setTuyenTour(e.target.value)}>
+            <option value="">Tất cả tuyến VTR</option>
+            {routeOptions.map((r: string) => <option key={r} value={r}>{r}</option>)}
+          </select>
         </div>
         <div>
           <label className="text-xs text-gray-500 inline-flex items-center">{COL.diemKhoiHanh}<InfoTip text={GLOSSARY.diemKhoiHanh} /></label>
-          <input className="input w-36 text-sm" placeholder="TP.HCM..." value={diemKh} onChange={(e) => setDiemKh(e.target.value)} />
+          <select className="input w-40 text-sm" value={diemKh} onChange={(e) => setDiemKh(e.target.value)}>
+            <option value="">Tất cả điểm KH</option>
+            {(filterOpts?.diem_kh ?? []).map((d: string) => <option key={d} value={d}>{d}</option>)}
+          </select>
         </div>
+        <p className="text-[10px] text-gray-400 self-end pb-1">Bộ lọc theo dữ liệu tour VTR</p>
       </div>
 
       {/* Tabs */}
@@ -303,12 +394,13 @@ export default function VietravelCompare() {
       )}
 
       {tab === "price" && (
-        <div>
+        <div className="space-y-3">
           <h3 className="font-semibold mb-2 text-sm inline-flex items-center">
             Bảng so sánh giá ({segments?.total ?? 0} nhóm)
             <InfoTip text={GLOSSARY.giaSoSanh} />
           </h3>
           <PriceTable />
+          <UnmatchedPanel />
         </div>
       )}
 
@@ -328,6 +420,7 @@ export default function VietravelCompare() {
             </ResponsiveContainer>
           </div>
           <SegmentTable sortKey="freq" />
+          <UnmatchedPanel />
         </div>
       )}
 
@@ -384,8 +477,9 @@ export default function VietravelCompare() {
                   <table className="w-full text-xs">
                     <thead className="bg-gray-50 sticky top-0"><tr>
                       {[
-                        [COL.tuyenTour, GLOSSARY.tuyenTour], [COL.diemKhoiHanh, GLOSSARY.diemKhoiHanh], [COL.thoiGian, GLOSSARY.thoiGian],
-                        [COL.giaSoSanh + " ĐT", GLOSSARY.giaSoSanh], [COL.giaTbVtr, GLOSSARY.giaTbVtr], [COL.chenhPct, GLOSSARY.chenhGia],
+                        [COL.tuyenTour, GLOSSARY.tuyenTour], [COL.diemKhoiHanh, GLOSSARY.diemKhoiHanh],
+                        ["Giai đoạn VTR", "Theo lịch KH tour VTR"],
+                        [COL.giaSoSanh + " ĐT", GLOSSARY.giaSoSanh], [COL.chenhPct, GLOSSARY.chenhGia],
                         ["ĐT " + COL.tbDoanThang, GLOSSARY.tbDoanThang], ["VTR " + COL.tbDoanThang, GLOSSARY.tbDoanThang],
                       ].map(([h, tip]) => (
                         <th key={h} className="px-2 py-2 text-left"><ThTip label={h} tip={tip} /></th>
@@ -396,12 +490,11 @@ export default function VietravelCompare() {
                         <tr key={s.segment_key} className="border-t hover:bg-gray-50 cursor-pointer" onClick={() => setSelectedKey(s.segment_key)}>
                           <td className="px-2 py-2 max-w-[100px] truncate">{s.tuyen_tour}</td>
                           <td className="px-2 py-2">{s.diem_kh}</td>
-                          <td className="px-2 py-2">{s.so_ngay}N</td>
+                          <td className="px-2 py-2 text-[10px] text-gray-600">{s.vtr_comparison_period || "—"}</td>
                           <td className="px-2 py-2">{fmtVND(s.comp_compare_price)}</td>
-                          <td className="px-2 py-2">{fmtVND(s.vtr_avg_price)}</td>
                           <td className="px-2 py-2"><GapBadge pct={s.price_gap_pct} /></td>
                           <td className="px-2 py-2">{s.comp_avg_departures_per_month ?? s.comp_freq_monthly}</td>
-                          <td className="px-2 py-2">{s.vtr_avg_departures_per_month ?? s.vtr_freq_monthly}</td>
+                          <td className="px-2 py-2">{s.vtr_avg_departures_per_month ?? "—"}</td>
                         </tr>
                       ))}
                     </tbody>

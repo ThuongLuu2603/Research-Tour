@@ -297,6 +297,9 @@ export interface CompareSegment {
   market_min_link: string;
   market_min_tour: string;
   market_min_company: string;
+  market_min_has_link?: boolean;
+  vtr_comparison_period?: string;
+  market_count_in_period?: number;
   market_avg_day: number | null;
   market_avg_days: number | null;
   vietravel_avg_day: number | null;
@@ -318,6 +321,7 @@ export interface CompareFilters {
   tuyen_tour?: string;
   diem_kh?: string;
   sort_by?: string;
+  sort_dir?: "asc" | "desc";
   limit?: number;
 }
 
@@ -327,8 +331,29 @@ const buildCompareParams = (filters: CompareFilters = {}) => {
   if (filters.tuyen_tour) params.set("tuyen_tour", filters.tuyen_tour);
   if (filters.diem_kh) params.set("diem_kh", filters.diem_kh);
   if (filters.sort_by) params.set("sort_by", filters.sort_by);
+  if (filters.sort_dir) params.set("sort_dir", filters.sort_dir);
   if (filters.limit) params.set("limit", String(filters.limit));
   return params.toString();
+};
+
+export const getCompareFilterOptions = async () => {
+  const { data } = await api.get("/compare/filter-options");
+  return data as {
+    thi_truong: string[];
+    tuyen_tour: string[];
+    diem_kh: string[];
+    routes_by_market: Record<string, string[]>;
+  };
+};
+
+export const getCompareClassificationGaps = async (filters: CompareFilters = {}) => {
+  const q = buildCompareParams(filters);
+  const { data } = await api.get(`/compare/classification-gaps${q ? "?" + q : ""}`);
+  return data as {
+    cong_ty: Array<{ value: string; count: number }>;
+    diem_kh: Array<{ value: string; count: number }>;
+    thoi_gian: Array<{ value: string; count: number }>;
+  };
 };
 
 export const getCompareSummary = async (filters: CompareFilters = {}): Promise<CompareSummary> => {
