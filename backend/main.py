@@ -43,6 +43,26 @@ async def lifespan(app: FastAPI):
             logger.warning("Initial snapshot skipped: %s", e)
 
     threading.Thread(target=_snapshot_bg, daemon=True, name="daily-snapshot").start()
+
+    def _prewarm_after_import() -> None:
+        import time
+        from seed import get_import_status
+        for _ in range(180):
+            if not get_import_status().get("running"):
+                break
+            time.sleep(2)
+        try:
+            from database import SessionLocal
+            from compare_cache import prewarm_compare_cache
+            db = SessionLocal()
+            try:
+                prewarm_compare_cache(db)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("Compare pre-warm skipped: %s", e)
+
+    threading.Thread(target=_prewarm_after_import, daemon=True, name="compare-prewarm").start()
     set_event_loop(asyncio.get_event_loop())
     start_scheduler()
     logger.info("OTA Research Platform started")

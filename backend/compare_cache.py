@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
-from threading import Lock
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -35,9 +35,10 @@ class CompareContext:
     segment_rows: list[dict] = field(default_factory=list)
 
 
-_lock = Lock()
+_lock = threading.Lock()
 _cache: dict[tuple, tuple[float, CompareContext]] = {}
 _fingerprint_cache: tuple[float, tuple[int, str | None]] | None = None
+_inflight: dict[tuple, threading.Event] = {}
 
 
 def _db_fingerprint(db: Session) -> tuple[int, str | None]:
@@ -75,6 +76,24 @@ def load_tours(
     return q.all()
 
 
+def _build_context(db: Session, thi_truong: list[str], tuyen_tour: str, diem_kh: str) -> CompareContext:
+    t0 = time.time()
+    raw = load_tours(db, thi_truong, tuyen_tour, diem_kh)
+    tours = deduplicate_tours(raw)
+    segments = build_segment_stats(tours, dedup=False)
+    segment_rows = _segments_to_rows(segments)
+    logger.info(
+        "Built compare context filters=%s/%s/%s tours=%s segments=%s in %.1fs",
+        thi_truong, tuyen_tour, diem_kh, len(tours), len(segments), time.time() - t0,
+    )
+    return CompareContext(
+        tours=tours,
+        segments=segments,
+        segment_by_key={s.key: s for s in segments},
+        segment_rows=segment_rows,
+    )
+
+
 def get_compare_context(
     db: Session,
     thi_truong: list[str],
@@ -89,25 +108,36 @@ def get_compare_context(
         hit = _cache.get(key)
         if hit and now - hit[0] < TTL_SECONDS:
             return hit[1]
+        if key in _inflight:
+            waiter = _inflight[key]
+            is_owner = False
+        else:
+            waiter = threading.Event()
+            _inflight[key] = waiter
+            is_owner = True
 
-    raw = load_tours(db, thi_truong, tuyen_tour, diem_kh)
-    tours = deduplicate_tours(raw)
-    segments = build_segment_stats(tours, dedup=False)
-    segment_rows = _segments_to_rows(segments)
-    ctx = CompareContext(
-        tours=tours,
-        segments=segments,
-        segment_by_key={s.key: s for s in segments},
-        segment_rows=segment_rows,
-    )
+    if not is_owner:
+        waiter.wait(timeout=300)
+        with _lock:
+            hit = _cache.get(key)
+            if hit:
+                return hit[1]
+        # Builder failed or timed out — try once more as owner
+        return get_compare_context(db, thi_truong, tuyen_tour, diem_kh)
 
-    with _lock:
-        _cache[key] = (now, ctx)
-        if len(_cache) > 32:
-            oldest = min(_cache.items(), key=lambda x: x[1][0])[0]
-            _cache.pop(oldest, None)
-
-    return ctx
+    try:
+        ctx = _build_context(db, thi_truong, tuyen_tour, diem_kh)
+        with _lock:
+            _cache[key] = (time.time(), ctx)
+            if len(_cache) > 32:
+                oldest = min(_cache.items(), key=lambda x: x[1][0])[0]
+                _cache.pop(oldest, None)
+        return ctx
+    finally:
+        with _lock:
+            ev = _inflight.pop(key, None)
+            if ev:
+                ev.set()
 
 
 def get_segment_by_key(db: Session, key: str) -> SegmentStats | None:
@@ -119,9 +149,14 @@ def invalidate_compare_cache() -> None:
     global _fingerprint_cache
     with _lock:
         _cache.clear()
+        for ev in _inflight.values():
+            ev.set()
+        _inflight.clear()
     _fingerprint_cache = None
 
 
 def prewarm_compare_cache(db: Session) -> None:
     """Build default compare context after sync/scrape to avoid cold-request timeouts."""
+    logger.info("Pre-warming compare cache...")
     get_compare_context(db, [], "", "")
+    logger.info("Compare cache pre-warm complete")

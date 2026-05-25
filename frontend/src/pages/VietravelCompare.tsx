@@ -112,7 +112,7 @@ export default function VietravelCompare() {
     return filterOpts?.routes_by_market?.[thiTruong] ?? [];
   }, [thiTruong, filterOpts]);
 
-  const { data: summary } = useQuery({
+  const { data: summary, isFetched: summaryReady } = useQuery({
     queryKey: ["compare-summary", filters],
     queryFn: () => getCompareSummary(filters),
     staleTime: compareStale,
@@ -120,9 +120,9 @@ export default function VietravelCompare() {
   const { data: segments, isLoading: segmentsLoading, isError: segmentsError, refetch: refetchSegments } = useQuery({
     queryKey: ["compare-segments", segmentQueryFilters],
     queryFn: () => getCompareSegments(segmentQueryFilters),
-    enabled: needsSegments,
+    enabled: needsSegments && summaryReady,
     staleTime: compareStale,
-    retry: 1,
+    retry: 2,
   });
   const { data: classGaps } = useQuery({
     queryKey: ["compare-class-gaps", filters],
@@ -244,7 +244,7 @@ export default function VietravelCompare() {
   };
 
   const SegmentsErrorBanner = () => (
-    segmentsError ? (
+    segmentsError && !segmentsLoading ? (
       <div className="card p-4 border border-red-200 bg-red-50 text-sm text-red-800 flex flex-wrap items-center justify-between gap-2">
         <span>Không tải được bảng so sánh — thử làm mới hoặc liên hệ admin.</span>
         <button type="button" className="btn btn-sm" onClick={() => refetchSegments()}>Thử lại</button>
@@ -422,9 +422,10 @@ export default function VietravelCompare() {
 
       {tab === "overview" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {segmentsError && (
-            <div className="lg:col-span-2 card p-4 border border-red-200 bg-red-50 text-sm text-red-800">
-              Không tải được dữ liệu biểu đồ — thử làm mới trang hoặc liên hệ admin.
+          {segmentsError && !segmentsLoading && (
+            <div className="lg:col-span-2 card p-4 border border-red-200 bg-red-50 text-sm text-red-800 flex flex-wrap items-center justify-between gap-2">
+              <span>Không tải được dữ liệu biểu đồ — thử làm mới hoặc liên hệ admin.</span>
+              <button type="button" className="btn btn-sm" onClick={() => refetchSegments()}>Thử lại</button>
             </div>
           )}
           <div className="card p-5">

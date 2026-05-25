@@ -353,6 +353,12 @@ def start_import_background() -> bool:
     def _run():
         try:
             import_missing_sheets()
+            db = SessionLocal()
+            try:
+                from compare_cache import prewarm_compare_cache
+                prewarm_compare_cache(db)
+            finally:
+                db.close()
             with _import_lock:
                 _import_status["message"] = f"Import hoàn tất — {tour_count():,} tour"
         except Exception as e:

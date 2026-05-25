@@ -2,7 +2,7 @@ import axios from "axios";
 
 const api = axios.create({ baseURL: "/api" });
 
-const compareApi = axios.create({ baseURL: "/api", timeout: 90_000 });
+const compareApi = axios.create({ baseURL: "/api", timeout: 180_000 });
 compareApi.interceptors.request.use((cfg) => {
   const token = localStorage.getItem("access_token");
   if (token) cfg.headers.Authorization = `Bearer ${token}`;
