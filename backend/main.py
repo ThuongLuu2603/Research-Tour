@@ -22,22 +22,27 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import threading
+
     init_db()
-    from seed import create_default_users, import_missing_sheets
+    from seed import create_default_users, start_import_background
 
     create_default_users()
-    from seed import start_import_background
     start_import_background()
-    try:
-        from database import SessionLocal
-        from snapshot_service import capture_daily_snapshot
-        db = SessionLocal()
+
+    def _snapshot_bg() -> None:
         try:
-            capture_daily_snapshot(db)
-        finally:
-            db.close()
-    except Exception as e:
-        logger.warning("Initial snapshot skipped: %s", e)
+            from database import SessionLocal
+            from snapshot_service import capture_daily_snapshot
+            db = SessionLocal()
+            try:
+                capture_daily_snapshot(db)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("Initial snapshot skipped: %s", e)
+
+    threading.Thread(target=_snapshot_bg, daemon=True, name="daily-snapshot").start()
     set_event_loop(asyncio.get_event_loop())
     start_scheduler()
     logger.info("OTA Research Platform started")
