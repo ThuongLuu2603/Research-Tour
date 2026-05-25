@@ -116,12 +116,35 @@ def _tour_priority(t: Tour) -> tuple:
     return (src, updated)
 
 
+def _is_specific_route(tuyen_tour: str, thi_truong: str) -> bool:
+    route = (tuyen_tour or "").strip()
+    market = (thi_truong or "").strip()
+    generic = {market.casefold(), "khác", "khac", ""}
+    return bool(route and route.casefold() not in generic)
+
+
+def _prefer_route_label(keep: Tour, drop: Tour) -> None:
+    """Giữ nhãn tuyến cụ thể (vd. Bờ Đông) từ Main/Manual khi dedup với FindTourGo."""
+    if not _is_specific_route(drop.tuyen_tour, drop.thi_truong or keep.thi_truong):
+        return
+    if not _is_specific_route(keep.tuyen_tour, keep.thi_truong or drop.thi_truong):
+        keep.tuyen_tour = (drop.tuyen_tour or "")[:256]
+        return
+    curated = {"Manual", "Main"}
+    if drop.nguon in curated and keep.nguon not in curated:
+        keep.tuyen_tour = (drop.tuyen_tour or "")[:256]
+
+
 def deduplicate_tours(tours: list[Tour]) -> list[Tour]:
     best: dict[str, Tour] = {}
     for t in tours:
         k = _dedup_key(t)
         if k not in best or _tour_priority(t) > _tour_priority(best[k]):
+            if k in best:
+                _prefer_route_label(t, best[k])
             best[k] = t
+        else:
+            _prefer_route_label(best[k], t)
     return list(best.values())
 
 

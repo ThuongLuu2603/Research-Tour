@@ -149,20 +149,69 @@ def _find_db_tour(db, nguon: str, fields: dict) -> Tour | None:
             return t
     ten = fields.get("ten_tour") or ""
     if ten:
-        return db.query(Tour).filter(Tour.nguon == nguon, Tour.ten_tour == ten).first()
+        t = db.query(Tour).filter(Tour.nguon == nguon, Tour.ten_tour == ten).first()
+        if t:
+            return t
+
+    # Sheet Main là nguồn chuẩn — cập nhật tour trùng mã/link ở nguồn khác (vd. FindTourGo)
+    if nguon != "Main":
+        return None
+    if ma:
+        t = db.query(Tour).filter(Tour.ma_tour == ma).first()
+        if t:
+            return t
+    if link:
+        for needle in (link, link.split("?")[0]):
+            if not needle:
+                continue
+            t = db.query(Tour).filter(Tour.link_url == needle).first()
+            if t:
+                return t
     return None
 
 
-def merge_sheet_source_to_db(db, nguon: str) -> dict:
+def _apply_fields_to_tour(
+    tour: Tour, fields: dict, nguon: str, now: datetime, *, preserve_nguon: bool = False
+) -> None:
     from classification import resolve_company_name, resolve_departure_point
     from seed import parse_ngay, price_segment
 
+    tour.cong_ty = resolve_company_name(fields["cong_ty"])[:256]
+    tour.thi_truong = fields["thi_truong"][:128]
+    tour.tuyen_tour = fields["tuyen_tour"][:256]
+    tour.ten_tour = fields["ten_tour"][:512]
+    tour.lich_trinh = fields["lich_trinh"]
+    tour.diem_kh = resolve_departure_point(fields["diem_kh"])[:256]
+    tour.thoi_gian = fields["thoi_gian"][:64]
+    tour.gia_raw = fields["gia_raw"][:64]
+    tour.gia = fields["gia"]
+    tour.lich_kh = fields["lich_kh"]
+    if fields["link_url"]:
+        tour.link_url = fields["link_url"]
+    if fields["ma_tour"]:
+        tour.ma_tour = fields["ma_tour"][:64]
+    tour.khach_san = fields["khach_san"][:256]
+    tour.hang_khong = fields["hang_khong"][:256]
+    tour.so_ngay = parse_ngay(fields["thoi_gian"])
+    tour.phan_khuc = price_segment(fields["gia"])
+    if not preserve_nguon:
+        tour.nguon = nguon
+    tour.updated_at = now
+
+
+def _create_tour_from_fields(fields: dict, nguon: str, now: datetime) -> Tour:
+    tour = Tour(created_at=now)
+    _apply_fields_to_tour(tour, fields, nguon, now)
+    return tour
+
+
+def merge_sheet_source_to_db(db, nguon: str) -> dict:
     ws = _worksheet(nguon)
     rows = ws.get_all_values()
     if len(rows) < 2:
-        return {"nguon": nguon, "updated": 0, "skipped": 0}
+        return {"nguon": nguon, "updated": 0, "inserted": 0, "skipped": 0}
 
-    updated = skipped = 0
+    updated = inserted = skipped = 0
     now = datetime.utcnow()
     for row in rows[1:]:
         fields = _row_to_fields(row)
@@ -171,32 +220,30 @@ def merge_sheet_source_to_db(db, nguon: str) -> dict:
             continue
         tour = _find_db_tour(db, nguon, fields)
         if not tour:
-            skipped += 1
-            continue
+            if not fields.get("gia"):
+                skipped += 1
+                continue
+            tour = _create_tour_from_fields(fields, nguon, now)
+            db.add(tour)
+            inserted += 1
+        else:
+            updated += 1
 
-        tour.cong_ty = resolve_company_name(fields["cong_ty"])[:256]
-        tour.thi_truong = fields["thi_truong"][:128]
-        tour.tuyen_tour = fields["tuyen_tour"][:256]
-        tour.ten_tour = fields["ten_tour"][:512]
-        tour.lich_trinh = fields["lich_trinh"]
-        tour.diem_kh = resolve_departure_point(fields["diem_kh"])[:256]
-        tour.thoi_gian = fields["thoi_gian"][:64]
-        tour.gia_raw = fields["gia_raw"][:64]
-        tour.gia = fields["gia"]
-        tour.lich_kh = fields["lich_kh"]
-        if fields["link_url"]:
-            tour.link_url = fields["link_url"]
-        if fields["ma_tour"]:
-            tour.ma_tour = fields["ma_tour"][:64]
-        tour.khach_san = fields["khach_san"][:256]
-        tour.hang_khong = fields["hang_khong"][:256]
-        tour.so_ngay = parse_ngay(fields["thoi_gian"])
-        tour.phan_khuc = price_segment(fields["gia"])
-        tour.updated_at = now
-        updated += 1
+        _apply_fields_to_tour(
+            tour,
+            fields,
+            nguon,
+            now,
+            preserve_nguon=(tour.nguon not in ("", nguon)),
+        )
 
     db.commit()
-    return {"nguon": nguon, "updated": updated, "skipped": skipped}
+    try:
+        from compare_cache import invalidate_compare_cache
+        invalidate_compare_cache()
+    except Exception:
+        pass
+    return {"nguon": nguon, "updated": updated, "inserted": inserted, "skipped": skipped}
 
 
 def merge_all_sheets_to_db(db) -> dict:
@@ -206,4 +253,4 @@ def merge_all_sheets_to_db(db) -> dict:
             results.append(merge_sheet_source_to_db(db, nguon))
         except Exception as e:
             results.append({"nguon": nguon, "error": str(e)})
-    return {"sources": results, "total_updated": sum(r.get("updated", 0) for r in results)}
+    return {"sources": results, "total_updated": sum(r.get("updated", 0) for r in results), "total_inserted": sum(r.get("inserted", 0) for r in results)}
