@@ -140,11 +140,19 @@ def create_default_users() -> None:
                     existing.role = "admin"
                 logger.info("User already exists: %s", u["username"])
         db.commit()
-        from workspace_service import ensure_personal_workspace
-        for u in db.query(User).all():
-            ensure_personal_workspace(db, u)
     finally:
         db.close()
+
+
+def import_already_complete() -> bool:
+    """Skip redundant background import when preDeploy seed already filled DB."""
+    try:
+        for nguon, expected in EXPECTED_MIN.items():
+            if source_count(nguon) < expected:
+                return False
+        return True
+    except Exception:
+        return False
 
 
 def _map_row(raw: dict[str, str]) -> dict[str, str]:
@@ -163,6 +171,9 @@ def _row_to_mapping(row: dict[str, str], nguon: str) -> dict | None:
     thoi_gian = str(row.get("thoi_gian") or "").strip()
     from link_utils import normalize_tour_link
     link_url = normalize_tour_link(str(row.get("link_url") or "").strip()) or normalize_tour_link(str(row.get("link_raw") or "").strip())
+    ma_tour = str(row.get("ma_tour") or "").strip()[:64]
+    from tour_identity import compute_external_id
+    external_id = compute_external_id(nguon, ma_tour=ma_tour, link_url=link_url, ten_tour=ten_tour)[:128]
     now = datetime.utcnow()
 
     return {
@@ -177,12 +188,14 @@ def _row_to_mapping(row: dict[str, str], nguon: str) -> dict | None:
         "gia": gia,
         "lich_kh": str(row.get("lich_kh") or "").strip(),
         "link_url": link_url,
-        "ma_tour": str(row.get("ma_tour") or "").strip()[:64],
+        "ma_tour": ma_tour,
         "khach_san": str(row.get("khach_san") or "").strip()[:256],
         "hang_khong": str(row.get("hang_khong") or "").strip()[:256],
         "so_ngay": parse_ngay(thoi_gian),
         "phan_khuc": price_segment(gia),
         "nguon": nguon,
+        "external_id": external_id,
+        "sheet_source": nguon,
         "analyst_note": "",
         "flagged": False,
         "created_at": now,
@@ -352,13 +365,8 @@ def start_import_background() -> bool:
 
     def _run():
         try:
-            import_missing_sheets()
-            db = SessionLocal()
-            try:
-                from compare_cache import prewarm_compare_cache
-                prewarm_compare_cache(db)
-            finally:
-                db.close()
+            if not import_already_complete():
+                import_missing_sheets()
             with _import_lock:
                 _import_status["message"] = f"Import hoàn tất — {tour_count():,} tour"
         except Exception as e:

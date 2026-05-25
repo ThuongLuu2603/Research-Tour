@@ -49,38 +49,46 @@ def _migrate_saved_views():
             logger.warning("saved_views migration skipped: %s", e)
 
 
-def _backfill_external_ids():
+def _backfill_external_ids(batch_size: int = 500) -> None:
     from database import SessionLocal
     from models import Tour
     from tour_identity import compute_external_id
 
     db = SessionLocal()
     try:
-        missing = db.query(Tour).filter((Tour.external_id == "") | (Tour.external_id.is_(None))).all()
-        if not missing:
-            return
         used: set[str] = {
             r[0]
             for r in db.query(Tour.external_id).filter(Tour.external_id != "").all()
             if r[0]
         }
         updated = 0
-        for tour in missing:
-            ext = compute_external_id(
-                tour.nguon or tour.sheet_source or "Unknown",
-                ma_tour=tour.ma_tour,
-                link_url=tour.link_url,
-                ten_tour=tour.ten_tour,
+        while True:
+            batch = (
+                db.query(Tour)
+                .filter((Tour.external_id == "") | (Tour.external_id.is_(None)))
+                .limit(batch_size)
+                .all()
             )
-            if ext in used:
-                ext = f"{ext}:id{tour.id}"
-            tour.external_id = ext[:128]
-            if not tour.sheet_source:
-                tour.sheet_source = tour.nguon or ""
-            used.add(tour.external_id)
-            updated += 1
-        db.commit()
-        logger.info("Backfilled external_id for %s tours", updated)
+            if not batch:
+                break
+            for tour in batch:
+                ext = compute_external_id(
+                    tour.nguon or tour.sheet_source or "Unknown",
+                    ma_tour=tour.ma_tour,
+                    link_url=tour.link_url,
+                    ten_tour=tour.ten_tour,
+                )
+                if ext in used:
+                    ext = f"{ext}:id{tour.id}"
+                tour.external_id = ext[:128]
+                if not tour.sheet_source:
+                    tour.sheet_source = tour.nguon or ""
+                used.add(tour.external_id)
+                updated += 1
+            db.commit()
+            db.expunge_all()
+        if updated:
+            logger.info("Backfilled external_id for %s tours", updated)
     finally:
         db.close()
 

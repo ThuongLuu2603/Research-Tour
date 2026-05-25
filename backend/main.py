@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 
 from api import auth, tours, analytics, scraper as scraper_api, admin, compare, rules as rules_api, intelligence as intelligence_api, workspaces
 from api.scraper import set_event_loop
-from database import init_db
+from database import init_db, run_deferred_db_maintenance
 from scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
@@ -30,6 +30,29 @@ async def lifespan(app: FastAPI):
     create_default_users()
     start_import_background()
 
+    def _startup_maintenance() -> None:
+        import time
+        from seed import get_import_status
+
+        for _ in range(180):
+            if not get_import_status().get("running"):
+                break
+            time.sleep(2)
+        try:
+            run_deferred_db_maintenance()
+        except Exception as e:
+            logger.warning("Deferred DB maintenance skipped: %s", e)
+        try:
+            from database import SessionLocal
+            from compare_cache import prewarm_compare_cache
+            db = SessionLocal()
+            try:
+                prewarm_compare_cache(db)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("Compare pre-warm skipped: %s", e)
+
     def _snapshot_bg() -> None:
         try:
             from database import SessionLocal
@@ -42,32 +65,12 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Initial snapshot skipped: %s", e)
 
+    threading.Thread(target=_startup_maintenance, daemon=True, name="startup-maintenance").start()
     threading.Thread(target=_snapshot_bg, daemon=True, name="daily-snapshot").start()
-
-    def _prewarm_after_import() -> None:
-        import time
-        from seed import get_import_status
-        for _ in range(180):
-            if not get_import_status().get("running"):
-                break
-            time.sleep(2)
-        try:
-            from database import SessionLocal
-            from compare_cache import prewarm_compare_cache
-            db = SessionLocal()
-            try:
-                prewarm_compare_cache(db)
-            finally:
-                db.close()
-        except Exception as e:
-            logger.warning("Compare pre-warm skipped: %s", e)
-
-    threading.Thread(target=_prewarm_after_import, daemon=True, name="compare-prewarm").start()
     set_event_loop(asyncio.get_event_loop())
     start_scheduler()
     logger.info("OTA Research Platform started")
     yield
-    # Shutdown
     stop_scheduler()
     logger.info("OTA Research Platform stopped")
 
@@ -86,7 +89,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# API routers
 app.include_router(auth.router)
 app.include_router(tours.router)
 app.include_router(analytics.router)
@@ -103,7 +105,6 @@ def health():
     return {"status": "ok"}
 
 
-# Serve React build (production)
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend" / "dist"
 
 if FRONTEND_DIR.exists():
