@@ -248,6 +248,21 @@ def segment_tours(
     return {"segment_key": key, "tours": flat, "segment": seg.to_dict()}
 
 
+@router.get("/weekday-distribution")
+def weekday_distribution(
+    thi_truong: list[str] = Query([]),
+    tuyen_tour: str = Query(""),
+    diem_kh: str = Query(""),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Phân bổ đoàn KH theo thứ trong tuần — VTR vs thị trường."""
+    from compare_engine import build_weekday_distribution
+
+    ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh)
+    return build_weekday_distribution(ctx.tours)
+
+
 @router.get("/competitors")
 def list_competitors(
     thi_truong: list[str] = Query([]),

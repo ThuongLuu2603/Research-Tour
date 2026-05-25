@@ -3,12 +3,12 @@ import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine,
-  ScatterChart, Scatter, ZAxis, Legend,
+  ScatterChart, Scatter, ZAxis, Legend, CartesianGrid,
 } from "recharts";
 import {
   getCompareSummary, getCompareSegments, getSegmentDetail,
   getCompareCompetitors, getCompareCompetitorDetail,
-  getCompareFilterOptions, getCompareClassificationGaps,
+  getCompareFilterOptions, getCompareClassificationGaps, getCompareWeekdayDistribution,
   getCoverageMap, getMatcherSuggest, getMatcherDetail,
   CompareSegment,
 } from "@/lib/api";
@@ -130,6 +130,12 @@ export default function VietravelCompare() {
     enabled: tab === "price" || tab === "frequency",
     staleTime: compareStale,
   });
+  const { data: weekdayDist } = useQuery({
+    queryKey: ["compare-weekday-dist", filters],
+    queryFn: () => getCompareWeekdayDistribution(filters),
+    enabled: tab === "frequency",
+    staleTime: compareStale,
+  });
   const { data: competitors } = useQuery({
     queryKey: ["compare-competitors", filters],
     queryFn: () => getCompareCompetitors(filters),
@@ -171,6 +177,17 @@ export default function VietravelCompare() {
     vtr: s.vtr_avg_departures_per_month ?? s.vietravel_freq_monthly,
     mkt: s.top_freq_competitor_departures,
   }));
+
+  const weekdayCompareChart = useMemo(() => {
+    if (!weekdayDist) return [];
+    return weekdayDist.labels.map((label, i) => ({
+      weekday: label,
+      vtr: weekdayDist.vietravel[i]?.departures_monthly ?? 0,
+      mkt: weekdayDist.market[i]?.departures_monthly ?? 0,
+      vtrPct: weekdayDist.vietravel[i]?.share_pct ?? 0,
+      mktPct: weekdayDist.market[i]?.share_pct ?? 0,
+    }));
+  }, [weekdayDist]);
 
   const scatterData = (segments?.items ?? [])
     .filter((s) => s.comparison_price && s.vietravel_avg_price)
@@ -465,6 +482,66 @@ export default function VietravelCompare() {
               </BarChart>
             </ResponsiveContainer>
           </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="card p-5">
+              <h3 className="font-semibold mb-1 text-sm inline-flex items-center gap-2">
+                Tour VTR khởi hành thứ mấy
+                <InfoTip text={GLOSSARY.tanSuatThu} />
+              </h3>
+              <p className="text-xs text-gray-500 mb-3">
+                {weekdayDist?.vietravel_tour_count ?? 0} sản phẩm · ~{Math.round(weekdayDist?.vietravel_total ?? 0)} đoàn/tháng
+              </p>
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={weekdayDist?.vietravel ?? []}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="weekday" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} />
+                  <Tooltip formatter={(v: number, _n, p: any) => [`${v} đoàn/tháng (${p.payload.share_pct}%)`, COL.doanThang]} />
+                  <Bar dataKey="departures_monthly" fill="#003580" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="card p-5">
+              <h3 className="font-semibold mb-1 text-sm inline-flex items-center gap-2">
+                Tour thị trường khởi hành thứ mấy
+                <InfoTip text={GLOSSARY.tanSuatThu} />
+              </h3>
+              <p className="text-xs text-gray-500 mb-3">
+                {weekdayDist?.market_tour_count ?? 0} sản phẩm · ~{Math.round(weekdayDist?.market_total ?? 0)} đoàn/tháng
+              </p>
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={weekdayDist?.market ?? []}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="weekday" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} />
+                  <Tooltip formatter={(v: number, _n, p: any) => [`${v} đoàn/tháng (${p.payload.share_pct}%)`, COL.doanThang]} />
+                  <Bar dataKey="departures_monthly" fill="#64748b" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {weekdayCompareChart.some((r) => r.vtr > 0 || r.mkt > 0) && (
+            <div className="card p-5">
+              <h3 className="font-semibold mb-3 text-sm inline-flex items-center gap-2">
+                So sánh phân bổ thứ KH — VTR vs thị trường
+                <InfoTip text={GLOSSARY.tanSuatThu} />
+              </h3>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={weekdayCompareChart}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="weekday" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} />
+                  <Tooltip formatter={(v: number) => [`${v} đoàn/tháng`, COL.doanThang]} />
+                  <Legend />
+                  <Bar dataKey="vtr" name="Vietravel" fill="#003580" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="mkt" name="Thị trường" fill="#94a3b8" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
           <SegmentTable sortKey="freq" />
           <UnmatchedPanel />
         </div>

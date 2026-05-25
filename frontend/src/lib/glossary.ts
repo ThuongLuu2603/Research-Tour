@@ -12,6 +12,7 @@ export const GLOSSARY = {
   tbDoanThang: "TB số đoàn/tháng/sản phẩm — tần suất khởi hành dùng để so sánh.",
   thiPhanDoan: "% tổng đoàn/tháng của nhóm so với toàn hệ thống.",
   tanSuat: "Tần suất khởi hành = TB số đoàn/tháng/sản phẩm, ước tính từ Lịch khởi hành.",
+  tanSuatThu: "Phân bổ đoàn KH theo thứ trong tuần — từ ngày cố định hoặc lịch theo thứ trong Lịch khởi hành.",
   giaTbTour: "Giá TB tour — trung bình có trọng số theo số đoàn; cắt biên 10% khi chênh luxury/phổ thông lớn.",
   giaTbNgay: "Giá TB/ngày = Σ(giá tour × đoàn) ÷ Σ(đoàn × ngày) trên tuyến.",
   giaThiTruong: "Giá thị trường = Giá TB/ngày TT × Số ngày TB thị trường (cùng tuyến).",

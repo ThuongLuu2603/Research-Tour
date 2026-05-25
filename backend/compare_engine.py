@@ -726,6 +726,63 @@ def _gap(a: float | None, b: float | None) -> float | None:
     return round((a / b - 1) * 100, 1)
 
 
+def build_weekday_distribution(tours: list[Tour], *, dedup: bool = True) -> dict:
+    """Phân bổ đoàn KH theo thứ — VTR vs thị trường (cùng bộ lọc compare)."""
+    from departure_parser import WEEKDAY_LABELS, parse_departure_frequency, parse_weekday_slots
+
+    if dedup:
+        tours = deduplicate_tours(tours)
+
+    vtr_weights = [0.0] * 7
+    mkt_weights = [0.0] * 7
+    vtr_tours = mkt_tours = 0
+
+    for t in tours:
+        if not t.gia or t.gia <= 0:
+            continue
+        days = parse_duration_days(t.thoi_gian, t.so_ngay)
+        if not days:
+            continue
+        slots = parse_weekday_slots(t.lich_kh or "")
+        if not slots:
+            continue
+        slot_total = sum(slots.values())
+        if slot_total <= 0:
+            continue
+        freq = parse_departure_frequency(t.lich_kh or "")["monthly_estimate"]
+        bucket = vtr_weights if is_vietravel(t.cong_ty) else mkt_weights
+        if is_vietravel(t.cong_ty):
+            vtr_tours += 1
+        else:
+            mkt_tours += 1
+        for wd, cnt in slots.items():
+            if 0 <= wd <= 6:
+                bucket[wd] += freq * (cnt / slot_total)
+
+    def _rows(weights: list[float]) -> list[dict]:
+        total = sum(weights)
+        rows = []
+        for i, label in enumerate(WEEKDAY_LABELS):
+            value = round(weights[i], 1)
+            rows.append({
+                "weekday": label,
+                "weekday_index": i,
+                "departures_monthly": value,
+                "share_pct": round(value / total * 100, 1) if total > 0 else 0.0,
+            })
+        return rows
+
+    return {
+        "labels": WEEKDAY_LABELS,
+        "vietravel": _rows(vtr_weights),
+        "market": _rows(mkt_weights),
+        "vietravel_total": round(sum(vtr_weights), 1),
+        "market_total": round(sum(mkt_weights), 1),
+        "vietravel_tour_count": vtr_tours,
+        "market_tour_count": mkt_tours,
+    }
+
+
 METHODOLOGY = (
     "Nhóm so sánh = cùng Thị trường + Tuyến tour + Điểm khởi hành (gộp mọi sản phẩm/thời gian trên tuyến). "
     "Trọng số mỗi sản phẩm = số đoàn khởi hành (ưu tiên đếm ngày KH trong giai đoạn VTR). "

@@ -9,6 +9,58 @@ EXTRA_DATES_RE = re.compile(r"\(\+(\d+)\s*ngày khác\)", re.I)
 WEEKDAY_RE = re.compile(r"thứ\s*(\d|cn|chủ nhật)", re.I)
 PERIOD_WINDOW_DAYS = 45
 
+# Python weekday(): Monday=0 … Sunday=6
+WEEKDAY_LABELS = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "CN"]
+
+
+def _weekday_index_from_token(token: str) -> int | None:
+    t = (token or "").strip().lower()
+    if t in {"cn", "chủ nhật", "chu nhat"} or t.startswith("chủ"):
+        return 6
+    if t.isdigit():
+        n = int(t)
+        if 2 <= n <= 7:
+            return n - 2
+    return None
+
+
+def parse_weekday_slots(lich_kh: str) -> dict[int, float]:
+    """
+    Phân bổ đoàn KH theo thứ trong tuần (0=Thứ 2 … 6=CN).
+    Ưu tiên ngày cố định; sau đó lịch theo thứ; hàng ngày = đều 7 ngày.
+    """
+    from collections import defaultdict
+
+    text = (lich_kh or "").strip()
+    if not text:
+        return {}
+
+    lower = text.lower()
+    if "hàng ngày" in lower or "hang ngay" in lower or "daily" in lower:
+        return {i: 1.0 for i in range(7)}
+
+    weights: dict[int, float] = defaultdict(float)
+    dates = parse_departure_dates(text)
+    if dates:
+        for d in dates:
+            weights[d.weekday()] += 1.0
+        return dict(weights)
+
+    for m in WEEKDAY_RE.finditer(text):
+        idx = _weekday_index_from_token(m.group(1))
+        if idx is not None:
+            weights[idx] += 1.0
+
+    if weights:
+        return dict(weights)
+
+    if "theo thứ" in lower:
+        for i in range(5):
+            weights[i] += 1.0
+        return dict(weights)
+
+    return {}
+
 
 def vtr_period_months(vtr_dates: list[datetime]) -> set[tuple[int, int]]:
     return {(d.year, d.month) for d in vtr_dates}

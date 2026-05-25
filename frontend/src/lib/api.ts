@@ -370,6 +370,29 @@ export const getCompareSegments = async (filters: CompareFilters = {}) => {
   return data as { methodology: string; items: CompareSegment[]; total: number };
 };
 
+export interface WeekdayDistributionRow {
+  weekday: string;
+  weekday_index: number;
+  departures_monthly: number;
+  share_pct: number;
+}
+
+export interface WeekdayDistribution {
+  labels: string[];
+  vietravel: WeekdayDistributionRow[];
+  market: WeekdayDistributionRow[];
+  vietravel_total: number;
+  market_total: number;
+  vietravel_tour_count: number;
+  market_tour_count: number;
+}
+
+export const getCompareWeekdayDistribution = async (filters: CompareFilters = {}): Promise<WeekdayDistribution> => {
+  const q = buildCompareParams(filters);
+  const { data } = await api.get(`/compare/weekday-distribution${q ? "?" + q : ""}`);
+  return data;
+};
+
 export const getSegmentDetail = async (segmentKey: string) => {
   const { data } = await api.get(`/compare/segment-detail?segment_key=${encodeURIComponent(segmentKey)}`);
   return data;
