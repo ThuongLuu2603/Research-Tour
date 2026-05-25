@@ -99,25 +99,42 @@ export default function VietravelCompare() {
     limit: 300,
   }), [filters, tab, sortBy, sortDir]);
 
-  const { data: filterOpts } = useQuery({ queryKey: ["compare-filter-options"], queryFn: getCompareFilterOptions });
+  const compareStale = 5 * 60_000;
+  const needsSegments = tab === "overview" || tab === "price" || tab === "frequency";
+
+  const { data: filterOpts } = useQuery({
+    queryKey: ["compare-filter-options"],
+    queryFn: getCompareFilterOptions,
+    staleTime: compareStale,
+  });
   const routeOptions = useMemo(() => {
     if (!thiTruong) return filterOpts?.tuyen_tour ?? [];
     return filterOpts?.routes_by_market?.[thiTruong] ?? [];
   }, [thiTruong, filterOpts]);
 
-  const { data: summary } = useQuery({ queryKey: ["compare-summary", filters], queryFn: () => getCompareSummary(filters) });
+  const { data: summary } = useQuery({
+    queryKey: ["compare-summary", filters],
+    queryFn: () => getCompareSummary(filters),
+    staleTime: compareStale,
+  });
   const { data: segments } = useQuery({
-    queryKey: ["compare-segments", segmentQueryFilters, tab],
+    queryKey: ["compare-segments", segmentQueryFilters],
     queryFn: () => getCompareSegments(segmentQueryFilters),
+    enabled: needsSegments,
+    staleTime: compareStale,
+    placeholderData: (prev) => prev,
   });
   const { data: classGaps } = useQuery({
     queryKey: ["compare-class-gaps", filters],
     queryFn: () => getCompareClassificationGaps(filters),
     enabled: tab === "price" || tab === "frequency",
+    staleTime: compareStale,
   });
   const { data: competitors } = useQuery({
     queryKey: ["compare-competitors", filters],
     queryFn: () => getCompareCompetitors(filters),
+    enabled: tab === "competitors",
+    staleTime: compareStale,
   });
   const { data: compDetail } = useQuery({
     queryKey: ["compare-competitor-detail", selectedCompetitor, filters],

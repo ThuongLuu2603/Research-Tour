@@ -49,6 +49,20 @@ def make_segment_key(thi_truong: str, route: str, depart: str, days: float) -> s
     return f"{thi_truong}|{route}|{depart}|{days:.0f}d"
 
 
+def parse_segment_key(key: str) -> tuple[str, str, str, float] | None:
+    """Parse segment key → (thi_truong, route, depart, days)."""
+    if not key or "|" not in key:
+        return None
+    parts = key.rsplit("|", 3)
+    if len(parts) != 4 or not parts[3].endswith("d"):
+        return None
+    try:
+        days = float(parts[3][:-1])
+    except ValueError:
+        return None
+    return parts[0], parts[1], parts[2], days
+
+
 def segment_key(tour: Tour) -> str | None:
     days = parse_duration_days(tour.thoi_gian, tour.so_ngay)
     route = normalize_route(tour.tuyen_tour)

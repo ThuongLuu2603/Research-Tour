@@ -7,15 +7,15 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
+from compare_cache import get_compare_context, get_segment_by_key, load_tours
 from compare_engine import (
     METHODOLOGY,
     build_competitor_overview,
-    build_segment_stats,
     deduplicate_tours,
     is_vietravel,
     normalize_departure,
     normalize_route,
-    segment_key,
+    parse_segment_key,
 )
 from classification import collect_unmatched_values, resolve_company_name
 from config import settings
@@ -23,17 +23,6 @@ from database import get_db
 from models import Tour, User
 
 router = APIRouter(prefix="/api/compare", tags=["compare"])
-
-
-def _load_tours(db: Session, thi_truong: list[str], tuyen_tour: str = "", diem_kh: str = "") -> list[Tour]:
-    q = db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
-    if thi_truong:
-        q = q.filter(Tour.thi_truong.in_(thi_truong))
-    if tuyen_tour:
-        q = q.filter(Tour.tuyen_tour.ilike(f"%{tuyen_tour}%"))
-    if diem_kh:
-        q = q.filter(Tour.diem_kh.ilike(f"%{diem_kh}%"))
-    return q.all()
 
 
 class CompareSummary(BaseModel):
@@ -54,8 +43,8 @@ class CompareSummary(BaseModel):
 
 
 def _load_vtr_tours(db: Session, thi_truong: list[str], tuyen_tour: str = "", diem_kh: str = "") -> list[Tour]:
-    tours = deduplicate_tours(_load_tours(db, thi_truong, tuyen_tour, diem_kh))
-    return [t for t in tours if is_vietravel(t.cong_ty)]
+    ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh)
+    return [t for t in ctx.tours if is_vietravel(t.cong_ty)]
 
 
 @router.get("/filter-options")
@@ -95,11 +84,13 @@ def classification_gaps(
 @router.get("/summary", response_model=CompareSummary)
 def compare_summary(
     thi_truong: list[str] = Query([]),
+    tuyen_tour: str = Query(""),
+    diem_kh: str = Query(""),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    tours = deduplicate_tours(_load_tours(db, thi_truong))
-    segments = build_segment_stats(tours, dedup=False)
+    ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh)
+    segments = ctx.segments
     cheaper = expensive = similar = freq_lead = freq_lag = 0
     gaps = []
     vtr_freq = market_freq = 0.0
@@ -123,6 +114,7 @@ def compare_summary(
             elif fg <= -20:
                 freq_lag += 1
 
+    tours = ctx.tours
     vtr_count = sum(1 for t in tours if is_vietravel(t.cong_ty))
     mkt_count = sum(1 for t in tours if not is_vietravel(t.cong_ty))
 
@@ -155,9 +147,8 @@ def compare_segments(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    tours = deduplicate_tours(_load_tours(db, thi_truong, tuyen_tour, diem_kh))
-    segments = build_segment_stats(tours, dedup=False)
-    rows = [s.to_dict() for s in segments]
+    ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh)
+    rows = [s.to_dict() for s in ctx.segments]
 
     sort_key = {
         "gap_pct": lambda r: r.get("gap_pct") if r.get("gap_pct") is not None else -999,
@@ -178,18 +169,7 @@ def compare_segments(
     return {"methodology": METHODOLOGY, "items": rows[:limit], "total": len(rows)}
 
 
-@router.get("/segment-detail")
-def segment_detail(
-    key: str = Query(..., alias="segment_key"),
-    db: Session = Depends(get_db),
-    _: User = Depends(get_current_user),
-):
-    tours = deduplicate_tours(db.query(Tour).filter(Tour.gia != None, Tour.gia > 0).all())  # noqa: E711
-    segments = {s.key: s for s in build_segment_stats(tours, dedup=False)}
-    seg = segments.get(key)
-    if not seg:
-        return {"segment_key": key, "found": False}
-
+def _segment_detail_payload(seg) -> dict:
     by_company: dict[str, list] = defaultdict(list)
     for e in seg.entries:
         by_company[e.cong_ty].append({
@@ -224,15 +204,31 @@ def segment_detail(
     }
 
 
+@router.get("/segment-detail")
+def segment_detail(
+    key: str = Query(..., alias="segment_key"),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    seg = get_segment_by_key(db, key)
+    if not seg:
+        parsed = parse_segment_key(key)
+        if parsed:
+            market, route, depart, _days = parsed
+            ctx = get_compare_context(db, [market], route, depart)
+            seg = ctx.segment_by_key.get(key)
+    if not seg:
+        return {"segment_key": key, "found": False}
+    return _segment_detail_payload(seg)
+
+
 @router.get("/segment-tours")
 def segment_tours(
     key: str = Query(..., alias="segment_key"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    tours = deduplicate_tours(db.query(Tour).filter(Tour.gia != None, Tour.gia > 0).all())  # noqa: E711
-    segments = {s.key: s for s in build_segment_stats(tours, dedup=False)}
-    seg = segments.get(key)
+    seg = get_segment_by_key(db, key)
     if not seg:
         return {"segment_key": key, "tours": []}
     flat = []
@@ -259,8 +255,8 @@ def list_competitors(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    tours = deduplicate_tours(_load_tours(db, thi_truong))
-    segments = build_segment_stats(tours, dedup=False)
+    ctx = get_compare_context(db, thi_truong)
+    segments = ctx.segments
     stats: dict[str, dict] = {}
 
     for seg in segments:
@@ -307,5 +303,5 @@ def competitor_detail(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    tours = deduplicate_tours(_load_tours(db, thi_truong))
-    return build_competitor_overview(tours, company)
+    ctx = get_compare_context(db, thi_truong)
+    return build_competitor_overview(ctx.tours, company)

@@ -48,46 +48,6 @@ function RuleSearchBar({ value, onChange, total, filtered }: { value: string; on
   );
 }
 
-function UnmatchedDropTray({ items, search }: { items: UnmatchedItem[]; search: string }) {
-  const filtered = useMemo(
-    () => (items ?? []).filter((x) => matchSearch(search, x.value, x.count)),
-    [items, search],
-  );
-  if (!filtered.length) {
-    return (
-      <div className="card p-4 border border-dashed border-gray-200 bg-gray-50 text-xs text-gray-500 text-center">
-        Không còn giá trị chưa khớp trong dữ liệu tour (hoặc bị lọc bởi ô tìm kiếm).
-      </div>
-    );
-  }
-  return (
-    <div className="card p-4 border-2 border-dashed border-amber-400 bg-amber-50/60 space-y-2">
-      <p className="text-sm font-semibold text-amber-900 inline-flex items-center gap-1">
-        <GripVertical size={14} /> Chưa khớp ({filtered.length}) — kéo thả lên cột &quot;Tên chính thức&quot; / &quot;Số ngày&quot;
-        <InfoTip text="Các giá trị raw từ tour chưa map alias. Kéo chip và thả vào dòng tên chuẩn để tạo rule mới." />
-      </p>
-      <div className="flex flex-wrap gap-2 max-h-44 overflow-auto p-1">
-        {filtered.map((item) => (
-          <span
-            key={item.value}
-            draggable
-            onDragStart={(e) => {
-              e.dataTransfer.setData("text/plain", item.value);
-              e.dataTransfer.effectAllowed = "copy";
-            }}
-            className="cursor-grab active:cursor-grabbing inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white border border-amber-300 text-xs shadow-sm hover:border-primary-500 hover:bg-blue-50"
-            title={`${item.count} tour · kéo thả để gán`}
-          >
-            <GripVertical size={10} className="text-amber-600 shrink-0" />
-            <span className="max-w-[200px] truncate">{item.value || "—"}</span>
-            <span className="text-gray-400 shrink-0">({item.count})</span>
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function dropHandlers(
   targetKey: string,
   dropTarget: string | null,
@@ -105,6 +65,17 @@ function dropHandlers(
       if (alias) onAssign(alias);
     },
     dropClassName: active ? "ring-2 ring-inset ring-primary-500 bg-primary-50" : "",
+  };
+}
+
+function dragAliasProps(value: string) {
+  return {
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => {
+      e.dataTransfer.setData("text/plain", value);
+      e.dataTransfer.effectAllowed = "copy";
+    },
+    className: "cursor-grab active:cursor-grabbing inline-flex items-center gap-1",
   };
 }
 
@@ -199,6 +170,15 @@ export default function RulesAdminPage() {
     () => (durationRules ?? []).filter((r) => matchSearch(search, r.canonical_days, r.alias, `${r.canonical_days}N`)),
     [durationRules, search],
   );
+  const filteredUnmatched = useMemo(
+    () => (unmatched?.items ?? []).filter((x) => matchSearch(search, x.value, x.count)),
+    [unmatched, search],
+  );
+  const canonicalOptions = useMemo(() => {
+    if (tab === "company") return [...new Set((companyRules ?? []).map((r) => r.canonical_name))];
+    if (tab === "departure") return [...new Set((departureRules ?? []).map((r) => r.canonical_name))];
+    return [];
+  }, [tab, companyRules, departureRules]);
 
   const addMarket = useMutation({
     mutationFn: () => createMarketRule({ market: mMarket, keyword: mKeyword }),
@@ -282,15 +262,17 @@ export default function RulesAdminPage() {
         total={
           tab === "market" ? (marketRules?.length ?? 0)
             : tab === "route" ? (routeRules?.length ?? 0)
-            : tab === "company" ? (companyRules?.length ?? 0)
-            : tab === "departure" ? (departureRules?.length ?? 0)
+            : tab === "company" ? (companyRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
+            : tab === "departure" ? (departureRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
+            : tab === "duration" ? (durationRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
             : (durationRules?.length ?? 0)
         }
         filtered={
           tab === "market" ? filteredMarket.length
             : tab === "route" ? filteredRoute.length
-            : tab === "company" ? filteredCompany.length
-            : tab === "departure" ? filteredDeparture.length
+            : tab === "company" ? filteredCompany.length + filteredUnmatched.length
+            : tab === "departure" ? filteredDeparture.length + filteredUnmatched.length
+            : tab === "duration" ? filteredDuration.length + filteredUnmatched.length
             : filteredDuration.length
         }
       />
@@ -391,6 +373,8 @@ export default function RulesAdminPage() {
           </div>
           <AliasTable
             rows={filteredCompany}
+            unmatched={filteredUnmatched}
+            canonicalOptions={canonicalOptions}
             editingId={editingId}
             editDraft={editDraft}
             dropTarget={dropTarget}
@@ -403,7 +387,6 @@ export default function RulesAdminPage() {
             onDelete={(r) => deleteCompanyRule(r.id).then(() => { invalidate(); setSyncMsg("Đã xóa alias"); })}
             canonicalLabel="Tên chính thức"
           />
-          <UnmatchedDropTray items={unmatched?.items ?? []} search={search} />
         </div>
       )}
 
@@ -425,6 +408,8 @@ export default function RulesAdminPage() {
           </p>
           <AliasTable
             rows={filteredDeparture}
+            unmatched={filteredUnmatched}
+            canonicalOptions={canonicalOptions}
             editingId={editingId}
             editDraft={editDraft}
             dropTarget={dropTarget}
@@ -437,7 +422,6 @@ export default function RulesAdminPage() {
             onDelete={(r) => deleteDepartureRule(r.id).then(() => { invalidate(); setSyncMsg("Đã xóa alias"); })}
             canonicalLabel="Tên chính thức"
           />
-          <UnmatchedDropTray items={unmatched?.items ?? []} search={search} />
         </div>
       )}
 
@@ -460,7 +444,7 @@ export default function RulesAdminPage() {
           <div className="card overflow-auto max-h-[500px]">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 sticky top-0"><tr>
-                <th className="px-3 py-2 text-left">Số ngày chuẩn</th><th className="px-3 py-2 text-left">Alias</th><th className="w-24"></th>
+                <th className="px-3 py-2 text-left">Số ngày chuẩn <span className="text-[10px] font-normal text-gray-400">(thả alias vào đây)</span></th><th className="px-3 py-2 text-left">Alias</th><th className="w-24"></th>
               </tr></thead>
               <tbody>
                 {filteredDuration.map((r: DurationRule) => {
@@ -495,11 +479,29 @@ export default function RulesAdminPage() {
                   </tr>
                   );
                 })}
+                {filteredUnmatched.length > 0 && (
+                  <>
+                    <tr className="bg-amber-100 border-t-2 border-amber-400">
+                      <td colSpan={3} className="px-3 py-2 text-xs font-semibold text-amber-900">
+                        <span className="inline-flex items-center gap-1">
+                          <GripVertical size={12} /> Chưa khớp ({filteredUnmatched.length}) — kéo Alias lên dòng Số ngày phía trên, hoặc nhập ngày rồi bấm Gán
+                          <InfoTip text="Giá trị thời gian raw từ tour chưa có trong bảng alias." />
+                        </span>
+                      </td>
+                    </tr>
+                    {filteredUnmatched.map((item) => (
+                      <UnmatchedDurationRow
+                        key={item.value}
+                        item={item}
+                        onAssign={(days, alias) => assignDurationAlias(days, alias)}
+                      />
+                    ))}
+                  </>
+                )}
               </tbody>
             </table>
-            <p className="text-xs text-gray-400 p-3">{filteredDuration.length} rules (DB)</p>
+            <p className="text-xs text-gray-400 p-3">{filteredDuration.length} rules · {filteredUnmatched.length} chưa khớp</p>
           </div>
-          <UnmatchedDropTray items={unmatched?.items ?? []} search={search} />
         </div>
       )}
     </div>
@@ -507,15 +509,17 @@ export default function RulesAdminPage() {
 }
 
 function AliasTable({
-  rows, editingId, editDraft, dropTarget, setDropTarget, onDropAssign,
+  rows, unmatched, canonicalOptions, editingId, editDraft, dropTarget, setDropTarget, onDropAssign,
   onStartEdit, onDraftChange, onCancel, onSave, onDelete, canonicalLabel,
 }: {
   rows: Array<CompanyRule | DepartureRule>;
+  unmatched: UnmatchedItem[];
+  canonicalOptions: string[];
   editingId: number | null;
   editDraft: Record<string, string>;
   dropTarget: string | null;
   setDropTarget: (k: string | null) => void;
-  onDropAssign: (canonical: string, alias: string) => void;
+  onDropAssign: (canonical: string, alias: string) => void | Promise<void>;
   onStartEdit: (r: CompanyRule | DepartureRule) => void;
   onDraftChange: (d: Record<string, string>) => void;
   onCancel: () => void;
@@ -523,11 +527,15 @@ function AliasTable({
   onDelete: (r: CompanyRule | DepartureRule) => void;
   canonicalLabel: string;
 }) {
+  const [pending, setPending] = useState<Record<string, string>>({});
+
   return (
-    <div className="card overflow-auto max-h-[500px]">
+    <div className="card overflow-auto max-h-[560px]">
       <table className="w-full text-sm">
-        <thead className="bg-gray-50 sticky top-0"><tr>
-          <th className="px-3 py-2 text-left">{canonicalLabel} <span className="text-[10px] font-normal text-gray-400">(thả alias vào đây)</span></th><th className="px-3 py-2 text-left">Alias</th><th className="w-24"></th>
+        <thead className="bg-gray-50 sticky top-0 z-10"><tr>
+          <th className="px-3 py-2 text-left">{canonicalLabel} <span className="text-[10px] font-normal text-gray-400">(thả alias vào đây)</span></th>
+          <th className="px-3 py-2 text-left">Alias</th>
+          <th className="w-24"></th>
         </tr></thead>
         <tbody>
           {rows.map((r) => {
@@ -562,9 +570,87 @@ function AliasTable({
             </tr>
             );
           })}
+
+          {unmatched.length > 0 && (
+            <>
+              <tr className="bg-amber-100 border-t-2 border-amber-400">
+                <td colSpan={3} className="px-3 py-2 text-xs font-semibold text-amber-900">
+                  <span className="inline-flex items-center gap-1">
+                    <GripVertical size={12} /> Chưa khớp ({unmatched.length}) — kéo cột Alias lên {canonicalLabel} phía trên, hoặc nhập tên chuẩn rồi bấm Gán
+                  </span>
+                </td>
+              </tr>
+              {unmatched.map((item) => (
+                <tr key={item.value} className="bg-amber-50/70 border-t border-amber-200">
+                  <td className="px-3 py-2">
+                    <input
+                      className="input text-xs py-1 w-full border-amber-300 bg-white"
+                      placeholder={`${canonicalLabel}...`}
+                      list="canonical-suggestions"
+                      value={pending[item.value] ?? ""}
+                      onChange={(e) => setPending({ ...pending, [item.value]: e.target.value })}
+                    />
+                  </td>
+                  <td className="px-3 py-2 font-mono text-xs text-amber-950">
+                    <span {...dragAliasProps(item.value)} title={`${item.count} tour · kéo lên dòng phía trên`}>
+                      <GripVertical size={10} className="text-amber-600 shrink-0" />
+                      {item.value || "—"}
+                      <span className="text-gray-500 ml-1">({item.count})</span>
+                    </span>
+                  </td>
+                  <td className="px-3 py-2">
+                    <button
+                      type="button"
+                      className="btn-primary text-[10px] py-1 px-2"
+                      disabled={!(pending[item.value] ?? "").trim()}
+                      onClick={async () => {
+                        const c = (pending[item.value] ?? "").trim();
+                        if (!c) return;
+                        await onDropAssign(c, item.value);
+                        setPending((p) => { const n = { ...p }; delete n[item.value]; return n; });
+                      }}
+                    >
+                      Gán
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </>
+          )}
         </tbody>
       </table>
-      <p className="text-xs text-gray-400 p-3">{rows.length} rules</p>
+      <datalist id="canonical-suggestions">
+        {canonicalOptions.map((c) => <option key={c} value={c} />)}
+      </datalist>
+      <p className="text-xs text-gray-400 p-3">{rows.length} rules · {unmatched.length} chưa khớp</p>
     </div>
+  );
+}
+
+function UnmatchedDurationRow({ item, onAssign }: { item: UnmatchedItem; onAssign: (days: number, alias: string) => void }) {
+  const [days, setDays] = useState("");
+  return (
+    <tr className="bg-amber-50/70 border-t border-amber-200">
+      <td className="px-3 py-2">
+        <input className="input text-xs py-1 w-20 border-amber-300 bg-white" type="number" min={1} max={45} placeholder="5N" value={days} onChange={(e) => setDays(e.target.value)} />
+      </td>
+      <td className="px-3 py-2 font-mono text-xs text-amber-950">
+        <span {...dragAliasProps(item.value)} title={`${item.count} tour`}>
+          <GripVertical size={10} className="text-amber-600 shrink-0" />
+          {item.value || "—"}
+          <span className="text-gray-500 ml-1">({item.count})</span>
+        </span>
+      </td>
+      <td className="px-3 py-2">
+        <button
+          type="button"
+          className="btn-primary text-[10px] py-1 px-2"
+          disabled={!days || Number.isNaN(parseFloat(days))}
+          onClick={() => onAssign(parseFloat(days), item.value)}
+        >
+          Gán
+        </button>
+      </td>
+    </tr>
   );
 }
