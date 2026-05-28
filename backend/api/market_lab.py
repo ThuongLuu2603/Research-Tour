@@ -17,10 +17,13 @@ def overview(
     grain: str = Query("route", pattern="^(route|market)$"),
     tab: str = Query("opportunity", pattern="^(opportunity|operating)$"),
     thi_truong: str | None = Query(None),
+    hide_suspect: bool = Query(True),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    return get_market_lab_overview(db, grain=grain, tab=tab, thi_truong=thi_truong or None)
+    return get_market_lab_overview(
+        db, grain=grain, tab=tab, thi_truong=thi_truong or None, hide_suspect=hide_suspect,
+    )
 
 
 @router.get("/supply-calendar")

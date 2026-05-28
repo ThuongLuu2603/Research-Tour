@@ -73,11 +73,18 @@ class RouteAgg:
     freq_gap_sum: float = 0.0
     freq_gap_weight: float = 0.0
 
+    quality: str = "ok"
+    quality_note: str = ""
+    dominant_market: str | None = None
+
     def to_dict(self, *, momentum: dict | None = None) -> dict:
         return {
             "route_key": self.route_key,
             "thi_truong": self.thi_truong,
             "tuyen_tour": self.tuyen_tour,
+            "quality": self.quality,
+            "quality_note": self.quality_note,
+            "dominant_market": self.dominant_market,
             "vtr_tour_count": self.vtr_tour_count,
             "market_tour_count": self.market_tour_count,
             "market_departures_monthly": round(self.market_departures_monthly, 1),
@@ -401,11 +408,14 @@ def get_market_lab_overview(
     grain: str = "route",
     tab: str = "opportunity",
     thi_truong: str | None = None,
+    hide_suspect: bool = True,
 ) -> dict:
     import time
     from market_lab_cache import get_cached_routes, load_momentum_map, routes_from_daily_metrics
+    from route_quality import assess_route_quality, load_tuyen_market_histogram
 
     t0 = time.time()
+    quality_hist = load_tuyen_market_histogram(db)
     routes = routes_from_daily_metrics(db)
     data_source = "snapshot"
     if routes is None:
@@ -419,7 +429,15 @@ def get_market_lab_overview(
     history_days = db.query(func.count(func.distinct(RouteDailyMetrics.snapshot_date))).scalar() or 0
     mom_default = {"history_days": history_days, "supply_delta_pct": None, "gap_delta": None}
     items: list[dict] = []
+    suspect_hidden = 0
     for rk, r in routes.items():
+        q = assess_route_quality(r.thi_truong, r.tuyen_tour, quality_hist)
+        r.quality = q["quality"]
+        r.quality_note = q.get("quality_note", "")
+        r.dominant_market = q.get("dominant_market")
+        if hide_suspect and q["quality"] == "market_mismatch":
+            suspect_hidden += 1
+            continue
         mom = momentum_map.get(rk, mom_default)
         phase = _classify_phase(
             mom.get("supply_delta_pct"),
@@ -441,6 +459,8 @@ def get_market_lab_overview(
     meta = {
         "source": data_source,
         "compute_seconds": round(time.time() - t0, 2),
+        "suspect_routes_hidden": suspect_hidden,
+        "hide_suspect": hide_suspect,
     }
 
     if grain == "market":

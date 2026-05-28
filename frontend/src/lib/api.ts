@@ -715,6 +715,9 @@ export interface MarketLabRouteRow {
   phase: string;
   opportunity_score: number;
   competitor_count: number;
+  quality?: "ok" | "generic" | "market_mismatch";
+  quality_note?: string;
+  dominant_market?: string | null;
   momentum?: {
     history_days?: number;
     supply_delta_pct?: number | null;
@@ -737,7 +740,12 @@ export interface MarketLabOverview {
   grain: string;
   tab: string;
   history_days: number;
-  meta?: { source: string; compute_seconds: number };
+  meta?: {
+    source: string;
+    compute_seconds: number;
+    suspect_routes_hidden?: number;
+    hide_suspect?: boolean;
+  };
   routes?: MarketLabRouteRow[];
   markets?: MarketLabMarketRow[];
   weekly_brief: {
@@ -760,11 +768,13 @@ export const getMarketLabOverview = async (opts: {
   grain?: "route" | "market";
   tab?: "opportunity" | "operating";
   thi_truong?: string;
+  hide_suspect?: boolean;
 }): Promise<MarketLabOverview> => {
   const p = new URLSearchParams();
   if (opts.grain) p.set("grain", opts.grain);
   if (opts.tab) p.set("tab", opts.tab);
   if (opts.thi_truong) p.set("thi_truong", opts.thi_truong);
+  if (opts.hide_suspect === false) p.set("hide_suspect", "false");
   const { data } = await marketLabApi.get(`/market-lab/overview?${p}`);
   return data;
 };

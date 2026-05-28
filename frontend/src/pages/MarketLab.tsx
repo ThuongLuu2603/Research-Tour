@@ -19,16 +19,18 @@ export default function MarketLab() {
   const [grain, setGrain] = useState<Grain>((searchParams.get("grain") as Grain) || "route");
   const [tab, setTab] = useState<Tab>((searchParams.get("tab") as Tab) || "opportunity");
   const [marketFilter, setMarketFilter] = useState(searchParams.get("market") || "");
+  const [hideSuspect, setHideSuspect] = useState(searchParams.get("hide_suspect") !== "false");
 
   const routeParam = searchParams.get("route") || "";
   const [selectedRoute, setSelectedRoute] = useState<MarketLabRouteRow | null>(null);
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
-    queryKey: ["market-lab", grain, tab, marketFilter],
+    queryKey: ["market-lab", grain, tab, marketFilter, hideSuspect],
     queryFn: () => getMarketLabOverview({
       grain,
       tab,
       thi_truong: marketFilter || undefined,
+      hide_suspect: hideSuspect,
     }),
     staleTime: 120_000,
     retry: 1,
@@ -56,6 +58,18 @@ export default function MarketLab() {
   }, [data?.markets]);
 
   const rows = grain === "route" ? (data?.routes ?? []) : [];
+
+  const drillIntoMarket = (market: string) => {
+    setMarketFilter(market);
+    setGrain("route");
+    setSelectedRoute(null);
+    setSearchParams({ grain: "route", tab, market, hide_suspect: hideSuspect ? "true" : "false" });
+  };
+
+  const clearMarketFilter = () => {
+    setMarketFilter("");
+    setSearchParams({ grain, tab, hide_suspect: hideSuspect ? "true" : "false" });
+  };
 
   const selectRoute = (r: MarketLabRouteRow) => {
     setSelectedRoute(r);
@@ -110,6 +124,24 @@ export default function MarketLab() {
         </div>
       )}
 
+      {marketFilter && grain === "route" && (
+        <div className="card p-3 bg-blue-50 border border-blue-200 text-sm flex flex-wrap items-center justify-between gap-2">
+          <p>
+            <strong>Đang lọc thị trường:</strong> {marketFilter} — bảng bên dưới là các <strong>tuyến tour</strong> có cột Thị trường = giá trị này trong database (có thể lẫn tour phân loại sai).
+          </p>
+          <button type="button" className="text-xs text-primary-700 underline" onClick={clearMarketFilter}>
+            Xóa lọc thị trường
+          </button>
+        </div>
+      )}
+
+      {(data?.meta?.suspect_routes_hidden ?? 0) > 0 && hideSuspect && (
+        <p className="text-xs text-amber-700">
+          Đã ẩn {data!.meta!.suspect_routes_hidden} tuyến nghi ngờ sai thị trường (vd. Hồng Kông gán nhầm Đồng Bằng Sông Hồng).
+          <button type="button" className="ml-2 underline" onClick={() => setHideSuspect(false)}>Hiện tất cả</button>
+        </p>
+      )}
+
       {/* Controls */}
       <div className="flex flex-wrap gap-3 items-center">
         <div className="flex rounded-lg border border-gray-200 overflow-hidden text-sm">
@@ -144,10 +176,22 @@ export default function MarketLab() {
             <Wrench size={14} /> Vận hành VTR
           </button>
         </div>
+        <label className="flex items-center gap-1.5 text-xs text-gray-600">
+          <input
+            type="checkbox"
+            checked={hideSuspect}
+            onChange={(e) => setHideSuspect(e.target.checked)}
+          />
+          Ẩn tuyến nghi sai thị trường
+        </label>
         <select
           className="input text-sm py-1.5 max-w-[200px]"
           value={marketFilter}
-          onChange={(e) => setMarketFilter(e.target.value)}
+          onChange={(e) => {
+            const v = e.target.value;
+            setMarketFilter(v);
+            if (v) setGrain("route");
+          }}
         >
           <option value="">Tất cả thị trường</option>
           {markets.map((m) => (
@@ -190,10 +234,7 @@ export default function MarketLab() {
                   <tr
                     key={m.thi_truong}
                     className="border-t border-gray-100 hover:bg-gray-50 cursor-pointer"
-                    onClick={() => {
-                      setGrain("route");
-                      setMarketFilter(m.thi_truong);
-                    }}
+                    onClick={() => drillIntoMarket(m.thi_truong)}
                   >
                     <td className="px-3 py-2 font-medium">{m.thi_truong}</td>
                     <td className="px-3 py-2">{m.route_count}</td>
@@ -217,6 +258,7 @@ export default function MarketLab() {
                     <th className="px-3 py-2">Chênh %</th>
                     <th className="px-3 py-2">Gap TS</th>
                     <th className="px-3 py-2">Phase</th>
+                    <th className="px-3 py-2">Ghi chú</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -230,6 +272,9 @@ export default function MarketLab() {
                     >
                       <td className="px-3 py-2 font-medium max-w-[180px] truncate" title={r.tuyen_tour}>
                         {r.tuyen_tour}
+                        {r.quality === "generic" && (
+                          <span className="ml-1 text-[10px] text-amber-600">(chưa tách tuyến)</span>
+                        )}
                       </td>
                       <td className="px-3 py-2 text-gray-600">{r.thi_truong}</td>
                       <td className="px-3 py-2">{r.market_departures_monthly}</td>
@@ -247,11 +292,14 @@ export default function MarketLab() {
                       <td className="px-3 py-2">
                         <PhaseBadge phase={r.phase} />
                       </td>
+                      <td className="px-3 py-2 text-[10px] text-amber-700 max-w-[140px]" title={r.quality_note}>
+                        {r.quality === "generic" ? "Tuyến = tên TT" : r.quality_note ? "⚠" : ""}
+                      </td>
                     </tr>
                   ))}
                   {rows.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="px-3 py-8 text-center text-gray-400">
+                      <td colSpan={8} className="px-3 py-8 text-center text-gray-400">
                         Không có tuyến phù hợp bộ lọc
                       </td>
                     </tr>
