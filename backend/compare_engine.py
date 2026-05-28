@@ -22,6 +22,12 @@ COMPANY = settings.company_name
 # Main = catalog thị trường chuẩn; Vietravel tab riêng; FindTourGo không vào compare (xem tour_sources.py)
 NGUON_PRIORITY = {"Main": 3, "Manual": 2, "Vietravel": 2, "FindTourGo": 0}
 
+# Giá/ngày bất thường (parse Sheet lỗi) làm vỡ biểu đồ & chênh %
+MAX_TOUR_PRICE_VND = 300_000_000
+MAX_PRICE_PER_DAY_VND = 50_000_000
+MIN_TOUR_DAYS = 0.5
+MAX_TOUR_DAYS = 45
+
 DEPART_ALIASES: list[tuple[str, str]] = []  # legacy; dùng classification.resolve_departure_point
 
 
@@ -68,6 +74,20 @@ def _safe_num(v: float | int | None) -> float | None:
     if isinstance(v, float) and not math.isfinite(v):
         return None
     return float(v)
+
+
+def _sanitize_tour_price(gia: float | None) -> float | None:
+    g = _safe_num(gia)
+    if g is None or g <= 0 or g > MAX_TOUR_PRICE_VND:
+        return None
+    return g
+
+
+def _sanitize_tour_days(days: float | None) -> float | None:
+    d = _safe_num(days)
+    if d is None or d < MIN_TOUR_DAYS or d > MAX_TOUR_DAYS:
+        return None
+    return d
 
 
 def make_segment_key(thi_truong: str, route: str, depart: str) -> str:
@@ -216,13 +236,19 @@ def _route_avg_price_per_day(entries: list[TourEntry], weights: list[float]) -> 
     den = sum(e.so_ngay * w for e, w in zip(entries, weights))
     if den <= 0:
         return None
-    return round(num / den, 0)
+    val = round(num / den, 0)
+    if val <= 0 or val > MAX_PRICE_PER_DAY_VND:
+        return None
+    return val
 
 
 def _route_total_price(avg_day: float | None, avg_days: float | None) -> float | None:
     if avg_day is None or avg_days is None:
         return None
-    return round(avg_day * avg_days, 0)
+    total = round(avg_day * avg_days, 0)
+    if total <= 0 or total > MAX_TOUR_PRICE_VND:
+        return None
+    return total
 
 
 def _smart_price_avg(entries: list[TourEntry], *, vtr: bool) -> float | None:
@@ -593,8 +619,13 @@ def _freq_position_label(gap: float | None) -> str:
     return "Tương đương"
 
 
-def _tour_to_entry(t: Tour, days: float) -> TourEntry:
+def _tour_to_entry(t: Tour, days: float) -> TourEntry | None:
     from link_utils import normalize_tour_link
+
+    gia = _sanitize_tour_price(t.gia)
+    days = _sanitize_tour_days(days) or 0
+    if gia is None or days <= 0:
+        return None
 
     freq = parse_departure_frequency(t.lich_kh)
     link = normalize_tour_link(t.link_url)
@@ -604,10 +635,10 @@ def _tour_to_entry(t: Tour, days: float) -> TourEntry:
         tour_id=t.id,
         cong_ty=t.cong_ty or "",
         ten_tour=t.ten_tour or "",
-        gia=t.gia or 0,
+        gia=gia,
         gia_raw=t.gia_raw or "",
         so_ngay=days,
-        price_day=round((t.gia or 0) / days, 0) if days else 0,
+        price_day=round(gia / days, 0) if days else 0,
         freq_score=freq["monthly_estimate"],
         freq_label=freq["label"],
         lich_kh=t.lich_kh or "",
@@ -637,7 +668,9 @@ def build_segment_stats(tours: list[Tour], *, dedup: bool = True) -> list[Segmen
                 diem_kh=normalize_departure(t.diem_kh),
                 so_ngay=0,
             )
-        buckets[key].entries.append(_tour_to_entry(t, days))
+        entry = _tour_to_entry(t, days)
+        if entry is not None:
+            buckets[key].entries.append(entry)
 
     return [s for s in buckets.values() if s.vtr_entries]
 
@@ -689,7 +722,13 @@ def build_competitor_overview(tours: list[Tour], competitor: str) -> dict:
             "vtr_avg_departures_per_month": seg.vtr_avg_departures_per_month,
         })
 
-    comp_entries = [_tour_to_entry(t, parse_duration_days(t.thoi_gian, t.so_ngay) or 1) for t in comp_tours if t.gia]
+    comp_entries = [
+        e
+        for t in comp_tours
+        if t.gia
+        for e in [_tour_to_entry(t, parse_duration_days(t.thoi_gian, t.so_ngay) or 1)]
+        if e is not None
+    ]
     total_freq = sum(e.freq_score for e in comp_entries)
     avg_day = _smart_day_avg(comp_entries, vtr=False) if comp_entries else None
 

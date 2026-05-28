@@ -29,6 +29,7 @@ class CompareSummary(BaseModel):
     company: str
     total_vietravel_tours: int
     vietravel_tab_tours: int
+    vietravel_main_tours: int = 0
     total_market_tours: int
     segments_with_vietravel: int
     cheaper_count: int
@@ -121,12 +122,17 @@ def compare_summary(
         1 for t in tours
         if (t.nguon or "") == "Vietravel" or (t.sheet_source or "") == "Vietravel"
     )
+    vtr_main_count = sum(
+        1 for t in tours
+        if is_vietravel(t.cong_ty) and (t.nguon or "") not in ("Vietravel", "")
+    )
     mkt_count = sum(1 for t in tours if not is_vietravel(t.cong_ty))
 
     return CompareSummary(
         company=settings.company_name,
         total_vietravel_tours=vtr_count,
         vietravel_tab_tours=vtr_tab_count,
+        vietravel_main_tours=vtr_main_count,
         total_market_tours=mkt_count,
         segments_with_vietravel=len(segments),
         cheaper_count=cheaper,

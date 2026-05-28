@@ -39,9 +39,23 @@ function scatterGapColor(gap: number | null): string {
   return "#2563eb";
 }
 
+/** Giá tour hợp lệ trên biểu đồ (loại outlier parse Sheet) */
+const MAX_SCATTER_PRICE_VND = 200_000_000;
+
 function fmtPriceAxis(v: number) {
-  if (v >= 1e9) return `${(v / 1e9).toFixed(1)}tỷ`;
-  return `${(v / 1e6).toFixed(1)}tr`;
+  if (!Number.isFinite(v) || v < 0) return "—";
+  if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(1)} tỷ`;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)} tr`;
+  return `${Math.round(v / 1000)}k`;
+}
+
+function robustPriceDomain(values: number[]): [number, number] {
+  if (!values.length) return [0, 1];
+  const sorted = [...values].sort((a, b) => a - b);
+  const p02 = sorted[Math.max(0, Math.floor(sorted.length * 0.02))];
+  const p98 = sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.98) - 1)];
+  const pad = Math.max((p98 - p02) * 0.1, 2_000_000);
+  return [Math.max(0, p02 - pad), p98 + pad];
 }
 
 function GapBadge({ pct }: { pct: number | null }) {
@@ -214,7 +228,18 @@ export default function VietravelCompare() {
 
   const scatterData = useMemo((): PriceScatterPoint[] => {
     return (segments?.items ?? [])
-      .filter((s) => s.comparison_price && s.vietravel_avg_price)
+      .filter((s) => {
+        const x = s.comparison_price;
+        const y = s.vietravel_avg_price;
+        return (
+          x != null &&
+          y != null &&
+          x > 0 &&
+          y > 0 &&
+          x <= MAX_SCATTER_PRICE_VND &&
+          y <= MAX_SCATTER_PRICE_VND
+        );
+      })
       .slice(0, 80)
       .map((s) => ({
         x: s.comparison_price!,
@@ -228,14 +253,18 @@ export default function VietravelCompare() {
       }));
   }, [segments?.items]);
 
-  const scatterDomain = useMemo((): [number, number] => {
-    if (!scatterData.length) return [0, 1];
-    const vals = scatterData.flatMap((d) => [d.x, d.y]);
-    const lo = Math.min(...vals);
-    const hi = Math.max(...vals);
-    const pad = Math.max((hi - lo) * 0.08, hi * 0.02, 500_000);
-    return [Math.max(0, lo - pad), hi + pad];
-  }, [scatterData]);
+  const scatterDomain = useMemo(
+    (): [number, number] => robustPriceDomain(scatterData.flatMap((d) => [d.x, d.y])),
+    [scatterData],
+  );
+
+  const scatterOutlierCount = useMemo(() => {
+    return (segments?.items ?? []).filter((s) => {
+      const x = s.comparison_price;
+      const y = s.vietravel_avg_price;
+      return x != null && y != null && (x > MAX_SCATTER_PRICE_VND || y > MAX_SCATTER_PRICE_VND);
+    }).length;
+  }, [segments?.items]);
 
   const LinkCell = ({ url, title }: { url?: string; title?: string }) => {
     const href = url && /^https?:\/\//i.test(url) ? url : undefined;
@@ -450,12 +479,17 @@ export default function VietravelCompare() {
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
           <div className="kpi-card">
-            <span className="text-xs text-gray-500 inline-flex items-center">{COL.sanPham} VTR<InfoTip text="Tour công ty Vietravel trong phạm vi filter (mọi nguồn trong DB)" /></span>
-            <p className="text-xl font-bold">{summary.total_vietravel_tours}</p>
-            <p className="text-[10px] text-gray-500 mt-0.5">
-              Tab scrape Vietravel: <strong>{summary.vietravel_tab_tours ?? "—"}</strong>
-              {(summary.total_vietravel_tours ?? 0) > (summary.vietravel_tab_tours ?? 0) && (
-                <span className="text-amber-700"> · chênh = tour cũ trong DB hoặc chưa deploy fix alias</span>
+            <span className="text-xs text-gray-500 inline-flex items-center">
+              {COL.sanPham} VTR (tab scrape)
+              <InfoTip text="Tour từ tab Vietravel sau scrape — khớp số dòng Sheet/DB nguon=Vietravel" />
+            </span>
+            <p className="text-xl font-bold">{summary.vietravel_tab_tours ?? "—"}</p>
+            <p className="text-[10px] text-gray-500 mt-0.5 leading-snug">
+              Trên catalog <strong>Main</strong>:{" "}
+              <strong>{summary.vietravel_main_tours ?? Math.max(0, (summary.total_vietravel_tours ?? 0) - (summary.vietravel_tab_tours ?? 0))}</strong>
+              {" "}tour nhãn Vietravel
+              {(summary.total_vietravel_tours ?? 0) > 0 && (
+                <span className="text-gray-400"> · tổng nhãn mọi nguồn: {summary.total_vietravel_tours}</span>
               )}
             </p>
           </div>
@@ -498,7 +532,12 @@ export default function VietravelCompare() {
               Bản đồ giá: {COL.giaTbVtr} vs {COL.giaSoSanh}
               <InfoTip text={GLOSSARY.scatterGia} />
             </h3>
-            <p className="text-xs text-gray-500 mb-3">Mỗi điểm = 1 nhóm so sánh · đường chéo = ngang giá thị trường</p>
+            <p className="text-xs text-gray-500 mb-3">
+              Mỗi điểm = 1 nhóm so sánh · đường chéo = ngang giá thị trường
+              {scatterOutlierCount > 0 && (
+                <span className="text-amber-700"> · ẩn {scatterOutlierCount} nhóm giá bất thường (&gt;200tr)</span>
+              )}
+            </p>
             {segmentsLoading ? (
               <div className="h-[280px] flex items-center justify-center text-gray-400 text-sm">Đang tải biểu đồ...</div>
             ) : scatterData.length === 0 ? (
