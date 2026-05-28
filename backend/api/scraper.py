@@ -324,18 +324,6 @@ def _parse_price(raw: str) -> float | None:
     return val if val > 0 else None
 
 
-def _price_segment(gia: float | None) -> str:
-    if gia is None:
-        return "Chưa có giá"
-    if gia < 2_000_000:
-        return "Budget (< 2tr)"
-    if gia < 5_000_000:
-        return "Mid (2–5tr)"
-    if gia < 15_000_000:
-        return "Premium (5–15tr)"
-    return "Luxury (> 15tr)"
-
-
 def _parse_so_ngay(thoi_gian: str) -> float | None:
     if not thoi_gian or str(thoi_gian).strip() in ("", "nan"):
         return None
@@ -388,7 +376,7 @@ def _upsert_tours(db: Session, df, nguon: str, job_id: int, emit_job_id: int) ->
             khach_san=str(row.get("khach_san") or "").strip(),
             hang_khong=str(row.get("hang_khong") or "").strip(),
             so_ngay=_parse_so_ngay(thoi_gian),
-            phan_khuc=_price_segment(gia),
+            phan_khuc="",
             nguon=nguon,
             scrape_job_id=job_id,
             updated_at=datetime.utcnow(),
@@ -411,6 +399,13 @@ def _upsert_tours(db: Session, df, nguon: str, job_id: int, emit_job_id: int) ->
             added += 1
 
     db.commit()
+    if added or updated:
+        try:
+            from pricing_segments import recompute_all_phan_khuc
+
+            recompute_all_phan_khuc(db)
+        except Exception:
+            pass
     try:
         from compare_cache import invalidate_compare_cache
         invalidate_compare_cache()

@@ -146,9 +146,61 @@ export const patchTour = async (id: number, patch: Partial<Tour>): Promise<Tour>
   return data;
 };
 
-export const syncToursFromGoogleSheet = async () => {
-  const { data } = await api.post("/admin/sync-tours-from-google-sheet");
-  return data as { total_updated: number; sources: Array<{ nguon: string; updated?: number; error?: string }> };
+const sheetSyncApi = axios.create({ baseURL: "/api", timeout: 300_000 });
+sheetSyncApi.interceptors.request.use((cfg) => {
+  const token = localStorage.getItem("access_token");
+  if (token) cfg.headers.Authorization = `Bearer ${token}`;
+  return cfg;
+});
+
+export type SheetSyncSourceResult = {
+  nguon: string;
+  updated?: number;
+  inserted?: number;
+  deleted?: number;
+  error?: string;
+};
+
+export type SheetSyncResult = {
+  sources: SheetSyncSourceResult[];
+  total_updated: number;
+  total_inserted: number;
+  total_deleted?: number;
+  phan_khuc?: { updated?: number; route_buckets?: number; error?: string };
+  ok?: boolean;
+  errors?: SheetSyncSourceResult[];
+};
+
+/** Kéo Sheet → DB theo từng tab (tránh timeout Render khi Main ~9k dòng). */
+export const syncToursFromGoogleSheet = async (): Promise<SheetSyncResult> => {
+  const order = ["Vietravel", "FindTourGo", "Main"] as const;
+  const sources: SheetSyncSourceResult[] = [];
+  let total_updated = 0;
+  let total_inserted = 0;
+  let total_deleted = 0;
+  for (const nguon of order) {
+    const { data } = await sheetSyncApi.post<SheetSyncSourceResult>(
+      `/admin/sync-sheet-source?nguon=${encodeURIComponent(nguon)}`
+    );
+    sources.push(data);
+    if (data.error) break;
+    total_updated += data.updated ?? 0;
+    total_inserted += data.inserted ?? 0;
+    total_deleted += data.deleted ?? 0;
+  }
+  const { data: phan_khuc } = await sheetSyncApi.post<{ updated?: number; route_buckets?: number }>(
+    "/admin/recompute-phan-khuc"
+  );
+  const errors = sources.filter((s) => s.error);
+  return {
+    sources,
+    total_updated,
+    total_inserted,
+    total_deleted,
+    phan_khuc,
+    ok: errors.length === 0,
+    errors,
+  };
 };
 
 export const exportUrl = (type: "csv" | "excel", params: Record<string, string>) => {

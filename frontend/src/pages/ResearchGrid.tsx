@@ -7,6 +7,7 @@ import {
   WorkspaceInfo,
 } from "@/lib/api";
 import { fmtVND, segmentColor, cn } from "@/lib/utils";
+import { formatApiError } from "@/lib/apiError";
 import { COL } from "@/lib/glossary";
 import { Search, Download, Flag, FlagOff, ChevronLeft, ChevronRight, ExternalLink, Pencil, Check, X, RefreshCw, Users, Copy } from "lucide-react";
 
@@ -113,10 +114,18 @@ export default function ResearchGrid() {
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ["workspace-tours"] });
       qc.invalidateQueries({ queryKey: ["filter-options"] });
-      setToast(`Đã kéo ${res.total_updated} tour từ Google Sheet (dữ liệu chung)`);
+      if (res.errors?.length) {
+        const msg = res.errors.map((s) => `${s.nguon}: ${s.error}`).join(" · ");
+        setToast(`Đồng bộ một phần — lỗi: ${msg}`);
+        return;
+      }
+      const seg = res.phan_khuc?.updated != null ? ` · Phân khúc: ${res.phan_khuc.updated} tour` : "";
+      setToast(
+        `Đã kéo Sheet: +${res.total_inserted} mới, ${res.total_updated} cập nhật${seg}`
+      );
     },
-    onError: (e: { response?: { data?: { detail?: string } } }) => {
-      setToast(e.response?.data?.detail || "Lỗi đồng bộ từ Sheet");
+    onError: (e) => {
+      setToast(formatApiError(e, "Lỗi đồng bộ từ Sheet (timeout hoặc Google API)"));
     },
   });
 

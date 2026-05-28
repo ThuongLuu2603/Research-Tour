@@ -19,12 +19,18 @@ export function fmtDate(iso: string | null | undefined): string {
 
 export function segmentColor(seg: string): string {
   const map: Record<string, string> = {
-    "Budget (< 2tr)": "bg-green-100 text-green-800",
+    "Standard (<−30% TB/ngày TT)": "bg-green-100 text-green-800",
+    "Premium (±30% TB/ngày TT)": "bg-purple-100 text-purple-800",
+    "Luxury (>+30% TB/ngày TT)": "bg-amber-100 text-amber-800",
+    "Budget (<2tr)": "bg-green-100 text-green-800",
     "Mid (2–5tr)": "bg-blue-100 text-blue-800",
     "Premium (5–15tr)": "bg-purple-100 text-purple-800",
-    "Luxury (> 15tr)": "bg-amber-100 text-amber-800",
+    "Luxury (>15tr)": "bg-amber-100 text-amber-800",
     "Chưa có giá": "bg-gray-100 text-gray-600",
   };
+  if (seg.startsWith("Standard")) return map["Standard (<−30% TB/ngày TT)"];
+  if (seg.startsWith("Premium (±")) return map["Premium (±30% TB/ngày TT)"];
+  if (seg.startsWith("Luxury (>+")) return map["Luxury (>+30% TB/ngày TT)"];
   return map[seg] ?? "bg-gray-100 text-gray-600";
 }
 

@@ -195,7 +195,7 @@ def _apply_fields_to_tour(
     sheet_row: int | None = None,
 ) -> None:
     from classification import resolve_company_name, resolve_departure_point
-    from seed import parse_ngay, price_segment
+    from seed import parse_ngay
 
     note = tour.analyst_note
     flagged = tour.flagged
@@ -217,7 +217,7 @@ def _apply_fields_to_tour(
     tour.khach_san = _clean_field(fields.get("khach_san"))
     tour.hang_khong = _clean_field(fields.get("hang_khong"))
     tour.so_ngay = parse_ngay(fields["thoi_gian"])
-    tour.phan_khuc = price_segment(fields["gia"])
+    tour.phan_khuc = ""  # gán sau recompute_all_phan_khuc
     if not preserve_nguon:
         tour.nguon = nguon
     if external_id:
@@ -278,7 +278,13 @@ def _prune_stale_tours_for_source(db, nguon: str, synced_tour_ids: set[int]) -> 
     return deleted
 
 
-def merge_sheet_source_to_db(db, nguon: str, *, mirror_delete: bool | None = None) -> dict:
+def merge_sheet_source_to_db(
+    db,
+    nguon: str,
+    *,
+    mirror_delete: bool | None = None,
+    recompute_segments: bool = True,
+) -> dict:
     if mirror_delete is None:
         mirror_delete = nguon in ("Vietravel", "FindTourGo")
 
@@ -349,6 +355,16 @@ def merge_sheet_source_to_db(db, nguon: str, *, mirror_delete: bool | None = Non
     if inserted or updated or deleted:
         _post_sync_cache(db)
 
+    phan_khuc_stats: dict | None = None
+    if recompute_segments and (inserted or updated or deleted):
+        try:
+            from pricing_segments import recompute_all_phan_khuc
+
+            phan_khuc_stats = recompute_all_phan_khuc(db)
+        except Exception as e:
+            logger.warning("recompute phan_khuc after %s sync failed: %s", nguon, e)
+            phan_khuc_stats = {"error": str(e)}
+
     logger.info(
         "Sheet sync %s: inserted=%s updated=%s unchanged=%s skipped=%s deleted=%s synced=%s",
         nguon,
@@ -359,7 +375,7 @@ def merge_sheet_source_to_db(db, nguon: str, *, mirror_delete: bool | None = Non
         deleted,
         len(synced_tour_ids),
     )
-    return {
+    out = {
         "nguon": nguon,
         "updated": updated,
         "inserted": inserted,
@@ -368,6 +384,9 @@ def merge_sheet_source_to_db(db, nguon: str, *, mirror_delete: bool | None = Non
         "deleted": deleted,
         "synced": len(synced_tour_ids),
     }
+    if phan_khuc_stats is not None:
+        out["phan_khuc"] = phan_khuc_stats
+    return out
 
 
 def _post_sync_cache(db) -> None:
@@ -384,11 +403,22 @@ def merge_all_sheets_to_db(db) -> dict:
     for nguon in NGUON_GID:
         try:
             mirror = nguon in ("Vietravel", "FindTourGo")
-            results.append(merge_sheet_source_to_db(db, nguon, mirror_delete=mirror))
+            results.append(
+                merge_sheet_source_to_db(db, nguon, mirror_delete=mirror, recompute_segments=False)
+            )
         except Exception as e:
             logger.exception("Sheet sync failed for %s", nguon)
             results.append({"nguon": nguon, "error": str(e)})
+    phan_khuc: dict = {}
+    try:
+        from pricing_segments import recompute_all_phan_khuc
+
+        phan_khuc = recompute_all_phan_khuc(db)
+    except Exception as e:
+        logger.warning("recompute phan_khuc after full sheet sync failed: %s", e)
+        phan_khuc = {"error": str(e)}
     _post_sync_cache(db)
+    errors = [r for r in results if r.get("error")]
     return {
         "sources": results,
         "total_updated": sum(r.get("updated", 0) for r in results),
@@ -396,4 +426,7 @@ def merge_all_sheets_to_db(db) -> dict:
         "total_unchanged": sum(r.get("unchanged", 0) for r in results),
         "total_skipped": sum(r.get("skipped", 0) for r in results),
         "total_deleted": sum(r.get("deleted", 0) for r in results),
+        "phan_khuc": phan_khuc,
+        "ok": len(errors) == 0,
+        "errors": errors,
     }

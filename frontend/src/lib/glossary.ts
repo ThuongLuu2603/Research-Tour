@@ -20,7 +20,7 @@ export const GLOSSARY = {
   giaSoSanh: "Giá so sánh = Giá TB/ngày TT × Số ngày TB VTR (cùng tuyến, quy về độ dài VTR).",
   chenhGia: "Chênh % = Giá TB tour VTR ÷ Giá so sánh − 1. Âm = VTR rẻ hơn.",
   scatterGia:
-    "Mỗi điểm = 1 nhóm so sánh. Trục ngang = giá TT, trục dọc = giá VTR (cùng quy đổi ngày). Đường chéo = ngang giá. Dưới đường = VTR rẻ hơn; trên đường = đắt hơn. Cỡ điểm = TB đoàn/tháng VTR.",
+    "Mỗi điểm = 1 nhóm (Thị trường + Tuyến + Điểm KH). Chế độ mặc định «Chênh %»: trục ngang = Giá so sánh (log), trục dọc = Chênh % VTR — tuyến rẻ vẫn tách theo mức giá, dễ thấy đắt/rẻ so TT (đường 0%). «Bản đồ giá log»: hai trục giá VTR vs TT (log-log), đường chéo = ngang giá. Màu: xanh rẻ hơn, đỏ đắt hơn. Cỡ điểm = TB đoàn/tháng VTR.",
   reNhat: "Tour rẻ nhất thị trường cùng giai đoạn khởi hành với VTR (±45 ngày).",
   segment: "Nhóm so sánh: cùng Thị trường + Tuyến tour + Điểm khởi hành — gộp mọi sản phẩm/thời gian trên tuyến.",
   methodologyCompare: "Gom theo tuyến + thị trường. Số ngày TB và giá TB/ngày có trọng số theo số đoàn × số ngày từng SP.",

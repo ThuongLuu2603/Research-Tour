@@ -107,15 +107,10 @@ def parse_ngay(thoi_gian: str) -> float | None:
 
 
 def price_segment(gia: float | None) -> str:
-    if not gia:
-        return "Chưa có giá"
-    if gia < 2e6:
-        return "Budget (< 2tr)"
-    if gia < 5e6:
-        return "Mid (2–5tr)"
-    if gia < 15e6:
-        return "Premium (5–15tr)"
-    return "Luxury (> 15tr)"
+    """Legacy absolute tiers — dùng khi chưa có benchmark tuyến; sync gọi recompute_all_phan_khuc sau."""
+    from pricing_segments import _phan_khuc_absolute_fallback
+
+    return _phan_khuc_absolute_fallback(gia)
 
 
 def create_default_users() -> None:

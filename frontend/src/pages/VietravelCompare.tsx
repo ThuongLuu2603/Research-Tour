@@ -25,6 +25,7 @@ type PriceScatterPoint = {
   x: number;
   y: number;
   z: number;
+  vtr_price: number;
   gap_pct: number | null;
   thi_truong: string;
   tuyen_tour: string;
@@ -49,13 +50,31 @@ function fmtPriceAxis(v: number) {
   return `${Math.round(v / 1000)}k`;
 }
 
-function robustPriceDomain(values: number[]): [number, number] {
-  if (!values.length) return [0, 1];
-  const sorted = [...values].sort((a, b) => a - b);
+function robustPriceDomain(values: number[], opts?: { log?: boolean }): [number, number] {
+  const positive = values.filter((v) => v > 0 && Number.isFinite(v));
+  if (!positive.length) return opts?.log ? [1_000_000, 100_000_000] : [0, 1];
+  const sorted = [...positive].sort((a, b) => a - b);
   const p02 = sorted[Math.max(0, Math.floor(sorted.length * 0.02))];
   const p98 = sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.98) - 1)];
+  if (opts?.log) {
+    return [Math.max(500_000, p02 * 0.85), p98 * 1.15];
+  }
   const pad = Math.max((p98 - p02) * 0.1, 2_000_000);
   return [Math.max(0, p02 - pad), p98 + pad];
+}
+
+function robustGapDomain(values: number[]): [number, number] {
+  if (!values.length) return [-30, 30];
+  const sorted = [...values].sort((a, b) => a - b);
+  const p05 = sorted[Math.max(0, Math.floor(sorted.length * 0.05))];
+  const p95 = sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)];
+  const span = Math.max(p95 - p05, 8);
+  const pad = Math.max(span * 0.15, 3);
+  let lo = Math.floor(p05 - pad);
+  let hi = Math.ceil(p95 + pad);
+  if (lo > 0) lo = 0;
+  if (hi < 0) hi = 0;
+  return [lo, hi];
 }
 
 function GapBadge({ pct }: { pct: number | null }) {
@@ -117,6 +136,8 @@ export default function VietravelCompare() {
   const [selectedMatcherTour, setSelectedMatcherTour] = useState<number | null>(null);
   const [sortBy, setSortBy] = useState<SortCol>("gap_pct");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  /** chenh = chênh % theo mức giá TT (mặc định); gia = bản đồ giá log-log */
+  const [scatterMode, setScatterMode] = useState<"chenh" | "gia">("chenh");
 
   const handleSort = (col: SortCol) => {
     if (sortBy === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -236,14 +257,15 @@ export default function VietravelCompare() {
           y != null &&
           x > 0 &&
           y > 0 &&
+          s.gap_pct != null &&
           x <= MAX_SCATTER_PRICE_VND &&
           y <= MAX_SCATTER_PRICE_VND
         );
       })
-      .slice(0, 80)
       .map((s) => ({
         x: s.comparison_price!,
-        y: s.vietravel_avg_price!,
+        y: scatterMode === "chenh" ? s.gap_pct! : s.vietravel_avg_price!,
+        vtr_price: s.vietravel_avg_price!,
         z: Math.max(s.vtr_avg_departures_per_month ?? s.vietravel_freq_monthly ?? 0.5, 0.5),
         gap_pct: s.gap_pct,
         thi_truong: s.thi_truong,
@@ -251,12 +273,33 @@ export default function VietravelCompare() {
         diem_kh: s.diem_kh,
         segment_key: s.segment_key,
       }));
-  }, [segments?.items]);
+  }, [segments?.items, scatterMode]);
 
-  const scatterDomain = useMemo(
-    (): [number, number] => robustPriceDomain(scatterData.flatMap((d) => [d.x, d.y])),
+  const scatterXDomain = useMemo(
+    (): [number, number] => robustPriceDomain(scatterData.map((d) => d.x), { log: true }),
     [scatterData],
   );
+
+  const scatterYDomain = useMemo((): [number, number] => {
+    if (scatterMode === "chenh") {
+      return robustGapDomain(scatterData.map((d) => d.y));
+    }
+    return robustPriceDomain(scatterData.map((d) => d.y), { log: true });
+  }, [scatterData, scatterMode]);
+
+  const scatterStats = useMemo(() => {
+    let cheaper = 0;
+    let expensive = 0;
+    let near = 0;
+    for (const d of scatterData) {
+      const g = d.gap_pct;
+      if (g == null) continue;
+      if (g <= -5) cheaper += 1;
+      else if (g >= 5) expensive += 1;
+      else near += 1;
+    }
+    return { total: scatterData.length, cheaper, expensive, near };
+  }, [scatterData]);
 
   const scatterOutlierCount = useMemo(() => {
     return (segments?.items ?? []).filter((s) => {
@@ -522,30 +565,72 @@ export default function VietravelCompare() {
           </div>
           <div className="card p-5">
             <h3 className="font-semibold mb-1 inline-flex items-center">
-              Bản đồ giá: {COL.giaTbVtr} vs {COL.giaSoSanh}
+              {scatterMode === "chenh"
+                ? `${COL.chenhPct} theo mức ${COL.giaSoSanh}`
+                : `Bản đồ giá (log): ${COL.giaTbVtr} vs ${COL.giaSoSanh}`}
               <InfoTip text={GLOSSARY.scatterGia} />
             </h3>
-            <p className="text-xs text-gray-500 mb-3">
-              Mỗi điểm = 1 nhóm so sánh · đường chéo = ngang giá thị trường
+            <p className="text-xs text-gray-500 mb-2 leading-relaxed">
+              Mỗi điểm = <strong>1 nhóm</strong> (Thị trường + Tuyến + Điểm KH).
+              {scatterMode === "chenh" ? (
+                <>
+                  {" "}
+                  Trục ngang = mức giá TT (thang log, tách tuyến 5tr / 15tr / 50tr). Trục dọc ={" "}
+                  <strong>chênh %</strong> VTR — đọc vị trí so với đường 0%: trên = đắt hơn, dưới = rẻ hơn.
+                </>
+              ) : (
+                <>
+                  {" "}
+                  Hai trục giá tour (log) — tuyến rẻ không dồn sát gốc. So với đường chéo: trên = VTR đắt hơn TT.
+                </>
+              )}
               {scatterOutlierCount > 0 && (
-                <span className="text-amber-700"> · ẩn {scatterOutlierCount} nhóm giá bất thường (&gt;200tr)</span>
+                <span className="text-amber-700"> · ẩn {scatterOutlierCount} nhóm &gt;200tr</span>
               )}
             </p>
+            {scatterStats.total > 0 && (
+              <p className="text-[11px] text-gray-600 mb-2">
+                {scatterStats.total} nhóm ·{" "}
+                <span className="text-green-700">{scatterStats.cheaper} rẻ hơn TT</span> ·{" "}
+                <span className="text-red-700">{scatterStats.expensive} đắt hơn TT</span>
+                {scatterStats.near > 0 && <> · {scatterStats.near} gần ngang giá</>}
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2 mb-3">
+              <button
+                type="button"
+                className={cn("btn-secondary text-xs py-1", scatterMode === "chenh" && "ring-2 ring-primary-400")}
+                onClick={() => setScatterMode("chenh")}
+              >
+                Chênh % (khuyên dùng)
+              </button>
+              <button
+                type="button"
+                className={cn("btn-secondary text-xs py-1", scatterMode === "gia" && "ring-2 ring-primary-400")}
+                onClick={() => setScatterMode("gia")}
+              >
+                Bản đồ giá log
+              </button>
+            </div>
             {segmentsLoading ? (
               <div className="h-[280px] flex items-center justify-center text-gray-400 text-sm">Đang tải biểu đồ...</div>
             ) : scatterData.length === 0 ? (
-              <div className="h-[280px] flex items-center justify-center text-gray-400 text-sm">Chưa có dữ liệu giá so sánh</div>
+              <div className="h-[280px] flex items-center justify-center text-gray-400 text-sm text-center px-4">
+                Chưa có dữ liệu giá so sánh
+              </div>
             ) : (
             <>
             <div className="w-full h-[280px]">
             <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
+              <ScatterChart margin={{ top: 8, right: 12, bottom: 4, left: scatterMode === "chenh" ? 8 : 4 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                 <XAxis
                   type="number"
                   dataKey="x"
                   name={COL.giaSoSanh}
-                  domain={scatterDomain}
+                  scale="log"
+                  domain={scatterXDomain}
+                  allowDataOverflow
                   tickFormatter={fmtPriceAxis}
                   label={{ value: COL.giaSoSanh, position: "insideBottom", offset: -2, fontSize: 11, fill: "#64748b" }}
                   tick={{ fontSize: 10 }}
@@ -553,12 +638,20 @@ export default function VietravelCompare() {
                 <YAxis
                   type="number"
                   dataKey="y"
-                  name={COL.giaTbVtr}
-                  domain={scatterDomain}
-                  tickFormatter={fmtPriceAxis}
-                  label={{ value: COL.giaTbVtr, angle: -90, position: "insideLeft", fontSize: 11, fill: "#64748b" }}
+                  name={scatterMode === "chenh" ? COL.chenhPct : COL.giaTbVtr}
+                  scale={scatterMode === "gia" ? "log" : "linear"}
+                  domain={scatterYDomain}
+                  allowDataOverflow={scatterMode === "gia"}
+                  tickFormatter={(v) => (scatterMode === "chenh" ? `${v}%` : fmtPriceAxis(v))}
+                  label={{
+                    value: scatterMode === "chenh" ? COL.chenhPct : COL.giaTbVtr,
+                    angle: -90,
+                    position: "insideLeft",
+                    fontSize: 11,
+                    fill: "#64748b",
+                  }}
                   tick={{ fontSize: 10 }}
-                  width={52}
+                  width={scatterMode === "chenh" ? 44 : 52}
                 />
                 <ZAxis type="number" dataKey="z" range={[64, 520]} name={COL.tbDoanThang} />
                 <Tooltip
@@ -576,7 +669,7 @@ export default function VietravelCompare() {
                         </p>
                         <div className="mt-2 space-y-1 border-t border-gray-100 pt-2">
                           <p><span className="text-gray-500">{COL.giaSoSanh}:</span> <strong>{fmtVND(p.x)}</strong></p>
-                          <p><span className="text-gray-500">{COL.giaTbVtr}:</span> <strong>{fmtVND(p.y)}</strong></p>
+                          <p><span className="text-gray-500">{COL.giaTbVtr}:</span> <strong>{fmtVND(p.vtr_price)}</strong></p>
                           <p className="flex items-center gap-1">
                             <span className="text-gray-500">{COL.chenhPct}:</span>
                             <GapBadge pct={p.gap_pct} />
@@ -587,21 +680,20 @@ export default function VietravelCompare() {
                     );
                   }}
                 />
-                <ReferenceLine
-                  segment={[
-                    { x: scatterDomain[0], y: scatterDomain[0] },
-                    { x: scatterDomain[1], y: scatterDomain[1] },
-                  ]}
-                  stroke="#94a3b8"
-                  strokeWidth={1.5}
-                  strokeDasharray="6 4"
-                  label={{
-                    value: "Ngang giá TT",
-                    position: "insideTopLeft",
-                    fontSize: 10,
-                    fill: "#64748b",
-                  }}
-                />
+                {scatterMode === "chenh" ? (
+                  <ReferenceLine y={0} stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="6 4" label={{ value: "Ngang giá TT", position: "insideTopRight", fontSize: 10, fill: "#64748b" }} />
+                ) : (
+                  <ReferenceLine
+                    segment={[
+                      { x: scatterXDomain[0], y: scatterXDomain[0] },
+                      { x: scatterXDomain[1], y: scatterXDomain[1] },
+                    ]}
+                    stroke="#94a3b8"
+                    strokeWidth={1.5}
+                    strokeDasharray="6 4"
+                    label={{ value: "Ngang giá TT", position: "insideTopLeft", fontSize: 10, fill: "#64748b" }}
+                  />
+                )}
                 <Scatter
                   data={scatterData}
                   shape={(props) => {

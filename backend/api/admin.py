@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -69,12 +69,42 @@ def data_status(_: User = Depends(get_current_user)):
 
 @router.post("/sync-tours-from-google-sheet")
 def sync_tours_from_google_sheet(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Kéo thay đổi từ Google Sheet (live) → DB Research Grid."""
+    """Kéo thay đổi từ Google Sheet (live) → DB Research Grid (cả 3 tab)."""
     from sheets_tour_sync import merge_all_sheets_to_db
+
     try:
         return merge_all_sheets_to_db(db)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Lỗi đồng bộ Sheet → App: {e}") from e
+
+
+@router.post("/sync-sheet-source")
+def sync_sheet_source(
+    nguon: str = Query(..., description="Vietravel | FindTourGo | Main"),
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Đồng bộ một tab Sheet (Vietravel | FindTourGo | Main) — tránh timeout khi gọi tuần tự."""
+    from sheets_tour_sync import NGUON_GID, merge_sheet_source_to_db
+
+    if nguon not in NGUON_GID:
+        raise HTTPException(status_code=400, detail=f"nguon không hợp lệ: {nguon}")
+    mirror = nguon in ("Vietravel", "FindTourGo")
+    try:
+        return merge_sheet_source_to_db(db, nguon, mirror_delete=mirror)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Lỗi đồng bộ tab {nguon}: {e}") from e
+
+
+@router.post("/recompute-phan-khuc")
+def recompute_phan_khuc(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Tính lại cột Phân khúc theo TB/ngày so với thị trường trên từng tuyến."""
+    from pricing_segments import recompute_all_phan_khuc
+
+    try:
+        return recompute_all_phan_khuc(db)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
 
 
 @router.post("/sync-main-sheet")
