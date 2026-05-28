@@ -10,6 +10,7 @@ from classification import (
     apply_departure_aliases_to_tours,
     apply_duration_aliases_to_tours,
     apply_classification_rules_to_tours,
+    classification_rules_status,
     invalidate_classification_cache,
     seed_company_aliases_from_defaults,
     seed_departure_aliases_from_defaults,
@@ -28,6 +29,12 @@ from sheets_rules_sync import (
 )
 
 router = APIRouter(prefix="/api/admin/rules", tags=["rules-admin"])
+
+
+@router.get("/status")
+def rules_runtime_status(_: User = Depends(require_admin)):
+    """Nguồn alias đang dùng lúc chạy (DB vs mặc định code khi bảng trống)."""
+    return classification_rules_status()
 
 
 class MarketRuleOut(BaseModel):

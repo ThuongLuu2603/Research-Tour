@@ -45,17 +45,10 @@ def run_deferred_db_maintenance() -> None:
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning("Deferred DB maintenance failed: %s", e)
+    # Alias công ty / điểm KH / thời gian: chỉ cấu hình qua Quy tắc vận hành (không auto-seed hardcode).
     try:
-        from classification import (
-            seed_market_rules_from_hardcode,
-            seed_company_aliases_from_defaults,
-            seed_departure_aliases_from_defaults,
-            seed_duration_aliases_from_defaults,
-        )
+        from classification import seed_market_rules_from_hardcode
         seed_market_rules_from_hardcode()
-        seed_company_aliases_from_defaults()
-        seed_departure_aliases_from_defaults()
-        seed_duration_aliases_from_defaults()
     except Exception:
         pass
 

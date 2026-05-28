@@ -1,4 +1,8 @@
-"""Phân loại thị trường / tuyến tour — đọc từ DB, fallback hardcode/sheet."""
+"""Phân loại thị trường / tuyến tour — đọc từ DB (Quy tắc vận hành).
+
+Alias công ty, điểm KH, thời gian: chỉ từ bảng rules trong DB khi đã có bản ghi.
+DEFAULT_* chỉ dùng khi bảng trống (môi trường mới) hoặc nút «Seed mặc định» trên UI admin.
+"""
 from __future__ import annotations
 
 import json
@@ -71,9 +75,41 @@ DEFAULT_DURATION_ALIASES: list[tuple[float, list[str]]] = [
 ]
 
 
+def _rules_table_count(model) -> int:
+    db = SessionLocal()
+    try:
+        return db.query(model).count()
+    finally:
+        db.close()
+
+
+def classification_rules_status() -> dict:
+    from models import CompanyAliasRule, DepartureAliasRule, DurationAliasRule
+
+    co_n = _rules_table_count(CompanyAliasRule)
+    dep_n = _rules_table_count(DepartureAliasRule)
+    dur_n = _rules_table_count(DurationAliasRule)
+    return {
+        "company": {
+            "db_rules": co_n,
+            "using_code_defaults": co_n == 0,
+        },
+        "departure": {
+            "db_rules": dep_n,
+            "using_code_defaults": dep_n == 0,
+        },
+        "duration": {
+            "db_rules": dur_n,
+            "using_code_defaults": dur_n == 0,
+        },
+        "note": "Khi db_rules > 0, runtime chỉ đọc Quy tắc vận hành. Sau khi sửa rule, bấm «Áp dụng → tour».",
+    }
+
+
 @lru_cache(maxsize=1)
 def _duration_alias_pairs() -> tuple[tuple[str, float], ...]:
     from models import DurationAliasRule
+
     db = SessionLocal()
     try:
         rules = (
@@ -82,18 +118,26 @@ def _duration_alias_pairs() -> tuple[tuple[str, float], ...]:
             .order_by(DurationAliasRule.sort_order, DurationAliasRule.id)
             .all()
         )
-        pairs = [(r.alias.lower().strip(), float(r.canonical_days)) for r in rules if r.alias.strip()]
-        pairs.sort(key=lambda x: len(x[0]), reverse=True)
-        if pairs:
-            return tuple(pairs)
+        if rules:
+            pairs = [
+                (r.sort_order, len(r.alias), r.alias.lower().strip(), float(r.canonical_days))
+                for r in rules
+                if r.alias.strip()
+            ]
+            pairs.sort(key=lambda x: (x[0], -x[1]))
+            return tuple((a, d) for _, _, a, d in pairs)
     finally:
         db.close()
+    return _duration_pairs_from_defaults()
+
+
+def _duration_pairs_from_defaults() -> tuple[tuple[str, float], ...]:
     pairs = []
     for days, aliases in DEFAULT_DURATION_ALIASES:
         for a in aliases:
-            pairs.append((a.lower().strip(), days))
-    pairs.sort(key=lambda x: len(x[0]), reverse=True)
-    return tuple(pairs)
+            pairs.append((0, len(a), a.lower().strip(), days))
+    pairs.sort(key=lambda x: (x[0], -x[1]))
+    return tuple((a, d) for _, _, a, d in pairs)
 
 
 def seed_duration_aliases_from_defaults() -> int:
@@ -136,7 +180,7 @@ def is_company_alias_matched(raw_name: str) -> bool:
     if not lower:
         return False
     for alias, _canonical in _company_alias_pairs():
-        if alias == lower or alias in lower:
+        if _alias_matches_text(alias, lower):
             return True
     return False
 
@@ -185,14 +229,14 @@ def resolve_duration_days(thoi_gian: str, so_ngay: float | None) -> tuple[float 
 
 def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
     """Giá trị chưa khớp alias — Công ty, Điểm KH, Thời gian."""
-    from compare_engine import is_vietravel
+    from tour_sources import is_vietravel_tab
 
     cong_ty: dict[str, int] = {}
     diem_kh: dict[str, int] = {}
     thoi_gian: dict[str, int] = {}
 
     for t in tours:
-        if vtr_only and not is_vietravel(t.cong_ty):
+        if vtr_only and not is_vietravel_tab(t):
             continue
         raw_co = (t.cong_ty or "").strip()
         if raw_co and not is_company_alias_matched(raw_co):
@@ -228,6 +272,15 @@ DEFAULT_COMPANY_ALIASES: list[tuple[str, list[str]]] = [
 ]
 
 
+def _company_pairs_from_defaults() -> tuple[tuple[str, str], ...]:
+    pairs = []
+    for canonical, aliases in DEFAULT_COMPANY_ALIASES:
+        for a in aliases:
+            pairs.append((0, len(a), a.lower().strip(), canonical))
+    pairs.sort(key=lambda x: (x[0], -x[1]))
+    return tuple((a, c) for _, _, a, c in pairs)
+
+
 @lru_cache(maxsize=1)
 def _company_alias_pairs() -> tuple[tuple[str, str], ...]:
     db = SessionLocal()
@@ -238,39 +291,42 @@ def _company_alias_pairs() -> tuple[tuple[str, str], ...]:
             .order_by(CompanyAliasRule.sort_order, CompanyAliasRule.id)
             .all()
         )
-        pairs = [(r.alias.lower().strip(), r.canonical_name.strip()) for r in rules if r.alias.strip()]
-        pairs.sort(key=lambda x: len(x[0]), reverse=True)
-        if pairs:
-            return tuple(pairs)
+        if rules:
+            pairs = [
+                (r.sort_order, len(r.alias), r.alias.lower().strip(), r.canonical_name.strip())
+                for r in rules
+                if r.alias.strip()
+            ]
+            pairs.sort(key=lambda x: (x[0], -x[1]))
+            return tuple((a, c) for _, _, a, c in pairs)
     finally:
         db.close()
-    pairs = []
-    for canonical, aliases in DEFAULT_COMPANY_ALIASES:
-        for a in aliases:
-            pairs.append((a.lower().strip(), canonical))
-    pairs.sort(key=lambda x: len(x[0]), reverse=True)
-    return tuple(pairs)
+    return _company_pairs_from_defaults()
+
+
+def _alias_matches_text(alias: str, lower: str) -> bool:
+    """Khớp alias trong chuỗi — ưu tiên khớp chính xác; substring cần đủ dài."""
+    if alias == lower:
+        return True
+    if len(alias) < 8 or alias not in lower:
+        return False
+    if len(alias) >= 14:
+        return True
+    return bool(re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", lower))
 
 
 def resolve_company_name(raw_name: str) -> str:
-    """Chuẩn hóa tên công ty từ alias → tên chính thức."""
+    """Chuẩn hóa tên công ty — chỉ theo Quy tắc vận hành (DB), sort_order trước."""
     s = (raw_name or "").strip()
     if not s:
         return ""
     lower = s.lower()
-    for alias, canonical in _company_alias_pairs():
-        if alias == "viet travel":
-            continue
+    pairs = _company_alias_pairs()
+    for alias, canonical in pairs:
         if alias == lower:
             return canonical
-        if len(alias) >= 12 and alias in lower:
-            return canonical
-        if alias == "vietravel" and (
-            lower == "vietravel"
-            or lower.startswith("vietravel ")
-            or lower.endswith(" vietravel")
-            or " vietravel " in f" {lower} "
-        ):
+    for alias, canonical in pairs:
+        if _alias_matches_text(alias, lower):
             return canonical
     return s
 
@@ -321,6 +377,15 @@ DEFAULT_DEPARTURE_ALIASES: list[tuple[str, list[str]]] = [
 ]
 
 
+def _departure_pairs_from_defaults() -> tuple[tuple[str, str], ...]:
+    pairs = []
+    for canonical, aliases in DEFAULT_DEPARTURE_ALIASES:
+        for a in aliases:
+            pairs.append((0, len(a), a.lower().strip(), canonical))
+    pairs.sort(key=lambda x: (x[0], -x[1]))
+    return tuple((a, c) for _, _, a, c in pairs)
+
+
 @lru_cache(maxsize=1)
 def _departure_alias_pairs() -> tuple[tuple[str, str], ...]:
     db = SessionLocal()
@@ -331,18 +396,17 @@ def _departure_alias_pairs() -> tuple[tuple[str, str], ...]:
             .order_by(DepartureAliasRule.sort_order, DepartureAliasRule.id)
             .all()
         )
-        pairs = [(r.alias.lower().strip(), r.canonical_name.strip()) for r in rules if r.alias.strip()]
-        pairs.sort(key=lambda x: len(x[0]), reverse=True)
-        if pairs:
-            return tuple(pairs)
+        if rules:
+            pairs = [
+                (r.sort_order, len(r.alias), r.alias.lower().strip(), r.canonical_name.strip())
+                for r in rules
+                if r.alias.strip()
+            ]
+            pairs.sort(key=lambda x: (x[0], -x[1]))
+            return tuple((a, c) for _, _, a, c in pairs)
     finally:
         db.close()
-    pairs = []
-    for canonical, aliases in DEFAULT_DEPARTURE_ALIASES:
-        for a in aliases:
-            pairs.append((a.lower().strip(), canonical))
-    pairs.sort(key=lambda x: len(x[0]), reverse=True)
-    return tuple(pairs)
+    return _departure_pairs_from_defaults()
 
 
 def _match_departure_alias(text: str) -> str | None:
@@ -350,7 +414,10 @@ def _match_departure_alias(text: str) -> str | None:
     if not lower:
         return None
     for alias, canonical in _departure_alias_pairs():
-        if alias == lower or alias in lower:
+        if alias == lower:
+            return canonical
+    for alias, canonical in _departure_alias_pairs():
+        if _alias_matches_text(alias, lower):
             return canonical
     return None
 
