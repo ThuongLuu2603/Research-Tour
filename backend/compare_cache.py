@@ -153,6 +153,11 @@ def invalidate_compare_cache() -> None:
             ev.set()
         _inflight.clear()
     _fingerprint_cache = None
+    try:
+        from market_lab_cache import invalidate_market_lab_cache
+        invalidate_market_lab_cache()
+    except Exception:
+        pass
 
 
 def prewarm_compare_cache(db: Session) -> None:
@@ -160,3 +165,8 @@ def prewarm_compare_cache(db: Session) -> None:
     logger.info("Pre-warming compare cache...")
     get_compare_context(db, [], "", "")
     logger.info("Compare cache pre-warm complete")
+    try:
+        from market_lab_cache import prewarm_market_lab_cache
+        prewarm_market_lab_cache(db)
+    except Exception as e:
+        logger.warning("Market Lab prewarm after compare: %s", e)

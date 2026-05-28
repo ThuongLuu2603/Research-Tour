@@ -23,14 +23,15 @@ export default function MarketLab() {
   const routeParam = searchParams.get("route") || "";
   const [selectedRoute, setSelectedRoute] = useState<MarketLabRouteRow | null>(null);
 
-  const { data, isLoading, refetch, isFetching } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["market-lab", grain, tab, marketFilter],
     queryFn: () => getMarketLabOverview({
       grain,
       tab,
       thi_truong: marketFilter || undefined,
     }),
-    staleTime: 60_000,
+    staleTime: 120_000,
+    retry: 1,
   });
 
   const pickFromParam = useMemo(() => {
@@ -74,6 +75,12 @@ export default function MarketLab() {
           <PageTitle title="Tour Market Lab" tip="Nghiên cứu thị trường theo Tuyến tour — cung KH, giá/ngày, cơ hội & vận hành VTR. Không dùng KS/HK." />
           <p className="text-sm text-gray-500 mt-1">
             Lịch sử snapshot: {data?.history_days ?? 0} ngày · Ưu tiên tuyến tour
+            {data?.meta && (
+              <span className="ml-2">
+                · {data.meta.source === "snapshot" ? "Đọc DB snapshot" : "Tính live"}
+                {data.meta.compute_seconds != null && ` (${data.meta.compute_seconds}s)`}
+              </span>
+            )}
           </p>
         </div>
         <button type="button" onClick={() => refetch()} className="btn-secondary text-xs">
@@ -152,7 +159,21 @@ export default function MarketLab() {
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         {/* Table */}
         <div className="lg:col-span-3 card overflow-hidden">
-          {isLoading && <p className="p-6 text-sm text-gray-400">Đang tải…</p>}
+          {isLoading && (
+            <div className="p-6 text-sm text-gray-500 space-y-2">
+              <p className="font-medium">Đang tải từ database…</p>
+              <p className="text-xs text-gray-400">
+                Lần đầu sau deploy có thể mất 1–2 phút (gộp ~9k tour). Các lần sau nhanh hơn nhờ cache.
+              </p>
+            </div>
+          )}
+          {isError && (
+            <div className="p-6 text-sm text-red-600">
+              <p className="font-medium">Không tải được dữ liệu</p>
+              <p className="text-xs mt-1">{(error as Error)?.message || "Timeout — thử Làm mới"}</p>
+              <button type="button" className="btn-secondary text-xs mt-2" onClick={() => refetch()}>Thử lại</button>
+            </div>
+          )}
           {!isLoading && grain === "market" && (
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-left text-xs text-gray-500">

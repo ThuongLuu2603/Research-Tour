@@ -98,9 +98,11 @@ def capture_daily_snapshot(db: Session, tours: list[Tour] | None = None) -> Dail
     daily.insights_json = insights
     generate_alerts(db, tours, daily, insights)
 
-    from market_lab_engine import build_route_aggregates, capture_route_daily_metrics, generate_route_alerts
+    from market_lab_engine import capture_route_daily_metrics, generate_route_alerts
+    from market_lab_cache import get_cached_routes
+
     capture_route_daily_metrics(db, tours)
-    generate_route_alerts(db, build_route_aggregates(tours))
+    generate_route_alerts(db, get_cached_routes(db))
 
     db.commit()
     db.refresh(daily)

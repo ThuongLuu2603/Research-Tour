@@ -3,6 +3,22 @@ import axios from "axios";
 const api = axios.create({ baseURL: "/api" });
 
 const compareApi = axios.create({ baseURL: "/api", timeout: 180_000 });
+const marketLabApi = axios.create({ baseURL: "/api", timeout: 180_000 });
+marketLabApi.interceptors.request.use((cfg) => {
+  const token = localStorage.getItem("access_token");
+  if (token) cfg.headers.Authorization = `Bearer ${token}`;
+  return cfg;
+});
+marketLabApi.interceptors.response.use(
+  (r) => r,
+  (err) => {
+    if (err.response?.status === 401) {
+      localStorage.removeItem("access_token");
+      window.location.href = "/login";
+    }
+    return Promise.reject(err);
+  }
+);
 compareApi.interceptors.request.use((cfg) => {
   const token = localStorage.getItem("access_token");
   if (token) cfg.headers.Authorization = `Bearer ${token}`;
@@ -721,6 +737,7 @@ export interface MarketLabOverview {
   grain: string;
   tab: string;
   history_days: number;
+  meta?: { source: string; compute_seconds: number };
   routes?: MarketLabRouteRow[];
   markets?: MarketLabMarketRow[];
   weekly_brief: {
@@ -748,13 +765,13 @@ export const getMarketLabOverview = async (opts: {
   if (opts.grain) p.set("grain", opts.grain);
   if (opts.tab) p.set("tab", opts.tab);
   if (opts.thi_truong) p.set("thi_truong", opts.thi_truong);
-  const { data } = await api.get(`/market-lab/overview?${p}`);
+  const { data } = await marketLabApi.get(`/market-lab/overview?${p}`);
   return data;
 };
 
 export const getMarketLabSupplyCalendar = async (thi_truong: string, tuyen_tour: string) => {
   const p = new URLSearchParams({ thi_truong, tuyen_tour });
-  const { data } = await api.get(`/market-lab/supply-calendar?${p}`);
+  const { data } = await marketLabApi.get(`/market-lab/supply-calendar?${p}`);
   return data as {
     route_key: string;
     months: Array<{ month: string; market_slots: number; vtr_slots: number; gap_slots: number }>;

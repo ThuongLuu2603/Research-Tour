@@ -108,10 +108,12 @@ def _classify_phase(
     return "stable"
 
 
-def build_route_aggregates(tours: list[Tour]) -> dict[str, RouteAgg]:
-    tours = deduplicate_tours(tours)
-    segments = build_segment_stats(tours, dedup=False)
-
+def build_route_aggregates_from_context(
+    segments,
+    tours: list[Tour],
+    *,
+    include_supply_months: bool = True,
+) -> dict[str, RouteAgg]:
     routes: dict[str, RouteAgg] = {}
     companies_by_route: dict[str, set[str]] = defaultdict(set)
 
@@ -154,16 +156,18 @@ def build_route_aggregates(tours: list[Tour]) -> dict[str, RouteAgg]:
                 agg.market_price_day = (agg.market_price_day + s.market_avg_day) / 2
 
     route_tours: dict[str, list[Tour]] = defaultdict(list)
-    for t in tours:
-        market = (t.thi_truong or "").strip() or "Khác"
-        route = route_for_segment(t)
-        if route and t.gia and t.gia > 0:
-            route_tours[make_route_key(market, route)].append(t)
+    if include_supply_months:
+        for t in tours:
+            market = (t.thi_truong or "").strip() or "Khác"
+            route = route_for_segment(t)
+            if route and t.gia and t.gia > 0:
+                route_tours[make_route_key(market, route)].append(t)
 
     for rk, agg in routes.items():
-        rt = route_tours.get(rk, [])
-        agg.market_slots_by_month = _slots_by_month_from_tours(rt, vtr_only=False)
-        agg.vtr_slots_by_month = _slots_by_month_from_tours(rt, vtr_only=True)
+        if include_supply_months:
+            rt = route_tours.get(rk, [])
+            agg.market_slots_by_month = _slots_by_month_from_tours(rt, vtr_only=False)
+            agg.vtr_slots_by_month = _slots_by_month_from_tours(rt, vtr_only=True)
         agg.competitor_count = len(companies_by_route.get(rk, set()))
         if agg.gap_weight > 0:
             agg.avg_gap_pct = round(agg.gap_sum / agg.gap_weight, 1)
@@ -179,6 +183,14 @@ def build_route_aggregates(tours: list[Tour]) -> dict[str, RouteAgg]:
         agg.phase = _classify_phase(None, None, agg.avg_freq_gap_pct)
 
     return routes
+
+
+def build_route_aggregates(tours: list[Tour], *, include_supply_months: bool = True) -> dict[str, RouteAgg]:
+    tours = deduplicate_tours(tours)
+    segments = build_segment_stats(tours, dedup=False)
+    return build_route_aggregates_from_context(
+        segments, tours, include_supply_months=include_supply_months,
+    )
 
 
 def rollup_markets(routes: dict[str, RouteAgg]) -> list[dict]:
@@ -207,12 +219,15 @@ def rollup_markets(routes: dict[str, RouteAgg]) -> list[dict]:
 
 
 def capture_route_daily_metrics(db: Session, tours: list[Tour] | None = None) -> int:
-    if tours is None:
-        tours = db.query(Tour).filter(Tour.gia != None, Tour.gia > 0).all()  # noqa: E711
+    from market_lab_cache import get_cached_routes, invalidate_market_lab_cache
 
     snap_date = date.today()
     db.query(RouteDailyMetrics).filter(RouteDailyMetrics.snapshot_date == snap_date).delete()
-    routes = build_route_aggregates(tours)
+    if tours is None:
+        routes = get_cached_routes(db, force=True)
+    else:
+        routes = build_route_aggregates(tours, include_supply_months=False)
+    invalidate_market_lab_cache()
     for agg in routes.values():
         db.add(RouteDailyMetrics(
             snapshot_date=snap_date,
@@ -266,11 +281,19 @@ def _route_momentum(db: Session, route_key: str) -> dict:
     }
 
 
-def build_weekly_brief(routes: dict[str, RouteAgg], db: Session) -> dict:
+def build_weekly_brief(
+    routes: dict[str, RouteAgg],
+    db: Session,
+    momentum_map: dict[str, dict] | None = None,
+) -> dict:
     """Dự báo / kịch bản 1 tuần — theo top tuyến."""
+    if momentum_map is None:
+        from market_lab_cache import load_momentum_map
+        momentum_map = load_momentum_map(db)
+
     scored: list[tuple[float, RouteAgg]] = []
     for r in routes.values():
-        mom = _route_momentum(db, r.route_key)
+        mom = momentum_map.get(r.route_key, {})
         score = r.opportunity_score + abs(mom.get("supply_delta_pct") or 0) * 2
         if r.vtr_tour_count > 0:
             score += r.market_departures_monthly * 0.1
@@ -280,7 +303,7 @@ def build_weekly_brief(routes: dict[str, RouteAgg], db: Session) -> dict:
 
     scenarios = []
     for r in top:
-        mom = _route_momentum(db, r.route_key)
+        mom = momentum_map.get(r.route_key, {})
         supply_d = mom.get("supply_delta_pct")
         gap_d = mom.get("gap_delta")
         if supply_d is not None and supply_d >= 10:
@@ -317,14 +340,17 @@ def build_weekly_brief(routes: dict[str, RouteAgg], db: Session) -> dict:
 
 
 def generate_route_alerts(db: Session, routes: dict[str, RouteAgg]) -> None:
+    from market_lab_cache import load_momentum_map
+
     since = datetime.utcnow() - timedelta(days=1)
     db.query(IntelAlert).filter(
         IntelAlert.created_at >= since,
         IntelAlert.alert_type.like("route_%"),
     ).delete()
 
+    momentum_map = load_momentum_map(db)
     for rk, r in routes.items():
-        mom = _route_momentum(db, rk)
+        mom = momentum_map.get(rk, {})
         supply_d = mom.get("supply_delta_pct")
         link = f"/market-lab?route={rk}"
 
@@ -376,15 +402,25 @@ def get_market_lab_overview(
     tab: str = "opportunity",
     thi_truong: str | None = None,
 ) -> dict:
-    tours = db.query(Tour).filter(Tour.gia != None, Tour.gia > 0).all()  # noqa: E711
-    routes = build_route_aggregates(tours)
+    import time
+    from market_lab_cache import get_cached_routes, load_momentum_map, routes_from_daily_metrics
+
+    t0 = time.time()
+    routes = routes_from_daily_metrics(db)
+    data_source = "snapshot"
+    if routes is None:
+        routes = get_cached_routes(db)
+        data_source = "live"
 
     if thi_truong:
         routes = {k: v for k, v in routes.items() if v.thi_truong == thi_truong}
 
+    momentum_map = load_momentum_map(db)
+    history_days = db.query(func.count(func.distinct(RouteDailyMetrics.snapshot_date))).scalar() or 0
+    mom_default = {"history_days": history_days, "supply_delta_pct": None, "gap_delta": None}
     items: list[dict] = []
     for rk, r in routes.items():
-        mom = _route_momentum(db, rk)
+        mom = momentum_map.get(rk, mom_default)
         phase = _classify_phase(
             mom.get("supply_delta_pct"),
             None,
@@ -401,8 +437,11 @@ def get_market_lab_overview(
         items = [i for i in items if i["vtr_tour_count"] > 0]
         items.sort(key=lambda x: -x["market_departures_monthly"])
 
-    history_days = db.query(func.count(func.distinct(RouteDailyMetrics.snapshot_date))).scalar() or 0
-    brief = build_weekly_brief(routes, db)
+    brief = build_weekly_brief(routes, db, momentum_map)
+    meta = {
+        "source": data_source,
+        "compute_seconds": round(time.time() - t0, 2),
+    }
 
     if grain == "market":
         return {
@@ -411,6 +450,7 @@ def get_market_lab_overview(
             "history_days": history_days,
             "markets": rollup_markets(routes),
             "weekly_brief": brief,
+            "meta": meta,
         }
 
     return {
@@ -420,16 +460,22 @@ def get_market_lab_overview(
         "routes": items[:80],
         "weekly_brief": brief,
         "markets": rollup_markets(routes)[:20],
+        "meta": meta,
     }
 
 
 def get_supply_calendar(db: Session, thi_truong: str, tuyen_tour: str) -> dict:
-    tours = db.query(Tour).filter(Tour.gia != None, Tour.gia > 0).all()  # noqa: E711
     rk = make_route_key(thi_truong, tuyen_tour)
-    matched = []
-    for t in tours:
-        if make_route_key((t.thi_truong or "").strip(), route_for_segment(t)) == rk:
-            matched.append(t)
+    tours = (
+        db.query(Tour)
+        .filter(Tour.gia != None, Tour.gia > 0, Tour.thi_truong == thi_truong)  # noqa: E711
+        .all()
+    )
+    tours = deduplicate_tours(tours)
+    matched = [
+        t for t in tours
+        if make_route_key((t.thi_truong or "").strip() or "Khác", route_for_segment(t)) == rk
+    ]
 
     mkt = _slots_by_month_from_tours(matched, vtr_only=False)
     vtr = _slots_by_month_from_tours(matched, vtr_only=True)
