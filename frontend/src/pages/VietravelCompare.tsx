@@ -287,28 +287,6 @@ export default function VietravelCompare() {
     return robustPriceDomain(scatterData.map((d) => d.y), { log: true });
   }, [scatterData, scatterMode]);
 
-  const scatterStats = useMemo(() => {
-    let cheaper = 0;
-    let expensive = 0;
-    let near = 0;
-    for (const d of scatterData) {
-      const g = d.gap_pct;
-      if (g == null) continue;
-      if (g <= -5) cheaper += 1;
-      else if (g >= 5) expensive += 1;
-      else near += 1;
-    }
-    return { total: scatterData.length, cheaper, expensive, near };
-  }, [scatterData]);
-
-  const scatterOutlierCount = useMemo(() => {
-    return (segments?.items ?? []).filter((s) => {
-      const x = s.comparison_price;
-      const y = s.vietravel_avg_price;
-      return x != null && y != null && (x > MAX_SCATTER_PRICE_VND || y > MAX_SCATTER_PRICE_VND);
-    }).length;
-  }, [segments?.items]);
-
   const LinkCell = ({ url, title }: { url?: string; title?: string }) => {
     const href = url && /^https?:\/\//i.test(url) ? url : undefined;
     return href ? (
@@ -523,11 +501,10 @@ export default function VietravelCompare() {
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
           <div className="kpi-card">
             <span className="text-xs text-gray-500 inline-flex items-center">
-              {COL.sanPham} VTR (tab scrape)
-              <InfoTip text="Tour từ tab Vietravel sau scrape — khớp số dòng Sheet/DB nguon=Vietravel" />
+              {COL.sanPham} VTR
+              <InfoTip text="Tour từ tab Vietravel (nguon=Vietravel)" />
             </span>
             <p className="text-xl font-bold">{summary.vietravel_tab_tours ?? "—"}</p>
-            <p className="text-[10px] text-gray-500 mt-0.5">Chỉ tab scrape Vietravel — không đếm nhãn công ty trên Main</p>
           </div>
           <div className="kpi-card"><span className="text-xs text-gray-500 inline-flex items-center">Nhóm so sánh<InfoTip text={GLOSSARY.segment} /></span><p className="text-xl font-bold">{summary.segments_with_vietravel}</p></div>
           <div className="kpi-card"><span className="text-xs text-green-600">Rẻ hơn TT</span><p className="text-xl font-bold text-green-700">{summary.cheaper_count}</p></div>
@@ -564,45 +541,19 @@ export default function VietravelCompare() {
             )}
           </div>
           <div className="card p-5">
-            <h3 className="font-semibold mb-1 inline-flex items-center">
+            <h3 className="font-semibold mb-3 inline-flex items-center">
               {scatterMode === "chenh"
-                ? `${COL.chenhPct} theo mức ${COL.giaSoSanh}`
-                : `Bản đồ giá (log): ${COL.giaTbVtr} vs ${COL.giaSoSanh}`}
+                ? `${COL.chenhPct} theo ${COL.giaSoSanh}`
+                : `${COL.giaTbVtr} vs ${COL.giaSoSanh}`}
               <InfoTip text={GLOSSARY.scatterGia} />
             </h3>
-            <p className="text-xs text-gray-500 mb-2 leading-relaxed">
-              Mỗi điểm = <strong>1 nhóm</strong> (Thị trường + Tuyến + Điểm KH).
-              {scatterMode === "chenh" ? (
-                <>
-                  {" "}
-                  Trục ngang = mức giá TT (thang log, tách tuyến 5tr / 15tr / 50tr). Trục dọc ={" "}
-                  <strong>chênh %</strong> VTR — đọc vị trí so với đường 0%: trên = đắt hơn, dưới = rẻ hơn.
-                </>
-              ) : (
-                <>
-                  {" "}
-                  Hai trục giá tour (log) — tuyến rẻ không dồn sát gốc. So với đường chéo: trên = VTR đắt hơn TT.
-                </>
-              )}
-              {scatterOutlierCount > 0 && (
-                <span className="text-amber-700"> · ẩn {scatterOutlierCount} nhóm &gt;200tr</span>
-              )}
-            </p>
-            {scatterStats.total > 0 && (
-              <p className="text-[11px] text-gray-600 mb-2">
-                {scatterStats.total} nhóm ·{" "}
-                <span className="text-green-700">{scatterStats.cheaper} rẻ hơn TT</span> ·{" "}
-                <span className="text-red-700">{scatterStats.expensive} đắt hơn TT</span>
-                {scatterStats.near > 0 && <> · {scatterStats.near} gần ngang giá</>}
-              </p>
-            )}
             <div className="flex flex-wrap gap-2 mb-3">
               <button
                 type="button"
                 className={cn("btn-secondary text-xs py-1", scatterMode === "chenh" && "ring-2 ring-primary-400")}
                 onClick={() => setScatterMode("chenh")}
               >
-                Chênh % (khuyên dùng)
+                Chênh %
               </button>
               <button
                 type="button"

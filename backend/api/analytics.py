@@ -11,7 +11,7 @@ from models import Tour, User
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
-SEGMENT_ORDER = ["Budget (< 2tr)", "Mid (2–5tr)", "Premium (5–15tr)", "Luxury (> 15tr)", "Chưa có giá"]
+SEGMENT_ORDER = ["Standard", "Premium", "Luxury", "Chưa có giá"]
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ import {
   shareWorkspace, listWorkspaceMembers, revokeWorkspaceShare, copyWorkspaceOverrides,
   WorkspaceInfo,
 } from "@/lib/api";
-import { fmtVND, segmentColor, cn } from "@/lib/utils";
+import { fmtVND, formatPhanKhuc, segmentColor, cn } from "@/lib/utils";
 import { formatApiError } from "@/lib/apiError";
 import { COL } from "@/lib/glossary";
 import { Search, Download, Flag, FlagOff, ChevronLeft, ChevronRight, ExternalLink, Pencil, Check, X, RefreshCw, Users, Copy } from "lucide-react";
@@ -410,7 +410,9 @@ export default function ResearchGrid() {
                   {tour.gia ? `${fmtVND(tour.gia)}` : tour.gia_raw || "—"}
                 </td>
                 <td className="px-3 py-2">
-                  {tour.phan_khuc && <Badge className={segmentColor(tour.phan_khuc)}>{tour.phan_khuc}</Badge>}
+                  {tour.phan_khuc && formatPhanKhuc(tour.phan_khuc) && (
+                    <Badge className={segmentColor(tour.phan_khuc)}>{formatPhanKhuc(tour.phan_khuc)}</Badge>
+                  )}
                 </td>
                 <td className="px-3 py-2 text-xs text-gray-500">{tour.nguon}</td>
                 <td className="px-3 py-2">

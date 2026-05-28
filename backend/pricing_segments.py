@@ -66,22 +66,22 @@ def phan_khuc_relative_for_tour(t: Tour, route_avg: dict[str, float]) -> str:
         return _phan_khuc_absolute_fallback(t.gia)
     ratio = pd / mkt
     if ratio >= LUXURY_ABOVE_MARKET:
-        return "Luxury (>+30% TB/ngày TT)"
+        return "Luxury"
     if ratio <= STANDARD_BELOW_MARKET:
-        return "Standard (<−30% TB/ngày TT)"
-    return "Premium (±30% TB/ngày TT)"
+        return "Standard"
+    return "Premium"
 
 
 def _phan_khuc_absolute_fallback(gia: float | None) -> str:
     if not gia:
         return "Chưa có giá"
     if gia < 2_000_000:
-        return "Budget (<2tr)"
+        return "Standard"
     if gia < 5_000_000:
-        return "Mid (2–5tr)"
+        return "Standard"
     if gia < 15_000_000:
-        return "Premium (5–15tr)"
-    return "Luxury (>15tr)"
+        return "Premium"
+    return "Luxury"
 
 
 def recompute_all_phan_khuc(db: Session) -> dict:

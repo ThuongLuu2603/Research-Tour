@@ -17,21 +17,25 @@ export function fmtDate(iso: string | null | undefined): string {
   return d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+/** Hiển thị ngắn cột Phân khúc (hỗ trợ nhãn cũ trong DB). */
+export function formatPhanKhuc(seg: string): string {
+  if (!seg || seg === "Chưa có giá") return seg === "Chưa có giá" ? "—" : "";
+  const s = seg.toLowerCase();
+  if (s.startsWith("luxury")) return "Luxury";
+  if (s.startsWith("premium")) return "Premium";
+  if (s.startsWith("standard") || s.startsWith("budget") || s.startsWith("mid")) return "Standard";
+  return seg;
+}
+
 export function segmentColor(seg: string): string {
+  const short = formatPhanKhuc(seg) || seg;
   const map: Record<string, string> = {
-    "Standard (<−30% TB/ngày TT)": "bg-green-100 text-green-800",
-    "Premium (±30% TB/ngày TT)": "bg-purple-100 text-purple-800",
-    "Luxury (>+30% TB/ngày TT)": "bg-amber-100 text-amber-800",
-    "Budget (<2tr)": "bg-green-100 text-green-800",
-    "Mid (2–5tr)": "bg-blue-100 text-blue-800",
-    "Premium (5–15tr)": "bg-purple-100 text-purple-800",
-    "Luxury (>15tr)": "bg-amber-100 text-amber-800",
+    Standard: "bg-green-100 text-green-800",
+    Premium: "bg-purple-100 text-purple-800",
+    Luxury: "bg-amber-100 text-amber-800",
     "Chưa có giá": "bg-gray-100 text-gray-600",
   };
-  if (seg.startsWith("Standard")) return map["Standard (<−30% TB/ngày TT)"];
-  if (seg.startsWith("Premium (±")) return map["Premium (±30% TB/ngày TT)"];
-  if (seg.startsWith("Luxury (>+")) return map["Luxury (>+30% TB/ngày TT)"];
-  return map[seg] ?? "bg-gray-100 text-gray-600";
+  return map[short] ?? "bg-gray-100 text-gray-600";
 }
 
 export function statusColor(status: string): string {
