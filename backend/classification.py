@@ -217,7 +217,7 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
 
 
 DEFAULT_COMPANY_ALIASES: list[tuple[str, list[str]]] = [
-    ("Vietravel", ["vietravel", "viet travel", "travel.com.vn", "cong ty co phan vietravel"]),
+    ("Vietravel", ["vietravel", "travel.com.vn", "cong ty co phan vietravel"]),
     ("Saigontourist", ["saigontourist", "sai gon tourist", "sgt"]),
     ("Fiditour", ["fiditour", "fidi tour"]),
     ("Tugo", ["tugo", "tu go"]),
@@ -259,7 +259,18 @@ def resolve_company_name(raw_name: str) -> str:
         return ""
     lower = s.lower()
     for alias, canonical in _company_alias_pairs():
-        if alias == lower or alias in lower:
+        if alias == "viet travel":
+            continue
+        if alias == lower:
+            return canonical
+        if len(alias) >= 12 and alias in lower:
+            return canonical
+        if alias == "vietravel" and (
+            lower == "vietravel"
+            or lower.startswith("vietravel ")
+            or lower.endswith(" vietravel")
+            or " vietravel " in f" {lower} "
+        ):
             return canonical
     return s
 
