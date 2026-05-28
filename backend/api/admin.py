@@ -98,7 +98,7 @@ def sync_sheet_source(
 
 @router.post("/recompute-phan-khuc")
 def recompute_phan_khuc(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Tính lại cột Phân khúc theo TB/ngày so với thị trường trên từng tuyến."""
+    """Tính lại Phân khúc: TB/ngày tour vs TB/ngày TT trên cùng Thị trường + Tuyến + Điểm KH."""
     from pricing_segments import recompute_all_phan_khuc
 
     try:

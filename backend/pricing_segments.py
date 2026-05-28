@@ -1,4 +1,4 @@
-"""Phân khúc giá theo TB/ngày tour so với TB/ngày trung bình thị trường trên cùng Thị trường + Tuyến."""
+"""Phân khúc giá theo TB/ngày tour so với TB/ngày TT trên cùng Thị trường + Tuyến + Điểm KH."""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -7,13 +7,21 @@ from sqlalchemy.orm import Session
 
 from models import Tour
 
-# Ngưỡng so với TB/ngày thị trường (cùng tuyến)
+# Ngưỡng so với TB/ngày thị trường (cùng nhóm segment)
 LUXURY_ABOVE_MARKET = 1.30
 STANDARD_BELOW_MARKET = 0.70
 
 
-def _route_key(thi_truong: str, tuyen_tour: str) -> str:
-    return f"{(thi_truong or '').strip()}|{(tuyen_tour or '').strip()}"
+def bucket_key_for_tour(t: Tour) -> str | None:
+    """Cùng khóa nhóm với So sánh VTR: Thị trường | Tuyến | Điểm khởi hành."""
+    from compare_engine import make_segment_key, normalize_departure, route_for_segment
+
+    route = route_for_segment(t)
+    if not route:
+        return None
+    market = (t.thi_truong or "").strip() or "Khác"
+    depart = normalize_departure(t.diem_kh)
+    return make_segment_key(market, route, depart)
 
 
 def tour_price_per_day(gia: float | None, thoi_gian: str, so_ngay: float | None) -> float | None:
@@ -29,7 +37,7 @@ def tour_price_per_day(gia: float | None, thoi_gian: str, so_ngay: float | None)
 
 
 def build_route_market_avg_price_day(tours: list[Tour]) -> dict[str, float]:
-    """TB/ngày thị trường = trung bình giá/ngày các tour đối thủ (không tab Vietravel) trên cùng tuyến."""
+    """TB/ngày TT = TB giá/ngày tour đối thủ (không tab Vietravel) trong cùng segment."""
     from tour_sources import is_vietravel_tab
 
     sums: dict[str, float] = defaultdict(float)
@@ -40,28 +48,22 @@ def build_route_market_avg_price_day(tours: list[Tour]) -> dict[str, float]:
         pd = tour_price_per_day(t.gia, t.thoi_gian, t.so_ngay)
         if pd is None:
             continue
-        key = _route_key(t.thi_truong, t.tuyen_tour)
-        if key in ("", "|", "Khác|"):
+        key = bucket_key_for_tour(t)
+        if not key:
             continue
         sums[key] += pd
         counts[key] += 1
     return {k: round(sums[k] / counts[k], 0) for k in sums if counts[k] > 0}
 
 
-def phan_khuc_relative(
-    gia: float | None,
-    thoi_gian: str,
-    so_ngay: float | None,
-    thi_truong: str,
-    tuyen_tour: str,
-    route_avg: dict[str, float],
-) -> str:
-    pd = tour_price_per_day(gia, thoi_gian, so_ngay)
+def phan_khuc_relative_for_tour(t: Tour, route_avg: dict[str, float]) -> str:
+    pd = tour_price_per_day(t.gia, t.thoi_gian, t.so_ngay)
     if pd is None:
         return "Chưa có giá"
-    mkt = route_avg.get(_route_key(thi_truong, tuyen_tour))
+    key = bucket_key_for_tour(t)
+    mkt = route_avg.get(key) if key else None
     if not mkt:
-        return _phan_khuc_absolute_fallback(gia)
+        return _phan_khuc_absolute_fallback(t.gia)
     ratio = pd / mkt
     if ratio >= LUXURY_ABOVE_MARKET:
         return "Luxury (>+30% TB/ngày TT)"
@@ -87,7 +89,7 @@ def recompute_all_phan_khuc(db: Session) -> dict:
     route_avg = build_route_market_avg_price_day(tours)
     updated = 0
     for t in tours:
-        label = phan_khuc_relative(t.gia, t.thoi_gian, t.so_ngay, t.thi_truong, t.tuyen_tour, route_avg)
+        label = phan_khuc_relative_for_tour(t, route_avg)
         if t.phan_khuc != label:
             t.phan_khuc = label[:64]
             updated += 1
