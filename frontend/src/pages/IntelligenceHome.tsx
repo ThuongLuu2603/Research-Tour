@@ -95,8 +95,17 @@ export default function IntelligenceHome() {
             <ul className="space-y-2 max-h-[160px] overflow-auto text-xs">
               {(data?.alerts ?? []).slice(0, 6).map((a) => (
                 <li key={a.id} className="border-l-2 border-amber-400 pl-2">
-                  <p className="font-medium">{a.title}</p>
-                  <p className="text-gray-500">{a.message}</p>
+                  {a.link_path ? (
+                    <Link to={a.link_path} className="block hover:text-primary-600">
+                      <p className="font-medium">{a.title}</p>
+                      <p className="text-gray-500">{a.message}</p>
+                    </Link>
+                  ) : (
+                    <>
+                      <p className="font-medium">{a.title}</p>
+                      <p className="text-gray-500">{a.message}</p>
+                    </>
+                  )}
                 </li>
               ))}
               {(data?.alerts ?? []).length === 0 && <li className="text-gray-400">Không có cảnh báo mới</li>}
@@ -135,10 +144,10 @@ export default function IntelligenceHome() {
       {/* Quick links */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
+          { to: "/market-lab", label: "Market Lab", sub: "Cơ hội tuyến · lịch cung · triển vọng tuần" },
           { to: "/compare?tab=price", label: "So sánh giá", sub: "Chi tiết segment" },
           { to: "/compare?tab=frequency", label: "Tần suất KH", sub: "TB đoàn/tháng" },
           { to: "/compare?tab=coverage", label: "Phủ sóng", sub: "Khoảng trống tuyến" },
-          { to: "/compare?tab=matcher", label: "Ghép sản phẩm", sub: "VTR ↔ đối thủ" },
         ].map(({ to, label, sub }) => (
           <Link key={to} to={to} className="card p-4 hover:border-primary-400 border border-transparent transition-colors">
             <p className="font-semibold text-sm">{label}</p>

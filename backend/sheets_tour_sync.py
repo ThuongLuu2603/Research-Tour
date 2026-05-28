@@ -8,8 +8,13 @@ from datetime import datetime
 from config import settings
 from models import Tour
 from tour_identity import compute_content_hash, compute_external_id
+from data_sanitize import clean_text
 
 logger = logging.getLogger(__name__)
+
+
+def _clean_field(value: str | None) -> str:
+    return clean_text(value, max_len=256)
 
 SHEET_ID = settings.sheet_id
 NGUON_GID: dict[str, str] = {
@@ -132,8 +137,8 @@ def _row_to_fields(row: list[str]) -> dict | None:
         "lich_kh": (row[8] if len(row) > 8 else "").strip(),
         "link_url": link,
         "ma_tour": (row[12] if len(row) > 12 else "").strip(),
-        "khach_san": (row[10] if len(row) > 10 else "").strip(),
-        "hang_khong": (row[11] if len(row) > 11 else "").strip(),
+        "khach_san": _clean_field(row[10] if len(row) > 10 else ""),
+        "hang_khong": _clean_field(row[11] if len(row) > 11 else ""),
     }
 
 
@@ -206,8 +211,8 @@ def _apply_fields_to_tour(
         tour.link_url = fields["link_url"]
     if fields["ma_tour"]:
         tour.ma_tour = fields["ma_tour"][:64]
-    tour.khach_san = fields["khach_san"][:256]
-    tour.hang_khong = fields["hang_khong"][:256]
+    tour.khach_san = _clean_field(fields.get("khach_san"))
+    tour.hang_khong = _clean_field(fields.get("hang_khong"))
     tour.so_ngay = parse_ngay(fields["thoi_gian"])
     tour.phan_khuc = price_segment(fields["gia"])
     if not preserve_nguon:

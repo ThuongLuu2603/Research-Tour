@@ -1,13 +1,14 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import {
-  Home, Table2, Scale, FileText, Radio, LogOut, User, Settings, Tags,
+  Home, Table2, Scale, FileText, Radio, LogOut, User, Settings, Tags, Microscope,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { to: "/", icon: Home, label: "Trang chủ CI" },
   { to: "/compare", icon: Scale, label: "So sánh VTR" },
+  { to: "/market-lab", icon: Microscope, label: "Market Lab" },
   { to: "/data", icon: Table2, label: "Sản phẩm & Data" },
   { to: "/reports", icon: FileText, label: "Báo cáo BGĐ" },
 ];

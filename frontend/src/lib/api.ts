@@ -683,6 +683,85 @@ export const bulkPatchTours = async (body: { tour_ids: number[]; thi_truong?: st
   return data;
 };
 
+// ── Market Lab ────────────────────────────────────────────────────────────────
+
+export interface MarketLabRouteRow {
+  route_key: string;
+  thi_truong: string;
+  tuyen_tour: string;
+  vtr_tour_count: number;
+  market_tour_count: number;
+  market_departures_monthly: number;
+  vtr_departures_monthly: number;
+  avg_gap_pct: number | null;
+  avg_freq_gap_pct: number | null;
+  market_price_day: number | null;
+  phase: string;
+  opportunity_score: number;
+  competitor_count: number;
+  momentum?: {
+    history_days?: number;
+    supply_delta_pct?: number | null;
+    vtr_supply_delta_pct?: number | null;
+    gap_delta?: number | null;
+  };
+}
+
+export interface MarketLabMarketRow {
+  thi_truong: string;
+  route_count: number;
+  market_departures_monthly: number;
+  vtr_departures_monthly: number;
+  avg_gap_pct: number | null;
+  white_space_routes: number;
+  opportunity_score: number;
+}
+
+export interface MarketLabOverview {
+  grain: string;
+  tab: string;
+  history_days: number;
+  routes?: MarketLabRouteRow[];
+  markets?: MarketLabMarketRow[];
+  weekly_brief: {
+    horizon_days: number;
+    note: string;
+    top_routes: Array<{
+      route_key: string;
+      thi_truong: string;
+      tuyen_tour: string;
+      base: string;
+      action_hint: string;
+      phase: string;
+      avg_gap_pct: number | null;
+      freq_gap_pct: number | null;
+    }>;
+  };
+}
+
+export const getMarketLabOverview = async (opts: {
+  grain?: "route" | "market";
+  tab?: "opportunity" | "operating";
+  thi_truong?: string;
+}): Promise<MarketLabOverview> => {
+  const p = new URLSearchParams();
+  if (opts.grain) p.set("grain", opts.grain);
+  if (opts.tab) p.set("tab", opts.tab);
+  if (opts.thi_truong) p.set("thi_truong", opts.thi_truong);
+  const { data } = await api.get(`/market-lab/overview?${p}`);
+  return data;
+};
+
+export const getMarketLabSupplyCalendar = async (thi_truong: string, tuyen_tour: string) => {
+  const p = new URLSearchParams({ thi_truong, tuyen_tour });
+  const { data } = await api.get(`/market-lab/supply-calendar?${p}`);
+  return data as {
+    route_key: string;
+    months: Array<{ month: string; market_slots: number; vtr_slots: number; gap_slots: number }>;
+    tour_count: number;
+  };
+};
+
 // ── Workspaces ────────────────────────────────────────────────────────────────
 
 export interface WorkspaceInfo {

@@ -10,6 +10,7 @@ import ReportsPage from "@/pages/ReportsPage";
 import ScraperHub from "@/pages/ScraperHub";
 import SettingsPage from "@/pages/SettingsPage";
 import RulesAdminPage from "@/pages/RulesAdminPage";
+import MarketLab from "@/pages/MarketLab";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
@@ -40,6 +41,7 @@ export default function App() {
               <Route index element={<IntelligenceHome />} />
               <Route path="data" element={<ResearchGrid />} />
               <Route path="compare" element={<VietravelCompare />} />
+              <Route path="market-lab" element={<MarketLab />} />
               <Route path="reports" element={<ReportsPage />} />
               <Route path="ops" element={<ScraperHub />} />
               <Route path="scraper" element={<Navigate to="/ops" replace />} />

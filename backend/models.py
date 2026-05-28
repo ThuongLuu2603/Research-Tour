@@ -190,6 +190,30 @@ class SegmentSnapshot(Base):
     market_tour_count: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class RouteDailyMetrics(Base):
+    """Snapshot KPI theo Tuyến tour — nền Market Lab trend."""
+    __tablename__ = "route_daily_metrics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    snapshot_date: Mapped[date] = mapped_column(Date, index=True)
+    route_key: Mapped[str] = mapped_column(String(512), index=True)
+    thi_truong: Mapped[str] = mapped_column(String(128), index=True)
+    tuyen_tour: Mapped[str] = mapped_column(String(256), index=True)
+    vtr_tour_count: Mapped[int] = mapped_column(Integer, default=0)
+    market_tour_count: Mapped[int] = mapped_column(Integer, default=0)
+    market_departures_monthly: Mapped[float] = mapped_column(Float, default=0)
+    vtr_departures_monthly: Mapped[float] = mapped_column(Float, default=0)
+    avg_gap_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    freq_gap_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    market_price_day: Mapped[float | None] = mapped_column(Float, nullable=True)
+    phase: Mapped[str] = mapped_column(String(32), default="stable")
+    opportunity_score: Mapped[float] = mapped_column(Float, default=0)
+    competitor_count: Mapped[int] = mapped_column(Integer, default=0)
+    market_slots_json: Mapped[str] = mapped_column(Text, default="{}")
+    vtr_slots_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class IntelAlert(Base):
     __tablename__ = "intel_alerts"
 
