@@ -19,6 +19,8 @@ export const GLOSSARY = {
   giaTbVtr: "Giá TB VTR = Giá TB/ngày VTR × Số ngày TB VTR (gộp mọi SP trên tuyến, trọng số theo đoàn).",
   giaSoSanh: "Giá so sánh = Giá TB/ngày TT × Số ngày TB VTR (cùng tuyến, quy về độ dài VTR).",
   chenhGia: "Chênh % = Giá TB tour VTR ÷ Giá so sánh − 1. Âm = VTR rẻ hơn.",
+  scatterGia:
+    "Mỗi điểm = 1 nhóm so sánh. Trục ngang = giá TT, trục dọc = giá VTR (cùng quy đổi ngày). Đường chéo = ngang giá. Dưới đường = VTR rẻ hơn; trên đường = đắt hơn. Cỡ điểm = TB đoàn/tháng VTR.",
   reNhat: "Tour rẻ nhất thị trường cùng giai đoạn khởi hành với VTR (±45 ngày).",
   segment: "Nhóm so sánh: cùng Thị trường + Tuyến tour + Điểm khởi hành — gộp mọi sản phẩm/thời gian trên tuyến.",
   methodologyCompare: "Gom theo tuyến + thị trường. Số ngày TB và giá TB/ngày có trọng số theo số đoàn × số ngày từng SP.",

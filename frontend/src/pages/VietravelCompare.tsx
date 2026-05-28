@@ -21,6 +21,29 @@ import {
 
 type Tab = "overview" | "price" | "frequency" | "competitors" | "coverage" | "matcher";
 
+type PriceScatterPoint = {
+  x: number;
+  y: number;
+  z: number;
+  gap_pct: number | null;
+  thi_truong: string;
+  tuyen_tour: string;
+  diem_kh: string;
+  segment_key: string;
+};
+
+function scatterGapColor(gap: number | null): string {
+  if (gap == null) return "#64748b";
+  if (gap <= -5) return "#16a34a";
+  if (gap >= 5) return "#dc2626";
+  return "#2563eb";
+}
+
+function fmtPriceAxis(v: number) {
+  if (v >= 1e9) return `${(v / 1e9).toFixed(1)}tỷ`;
+  return `${(v / 1e6).toFixed(1)}tr`;
+}
+
 function GapBadge({ pct }: { pct: number | null }) {
   if (pct === null) return <span className="badge bg-gray-100">N/A</span>;
   if (pct <= -5) return <span className="badge bg-green-100 text-green-800 flex items-center gap-1"><TrendingDown size={12} /> {pct}%</span>;
@@ -189,15 +212,30 @@ export default function VietravelCompare() {
     }));
   }, [weekdayDist]);
 
-  const scatterData = (segments?.items ?? [])
-    .filter((s) => s.comparison_price && s.vietravel_avg_price)
-    .slice(0, 80)
-    .map((s) => ({
-      x: s.comparison_price,
-      y: s.vietravel_avg_price,
-      z: s.vietravel_freq_monthly,
-      name: s.tuyen_tour,
-    }));
+  const scatterData = useMemo((): PriceScatterPoint[] => {
+    return (segments?.items ?? [])
+      .filter((s) => s.comparison_price && s.vietravel_avg_price)
+      .slice(0, 80)
+      .map((s) => ({
+        x: s.comparison_price!,
+        y: s.vietravel_avg_price!,
+        z: Math.max(s.vtr_avg_departures_per_month ?? s.vietravel_freq_monthly ?? 0.5, 0.5),
+        gap_pct: s.gap_pct,
+        thi_truong: s.thi_truong,
+        tuyen_tour: s.tuyen_tour,
+        diem_kh: s.diem_kh,
+        segment_key: s.segment_key,
+      }));
+  }, [segments?.items]);
+
+  const scatterDomain = useMemo((): [number, number] => {
+    if (!scatterData.length) return [0, 1];
+    const vals = scatterData.flatMap((d) => [d.x, d.y]);
+    const lo = Math.min(...vals);
+    const hi = Math.max(...vals);
+    const pad = Math.max((hi - lo) * 0.08, hi * 0.02, 500_000);
+    return [Math.max(0, lo - pad), hi + pad];
+  }, [scatterData]);
 
   const LinkCell = ({ url, title }: { url?: string; title?: string }) => {
     const href = url && /^https?:\/\//i.test(url) ? url : undefined;
@@ -456,20 +494,125 @@ export default function VietravelCompare() {
             )}
           </div>
           <div className="card p-5">
-            <h3 className="font-semibold mb-3 inline-flex items-center">{COL.giaTbVtr} vs {COL.giaSoSanh}<InfoTip text={GLOSSARY.giaSoSanh} /></h3>
+            <h3 className="font-semibold mb-1 inline-flex items-center">
+              Bản đồ giá: {COL.giaTbVtr} vs {COL.giaSoSanh}
+              <InfoTip text={GLOSSARY.scatterGia} />
+            </h3>
+            <p className="text-xs text-gray-500 mb-3">Mỗi điểm = 1 nhóm so sánh · đường chéo = ngang giá thị trường</p>
             {segmentsLoading ? (
               <div className="h-[280px] flex items-center justify-center text-gray-400 text-sm">Đang tải biểu đồ...</div>
             ) : scatterData.length === 0 ? (
               <div className="h-[280px] flex items-center justify-center text-gray-400 text-sm">Chưa có dữ liệu giá so sánh</div>
             ) : (
+            <>
             <div className="w-full h-[280px]">
             <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart key={scatterData.length}><XAxis dataKey="x" name={COL.giaSoSanh} tickFormatter={(v) => `${(v / 1e6).toFixed(1)}tr`} />
-                <YAxis dataKey="y" name={COL.giaTbVtr} tickFormatter={(v) => `${(v / 1e6).toFixed(1)}tr`} />
-                <ZAxis dataKey="z" range={[30, 400]} /><Tooltip cursor={{ strokeDasharray: "3 3" }} />
-                <Scatter data={scatterData} fill="#003580" /></ScatterChart>
+              <ScatterChart margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <XAxis
+                  type="number"
+                  dataKey="x"
+                  name={COL.giaSoSanh}
+                  domain={scatterDomain}
+                  tickFormatter={fmtPriceAxis}
+                  label={{ value: COL.giaSoSanh, position: "insideBottom", offset: -2, fontSize: 11, fill: "#64748b" }}
+                  tick={{ fontSize: 10 }}
+                />
+                <YAxis
+                  type="number"
+                  dataKey="y"
+                  name={COL.giaTbVtr}
+                  domain={scatterDomain}
+                  tickFormatter={fmtPriceAxis}
+                  label={{ value: COL.giaTbVtr, angle: -90, position: "insideLeft", fontSize: 11, fill: "#64748b" }}
+                  tick={{ fontSize: 10 }}
+                  width={52}
+                />
+                <ZAxis type="number" dataKey="z" range={[64, 520]} name={COL.tbDoanThang} />
+                <Tooltip
+                  cursor={{ strokeDasharray: "3 3" }}
+                  content={({ active, payload }) => {
+                    if (!active || !payload?.length) return null;
+                    const p = payload[0].payload as PriceScatterPoint;
+                    return (
+                      <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-xs max-w-[260px]">
+                        <p className="font-semibold text-gray-900 leading-snug">
+                          {p.tuyen_tour}
+                        </p>
+                        <p className="text-gray-600 mt-0.5">
+                          {p.thi_truong} · {COL.diemKhoiHanh}: {p.diem_kh}
+                        </p>
+                        <div className="mt-2 space-y-1 border-t border-gray-100 pt-2">
+                          <p><span className="text-gray-500">{COL.giaSoSanh}:</span> <strong>{fmtVND(p.x)}</strong></p>
+                          <p><span className="text-gray-500">{COL.giaTbVtr}:</span> <strong>{fmtVND(p.y)}</strong></p>
+                          <p className="flex items-center gap-1">
+                            <span className="text-gray-500">{COL.chenhPct}:</span>
+                            <GapBadge pct={p.gap_pct} />
+                          </p>
+                          <p><span className="text-gray-500">{COL.tbDoanThang} VTR:</span> {p.z.toFixed(1)}</p>
+                        </div>
+                      </div>
+                    );
+                  }}
+                />
+                <ReferenceLine
+                  segment={[
+                    { x: scatterDomain[0], y: scatterDomain[0] },
+                    { x: scatterDomain[1], y: scatterDomain[1] },
+                  ]}
+                  stroke="#94a3b8"
+                  strokeWidth={1.5}
+                  strokeDasharray="6 4"
+                  label={{
+                    value: "Ngang giá TT",
+                    position: "insideTopLeft",
+                    fontSize: 10,
+                    fill: "#64748b",
+                  }}
+                />
+                <Scatter
+                  data={scatterData}
+                  shape={(props) => {
+                    const { cx, cy, payload } = props as {
+                      cx?: number;
+                      cy?: number;
+                      payload?: PriceScatterPoint;
+                    };
+                    if (cx == null || cy == null || !payload) return null;
+                    const z = payload.z ?? 1;
+                    const r = Math.min(16, Math.max(5, 4 + Math.sqrt(z) * 3));
+                    return (
+                      <circle
+                        cx={cx}
+                        cy={cy}
+                        r={r}
+                        fill={scatterGapColor(payload.gap_pct)}
+                        fillOpacity={0.82}
+                        stroke="#fff"
+                        strokeWidth={1}
+                      />
+                    );
+                  }}
+                />
+              </ScatterChart>
             </ResponsiveContainer>
             </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 text-xs text-gray-600">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-full bg-green-600 shrink-0" />
+                VTR rẻ hơn (chênh ≤ −5%)
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-full bg-blue-600 shrink-0" />
+                Gần ngang giá
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-full bg-red-600 shrink-0" />
+                VTR đắt hơn (chênh ≥ +5%)
+              </span>
+              <span className="text-gray-400">· cỡ điểm = {COL.tbDoanThang} VTR</span>
+            </div>
+            </>
             )}
           </div>
         </div>
