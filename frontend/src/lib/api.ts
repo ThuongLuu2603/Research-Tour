@@ -151,6 +151,19 @@ export const syncToursFromGoogleSheet = async () => {
   return data as { total_updated: number; sources: Array<{ nguon: string; updated?: number; error?: string }> };
 };
 
+export const purgeSourceTours = async (opts: {
+  nguon?: string;
+  confirm: string;
+  all_labeled?: boolean;
+}) => {
+  const { data } = await api.post("/admin/purge-source-tours", {
+    nguon: opts.nguon ?? "Vietravel",
+    confirm: opts.confirm,
+    all_labeled: opts.all_labeled ?? false,
+  });
+  return data as { deleted: number; nguon?: string; scope?: string; message: string };
+};
+
 export const exportUrl = (type: "csv" | "excel", params: Record<string, string>) => {
   const p = new URLSearchParams(params);
   return `/api/tours/export/${type}?${p}&access_token=${localStorage.getItem("access_token")}`;
