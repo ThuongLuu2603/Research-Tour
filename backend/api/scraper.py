@@ -164,9 +164,15 @@ def _emit(job_id: int, pct: int, msg: str):
         asyncio.run_coroutine_threadsafe(q.put(payload), _get_event_loop())
 
 
-def _emit_done(job_id: int, added: int, updated: int):
+def _emit_done(job_id: int, added: int, updated: int, deleted: int = 0):
     import json
-    payload = json.dumps({"pct": 100, "msg": f"Hoàn thành: +{added} mới, ~{updated} cập nhật", "done": True, "added": added, "updated": updated})
+    msg = f"Hoàn thành: +{added} mới, ~{updated} cập nhật"
+    if deleted:
+        msg += f", −{deleted} đã xóa (không còn trên Sheet)"
+    payload = json.dumps(
+        {"pct": 100, "msg": msg, "done": True, "added": added, "updated": updated, "deleted": deleted},
+        ensure_ascii=False,
+    )
     q = _progress_queues.get(job_id)
     if q:
         asyncio.run_coroutine_threadsafe(q.put(payload), _get_event_loop())
@@ -209,17 +215,19 @@ def _run_job(job_id: int, scraper_name: str):
         _emit(job_id, 5, f"Bắt đầu quét {scraper_name}...")
 
         if scraper_name == "vietravel":
-            added, updated = _run_vietravel(db, job_id, job)
+            added, updated, deleted = _run_vietravel(db, job_id, job)
         else:
-            added, updated = _run_findtourgo(db, job_id, job)
+            added, updated, deleted = _run_findtourgo(db, job_id, job)
 
         job.status = "success"
         job.progress_pct = 100
         job.tours_added = added
         job.tours_updated = updated
         job.finished_at = datetime.utcnow()
+        if deleted:
+            job.message = f"−{deleted} tour đã xóa khỏi DB (không còn trên Sheet)"
         db.commit()
-        _emit_done(job_id, added, updated)
+        _emit_done(job_id, added, updated, deleted)
         try:
             from snapshot_service import capture_daily_snapshot
             capture_daily_snapshot(db)
@@ -262,10 +270,15 @@ def _run_vietravel(db: Session, job_id: int, job: ScrapeJob):
 
     if sheet_ok:
         from sheets_tour_sync import merge_sheet_source_to_db
-        result = merge_sheet_source_to_db(db, "Vietravel")
-        return result.get("inserted", 0), result.get("updated", 0)
+        result = merge_sheet_source_to_db(db, "Vietravel", mirror_delete=True)
+        return (
+            result.get("inserted", 0),
+            result.get("updated", 0),
+            result.get("deleted", 0),
+        )
 
-    return _upsert_tours(db, df, "Vietravel", job.id, job_id)
+    added, updated = _upsert_tours(db, df, "Vietravel", job.id, job_id)
+    return added, updated, 0
 
 
 def _run_findtourgo(db: Session, job_id: int, job: ScrapeJob):
@@ -290,10 +303,15 @@ def _run_findtourgo(db: Session, job_id: int, job: ScrapeJob):
 
     if sheet_ok:
         from sheets_tour_sync import merge_sheet_source_to_db
-        result = merge_sheet_source_to_db(db, "FindTourGo")
-        return result.get("inserted", 0), result.get("updated", 0)
+        result = merge_sheet_source_to_db(db, "FindTourGo", mirror_delete=True)
+        return (
+            result.get("inserted", 0),
+            result.get("updated", 0),
+            result.get("deleted", 0),
+        )
 
-    return _upsert_tours(db, df, "FindTourGo", job.id, job_id)
+    added, updated = _upsert_tours(db, df, "FindTourGo", job.id, job_id)
+    return added, updated, 0
 
 
 def _parse_price(raw: str) -> float | None:

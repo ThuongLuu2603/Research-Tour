@@ -12,6 +12,9 @@ from data_sanitize import clean_text
 
 logger = logging.getLogger(__name__)
 
+# Tránh xóa hàng loạt khi Sheet trống / lỗi scrape
+MIRROR_PRUNE_MIN_SYNCED = 10
+
 
 def _clean_field(value: str | None) -> str:
     return clean_text(value, max_len=256)
@@ -236,13 +239,55 @@ def _create_tour_from_fields(fields: dict, nguon: str, now: datetime) -> Tour:
     return tour
 
 
-def merge_sheet_source_to_db(db, nguon: str) -> dict:
+def _prune_stale_tours_for_source(db, nguon: str, synced_tour_ids: set[int]) -> int:
+    """Xóa tour trong DB (nguon) không còn trên tab Sheet sau lần sync vừa rồi."""
+    from models import TourOverride
+
+    if len(synced_tour_ids) < MIRROR_PRUNE_MIN_SYNCED:
+        logger.warning(
+            "Mirror prune skipped for %s: only %s tours on sheet (min %s)",
+            nguon,
+            len(synced_tour_ids),
+            MIRROR_PRUNE_MIN_SYNCED,
+        )
+        return 0
+
+    stale_ids = [
+        tid
+        for (tid,) in db.query(Tour.id)
+        .filter(Tour.nguon == nguon, ~Tour.id.in_(synced_tour_ids))
+        .all()
+    ]
+    if not stale_ids:
+        return 0
+
+    db.query(TourOverride).filter(TourOverride.tour_id.in_(stale_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(Tour).filter(Tour.id.in_(stale_ids)).delete(synchronize_session=False)
+    logger.info("Mirror prune %s: removed %s stale tours", nguon, len(stale_ids))
+    return len(stale_ids)
+
+
+def merge_sheet_source_to_db(db, nguon: str, *, mirror_delete: bool | None = None) -> dict:
+    if mirror_delete is None:
+        mirror_delete = nguon in ("Vietravel", "FindTourGo")
+
     ws = _worksheet(nguon)
     rows = ws.get_all_values()
     if len(rows) < 2:
-        return {"nguon": nguon, "updated": 0, "inserted": 0, "skipped": 0, "unchanged": 0}
+        return {
+            "nguon": nguon,
+            "updated": 0,
+            "inserted": 0,
+            "skipped": 0,
+            "unchanged": 0,
+            "deleted": 0,
+            "synced": 0,
+        }
 
     updated = inserted = skipped = unchanged = 0
+    synced_tour_ids: set[int] = set()
     now = datetime.utcnow()
     for row_idx, row in enumerate(rows[1:], start=2):
         fields = _row_to_fields(row)
@@ -263,8 +308,11 @@ def merge_sheet_source_to_db(db, nguon: str) -> dict:
                 continue
             tour = _create_tour_from_fields(fields, nguon, now)
             db.add(tour)
+            db.flush()
+            synced_tour_ids.add(tour.id)
             inserted += 1
         else:
+            synced_tour_ids.add(tour.id)
             new_hash = compute_content_hash(fields)
             if tour.content_hash == new_hash and tour.sheet_source == nguon:
                 unchanged += 1
@@ -282,9 +330,25 @@ def merge_sheet_source_to_db(db, nguon: str) -> dict:
         )
 
     db.commit()
+
+    deleted = 0
+    if mirror_delete:
+        deleted = _prune_stale_tours_for_source(db, nguon, synced_tour_ids)
+        if deleted:
+            db.commit()
+
+    if inserted or updated or deleted:
+        _post_sync_cache(db)
+
     logger.info(
-        "Sheet sync %s: inserted=%s updated=%s unchanged=%s skipped=%s",
-        nguon, inserted, updated, unchanged, skipped,
+        "Sheet sync %s: inserted=%s updated=%s unchanged=%s skipped=%s deleted=%s synced=%s",
+        nguon,
+        inserted,
+        updated,
+        unchanged,
+        skipped,
+        deleted,
+        len(synced_tour_ids),
     )
     return {
         "nguon": nguon,
@@ -292,6 +356,8 @@ def merge_sheet_source_to_db(db, nguon: str) -> dict:
         "inserted": inserted,
         "skipped": skipped,
         "unchanged": unchanged,
+        "deleted": deleted,
+        "synced": len(synced_tour_ids),
     }
 
 
@@ -308,7 +374,8 @@ def merge_all_sheets_to_db(db) -> dict:
     results = []
     for nguon in NGUON_GID:
         try:
-            results.append(merge_sheet_source_to_db(db, nguon))
+            mirror = nguon in ("Vietravel", "FindTourGo")
+            results.append(merge_sheet_source_to_db(db, nguon, mirror_delete=mirror))
         except Exception as e:
             logger.exception("Sheet sync failed for %s", nguon)
             results.append({"nguon": nguon, "error": str(e)})
@@ -319,4 +386,5 @@ def merge_all_sheets_to_db(db) -> dict:
         "total_inserted": sum(r.get("inserted", 0) for r in results),
         "total_unchanged": sum(r.get("unchanged", 0) for r in results),
         "total_skipped": sum(r.get("skipped", 0) for r in results),
+        "total_deleted": sum(r.get("deleted", 0) for r in results),
     }
