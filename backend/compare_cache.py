@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from compare_engine import SegmentStats, build_segment_stats, deduplicate_tours
 from models import Tour
-from tour_sources import apply_market_compare_source_filter
+from tour_sources import apply_market_compare_source_filter, filter_tours_for_market_compare
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ def load_tours(
         q = q.filter(Tour.tuyen_tour.ilike(f"%{tuyen_tour}%"))
     if diem_kh:
         q = q.filter(Tour.diem_kh.ilike(f"%{diem_kh}%"))
-    return q.all()
+    return filter_tours_for_market_compare(q.all())
 
 
 def _build_context(db: Session, thi_truong: list[str], tuyen_tour: str, diem_kh: str) -> CompareContext:

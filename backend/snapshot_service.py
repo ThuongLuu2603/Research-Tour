@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from compare_engine import build_segment_stats, deduplicate_tours, is_vietravel
 from models import DailySnapshot, IntelAlert, SegmentSnapshot, Tour
-from tour_sources import apply_market_compare_source_filter
+from tour_sources import apply_market_compare_source_filter, filter_tours_for_market_compare
 
 
 def _today() -> date:
@@ -16,9 +16,11 @@ def _today() -> date:
 
 def capture_daily_snapshot(db: Session, tours: list[Tour] | None = None) -> DailySnapshot:
     if tours is None:
-        tours = apply_market_compare_source_filter(
-            db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
-        ).all()
+        tours = filter_tours_for_market_compare(
+            apply_market_compare_source_filter(
+                db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+            ).all()
+        )
 
     tours = deduplicate_tours(tours)
     snap_date = _today()

@@ -484,14 +484,7 @@ export default function VietravelCompare() {
               <InfoTip text="Tour từ tab Vietravel sau scrape — khớp số dòng Sheet/DB nguon=Vietravel" />
             </span>
             <p className="text-xl font-bold">{summary.vietravel_tab_tours ?? "—"}</p>
-            <p className="text-[10px] text-gray-500 mt-0.5 leading-snug">
-              Trên catalog <strong>Main</strong>:{" "}
-              <strong>{summary.vietravel_main_tours ?? Math.max(0, (summary.total_vietravel_tours ?? 0) - (summary.vietravel_tab_tours ?? 0))}</strong>
-              {" "}tour nhãn Vietravel
-              {(summary.total_vietravel_tours ?? 0) > 0 && (
-                <span className="text-gray-400"> · tổng nhãn mọi nguồn: {summary.total_vietravel_tours}</span>
-              )}
-            </p>
+            <p className="text-[10px] text-gray-500 mt-0.5">Chỉ tab scrape Vietravel — không đếm nhãn công ty trên Main</p>
           </div>
           <div className="kpi-card"><span className="text-xs text-gray-500 inline-flex items-center">Nhóm so sánh<InfoTip text={GLOSSARY.segment} /></span><p className="text-xl font-bold">{summary.segments_with_vietravel}</p></div>
           <div className="kpi-card"><span className="text-xs text-green-600">Rẻ hơn TT</span><p className="text-xl font-bold text-green-700">{summary.cheaper_count}</p></div>

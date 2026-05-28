@@ -77,41 +77,6 @@ def sync_tours_from_google_sheet(_: User = Depends(get_current_user), db: Sessio
         raise HTTPException(status_code=502, detail=f"Lỗi đồng bộ Sheet → App: {e}") from e
 
 
-class PurgeSourceToursRequest(BaseModel):
-    nguon: str = "Vietravel"
-    confirm: str = Field(description='Gõ "DELETE" để xác nhận')
-    all_labeled: bool = Field(
-        default=False,
-        description="True = xóa mọi tour công ty Vietravel (kể cả trên Main), không chỉ tab scrape",
-    )
-
-
-@router.post("/purge-source-tours")
-def purge_source_tours(
-    req: PurgeSourceToursRequest,
-    _: User = Depends(require_admin),
-    db: Session = Depends(get_db),
-):
-    """Xóa tour trong DB theo nguồn — dùng trước khi scrape lại tab Vietravel."""
-    if req.confirm.strip().upper() != "DELETE":
-        raise HTTPException(status_code=400, detail='Gõ confirm="DELETE" để xác nhận xóa')
-
-    from sheets_tour_sync import purge_all_tours_for_source, purge_vietravel_labeled_tours
-
-    try:
-        if req.all_labeled:
-            result = purge_vietravel_labeled_tours(db)
-        else:
-            result = purge_all_tours_for_source(db, req.nguon.strip())
-        return {
-            **result,
-            "message": f"Đã xóa {result.get('deleted', 0)} tour. Chạy scraper Vietravel rồi sync Sheet → DB.",
-        }
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=502, detail=f"Lỗi xóa tour: {e}") from e
-
-
 @router.post("/sync-main-sheet")
 def sync_main_sheet(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Chỉ đồng bộ tab Main (thị trường) — sau khi Google Apps Script cập nhật Sheet."""

@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { triggerScrape, getScrapeJobs, getSchedule, updateSchedule, getDataStatus, syncSheetData, purgeSourceTours, ScrapeJob } from "@/lib/api";
+import { triggerScrape, getScrapeJobs, getSchedule, updateSchedule, getDataStatus, syncSheetData, ScrapeJob } from "@/lib/api";
 import { fmtDate, statusColor, cn } from "@/lib/utils";
-import { useAuth } from "@/contexts/AuthContext";
-import { Play, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Database, Trash2 } from "lucide-react";
+import { Play, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Database } from "lucide-react";
 
 interface ProgressEvent { pct: number; msg: string; done: boolean; added?: number; updated?: number; error?: boolean }
 
@@ -103,15 +102,16 @@ function ScraperCard({ scraper, label, desc }: { scraper: "vietravel" | "findtou
   );
 }
 
+function addMinutes(h: number, m: number, offset: number) {
+  const total = h * 60 + m + offset;
+  return { h: Math.floor(total / 60) % 24, m: total % 60 };
+}
+
 export default function ScraperHub() {
   const qc = useQueryClient();
-  const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
   const [schedHour, setSchedHour] = useState(7);
   const [schedMin, setSchedMin] = useState(0);
   const [savedSched, setSavedSched] = useState(false);
-  const [purgeConfirm, setPurgeConfirm] = useState("");
-  const [purgeAllLabeled, setPurgeAllLabeled] = useState(false);
 
   const { data: jobs, refetch: refetchJobs } = useQuery({
     queryKey: ["scrape-jobs"],
@@ -135,22 +135,6 @@ export default function ScraperHub() {
     mutationFn: syncSheetData,
     onSuccess: () => {
       refetchDataStatus();
-    },
-  });
-
-  const purgeVtr = useMutation({
-    mutationFn: () => purgeSourceTours({ confirm: purgeConfirm, all_labeled: purgeAllLabeled }),
-    onSuccess: (res) => {
-      setPurgeConfirm("");
-      refetchDataStatus();
-      qc.invalidateQueries({ queryKey: ["compare-summary"] });
-      qc.invalidateQueries({ queryKey: ["compare-segments"] });
-      qc.invalidateQueries({ queryKey: ["kpi"] });
-      qc.invalidateQueries({ queryKey: ["tours"] });
-      alert(res.message);
-    },
-    onError: (err: { response?: { data?: { detail?: string } } }) => {
-      alert(err.response?.data?.detail ?? "Xóa thất bại");
     },
   });
 
@@ -248,54 +232,6 @@ export default function ScraperHub() {
         )}
       </div>
 
-      {isAdmin && (
-        <div className="card p-5 border-2 border-red-200 bg-red-50/40 space-y-3">
-          <h3 className="font-semibold text-red-900 flex items-center gap-2">
-            <Trash2 size={18} />
-            Xóa tour Vietravel trong DB (trước khi scrape lại)
-          </h3>
-          <p className="text-xs text-red-800/90 leading-relaxed">
-            KPI <strong>Sản phẩm VTR (247)</strong> đếm mọi tour có tên công ty Vietravel (kể cả trên Main).
-            Tab scrape thường ~211. Mặc định chỉ xóa tour <code className="bg-red-100 px-1 rounded">nguon=Vietravel</code> — sau đó chạy scraper + sync Sheet.
-          </p>
-          <label className="flex items-center gap-2 text-xs text-red-900 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={purgeAllLabeled}
-              onChange={(e) => setPurgeAllLabeled(e.target.checked)}
-              className="rounded"
-            />
-            Xóa luôn mọi tour nhãn Vietravel trên Main (giảm số 247; Main sync có thể thêm lại)
-          </label>
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <label className="block text-xs text-red-800 mb-1">Gõ DELETE để xác nhận</label>
-              <input
-                className="input w-40 text-sm font-mono"
-                value={purgeConfirm}
-                onChange={(e) => setPurgeConfirm(e.target.value)}
-                placeholder="DELETE"
-              />
-            </div>
-            <button
-              type="button"
-              className="btn text-xs bg-red-600 text-white border-red-700 hover:bg-red-700 disabled:opacity-50"
-              disabled={purgeConfirm.toUpperCase() !== "DELETE" || purgeVtr.isPending}
-              onClick={() => {
-                if (!window.confirm("Xóa tour Vietravel trong DB? Không hoàn tác được.")) return;
-                purgeVtr.mutate();
-              }}
-            >
-              {purgeVtr.isPending ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-              Xóa DB Vietravel
-            </button>
-          </div>
-          <p className="text-[10px] text-red-700">
-            Vietravel trong DB hiện tại: <strong>{dataStatus?.breakdown?.Vietravel?.toLocaleString("vi-VN") ?? "—"}</strong> tour
-          </p>
-        </div>
-      )}
-
       {/* Scraper cards */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ScraperCard
@@ -311,25 +247,52 @@ export default function ScraperHub() {
       </div>
 
       {/* Auto schedule */}
-      <div className="card p-5">
-        <h3 className="font-semibold text-gray-800 mb-1">Lịch tự động</h3>
-        <p className="text-xs text-gray-500 mb-4">Chạy cả 2 scraper hàng ngày theo giờ cài đặt</p>
-        <div className="flex items-center gap-3">
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Giờ</label>
-            <input type="number" min={0} max={23} className="input w-20 text-center text-sm" value={schedHour} onChange={(e) => setSchedHour(Number(e.target.value))} />
+      <div className="card p-5 space-y-4">
+        <div>
+          <h3 className="font-semibold text-gray-800 mb-1">Lịch tự động</h3>
+          <p className="text-xs text-gray-500">
+            Tất cả giờ theo <strong>{schedule?.timezone_label ?? "Giờ Việt Nam (UTC+7)"}</strong>
+            {schedule?.timezone ? ` — ${schedule.timezone}` : ""}
+          </p>
+        </div>
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-gray-500 border-b">
+              <th className="pb-2 font-medium">Tác vụ</th>
+              <th className="pb-2 font-medium">Giờ VN</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {(schedule?.jobs ?? [
+              { label: "Sync Main → DB", time_vn: "06:30" },
+              { label: "Scrape Vietravel", time_vn: `${String(schedHour).padStart(2, "0")}:${String(schedMin).padStart(2, "0")}` },
+              { label: "Scrape FindTourGo", time_vn: (() => { const t = addMinutes(schedHour, schedMin, 20); return `${String(t.h).padStart(2, "0")}:${String(t.m).padStart(2, "0")}`; })() },
+              { label: "Snapshot", time_vn: "08:30" },
+              { label: "Sync tất cả tab", time_vn: "09:00" },
+            ]).map((j) => (
+              <tr key={j.label}>
+                <td className="py-2 text-gray-800">{j.label}</td>
+                <td className="py-2 font-mono text-gray-600">{j.time_vn}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="border-t border-gray-100 pt-4">
+          <p className="text-xs text-gray-600 mb-2">Chỉnh giờ 2 scraper (Vietravel + FindTourGo +20 phút):</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Giờ VN</label>
+              <input type="number" min={0} max={23} className="input w-20 text-center text-sm" value={schedHour} onChange={(e) => setSchedHour(Number(e.target.value))} />
+            </div>
+            <span className="text-gray-400 font-bold mt-4">:</span>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Phút</label>
+              <input type="number" min={0} max={59} className="input w-20 text-center text-sm" value={schedMin} onChange={(e) => setSchedMin(Number(e.target.value))} />
+            </div>
+            <button type="button" onClick={saveSchedule} className={cn("btn-primary text-xs mt-4", savedSched && "bg-green-600 border-green-600")}>
+              {savedSched ? "✓ Đã lưu" : "Lưu lịch scraper"}
+            </button>
           </div>
-          <span className="text-gray-400 font-bold mt-4">:</span>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Phút</label>
-            <input type="number" min={0} max={59} className="input w-20 text-center text-sm" value={schedMin} onChange={(e) => setSchedMin(Number(e.target.value))} />
-          </div>
-          <button onClick={saveSchedule} className={cn("btn-primary text-xs mt-4", savedSched && "bg-green-600 border-green-600")}>
-            {savedSched ? "✓ Đã lưu" : "Lưu lịch"}
-          </button>
-          <span className="text-xs text-gray-400 mt-4">
-            Vietravel lúc {String(schedHour).padStart(2, "0")}:{String(schedMin).padStart(2, "0")} · FindTourGo lúc {String(schedHour).padStart(2, "0")}:{String(schedMin + 20).padStart(2, "0")}
-          </span>
         </div>
       </div>
 

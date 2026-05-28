@@ -251,30 +251,6 @@ def _delete_tour_ids(db, tour_ids: list[int]) -> int:
     return len(tour_ids)
 
 
-def purge_all_tours_for_source(db, nguon: str) -> dict:
-    """Xóa toàn bộ tour một nguồn (vd. Vietravel) — trước khi scrape lại từ đầu."""
-    tour_ids = [tid for (tid,) in db.query(Tour.id).filter(Tour.nguon == nguon).all()]
-    deleted = _delete_tour_ids(db, tour_ids)
-    db.commit()
-    if deleted:
-        _post_sync_cache(db)
-    logger.info("Purged source %s: deleted %s tours", nguon, deleted)
-    return {"nguon": nguon, "deleted": deleted}
-
-
-def purge_vietravel_labeled_tours(db) -> dict:
-    """Xóa mọi tour có công ty được gán nhãn Vietravel (mọi nguồn)."""
-    from compare_engine import is_vietravel
-
-    tour_ids = [t.id for t in db.query(Tour).all() if is_vietravel(t.cong_ty or "")]
-    deleted = _delete_tour_ids(db, tour_ids)
-    db.commit()
-    if deleted:
-        _post_sync_cache(db)
-    logger.info("Purged Vietravel-labeled tours: deleted %s", deleted)
-    return {"scope": "vietravel_labeled", "deleted": deleted}
-
-
 def _prune_stale_tours_for_source(db, nguon: str, synced_tour_ids: set[int]) -> int:
     """Xóa tour trong DB (nguon) không còn trên tab Sheet sau lần sync vừa rồi."""
     from models import TourOverride

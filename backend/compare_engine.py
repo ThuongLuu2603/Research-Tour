@@ -629,7 +629,7 @@ def _tour_to_entry(t: Tour, days: float) -> TourEntry | None:
 
     freq = parse_departure_frequency(t.lich_kh)
     link = normalize_tour_link(t.link_url)
-    if not link and t.ma_tour and is_vietravel(t.cong_ty):
+    if not link and t.ma_tour and _vtr_flag_for_compare(t):
         link = f"https://travel.com.vn/tour/{t.ma_tour.strip()}"
     return TourEntry(
         tour_id=t.id,
@@ -645,8 +645,14 @@ def _tour_to_entry(t: Tour, days: float) -> TourEntry | None:
         lich_trinh=t.lich_trinh or "",
         link_url=link,
         thoi_gian=t.thoi_gian or "",
-        is_vietravel=is_vietravel(t.cong_ty),
+        is_vietravel=_vtr_flag_for_compare(t),
     )
+
+
+def _vtr_flag_for_compare(t: Tour) -> bool:
+    from tour_sources import is_vietravel_tab
+
+    return is_vietravel_tab(t)
 
 
 def build_segment_stats(tours: list[Tour], *, dedup: bool = True) -> list[SegmentStats]:

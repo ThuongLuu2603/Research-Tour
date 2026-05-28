@@ -18,7 +18,7 @@ from models import IntelAlert, SavedView, Tour, User
 from product_matcher import find_matches, suggest_vtr_tours
 from report_builder import build_report_html
 from snapshot_service import capture_daily_snapshot
-from tour_sources import apply_market_compare_source_filter
+from tour_sources import apply_market_compare_source_filter, filter_tours_for_market_compare
 
 router = APIRouter(prefix="/api/intelligence", tags=["intelligence"])
 
@@ -51,18 +51,22 @@ def home_brief(db: Session = Depends(get_db), _: User = Depends(get_current_user
 
 @router.post("/snapshot/capture")
 def capture_snapshot(_: User = Depends(require_admin), db: Session = Depends(get_db)):
-    tours = apply_market_compare_source_filter(
-        db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
-    ).all()
+    tours = filter_tours_for_market_compare(
+        apply_market_compare_source_filter(
+            db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+        ).all()
+    )
     daily = capture_daily_snapshot(db, tours)
     return {"snapshot_date": daily.snapshot_date.isoformat(), "message": "Đã chụp snapshot & sinh insight"}
 
 
 @router.get("/coverage")
 def coverage(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    tours = apply_market_compare_source_filter(
-        db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
-    ).all()
+    tours = filter_tours_for_market_compare(
+        apply_market_compare_source_filter(
+            db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+        ).all()
+    )
     return build_coverage_for_api(tours)
 
 
@@ -79,9 +83,11 @@ def matcher_suggest(db: Session = Depends(get_db), _: User = Depends(get_current
 
 @router.get("/matcher/{tour_id}")
 def matcher_detail(tour_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    tours = apply_market_compare_source_filter(
-        db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
-    ).all()
+    tours = filter_tours_for_market_compare(
+        apply_market_compare_source_filter(
+            db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+        ).all()
+    )
     return find_matches(tours, tour_id)
 
 
