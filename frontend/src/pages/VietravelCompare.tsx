@@ -411,7 +411,16 @@ export default function VietravelCompare() {
       {/* KPIs */}
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          <div className="kpi-card"><span className="text-xs text-gray-500 inline-flex items-center">{COL.sanPham} VTR<InfoTip text={GLOSSARY.tenTour} /></span><p className="text-xl font-bold">{summary.total_vietravel_tours}</p></div>
+          <div className="kpi-card">
+            <span className="text-xs text-gray-500 inline-flex items-center">{COL.sanPham} VTR<InfoTip text="Tour công ty Vietravel trong phạm vi filter (mọi nguồn trong DB)" /></span>
+            <p className="text-xl font-bold">{summary.total_vietravel_tours}</p>
+            <p className="text-[10px] text-gray-500 mt-0.5">
+              Tab scrape Vietravel: <strong>{summary.vietravel_tab_tours ?? "—"}</strong>
+              {(summary.total_vietravel_tours ?? 0) > (summary.vietravel_tab_tours ?? 0) && (
+                <span className="text-amber-700"> · chênh = tour cũ trong DB hoặc chưa deploy fix alias</span>
+              )}
+            </p>
+          </div>
           <div className="kpi-card"><span className="text-xs text-gray-500 inline-flex items-center">Nhóm so sánh<InfoTip text={GLOSSARY.segment} /></span><p className="text-xl font-bold">{summary.segments_with_vietravel}</p></div>
           <div className="kpi-card"><span className="text-xs text-green-600">Rẻ hơn TT</span><p className="text-xl font-bold text-green-700">{summary.cheaper_count}</p></div>
           <div className="kpi-card"><span className="text-xs text-red-600">Đắt hơn TT</span><p className="text-xl font-bold text-red-700">{summary.expensive_count}</p></div>

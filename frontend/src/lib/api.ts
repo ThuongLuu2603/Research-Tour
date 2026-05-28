@@ -300,6 +300,7 @@ export const syncSheetData = async () => {
 export interface CompareSummary {
   company: string;
   total_vietravel_tours: number;
+  vietravel_tab_tours: number;
   total_market_tours: number;
   segments_with_vietravel: number;
   cheaper_count: number;
