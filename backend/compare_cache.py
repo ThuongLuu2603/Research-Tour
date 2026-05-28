@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from compare_engine import SegmentStats, build_segment_stats, deduplicate_tours
 from models import Tour
+from tour_sources import apply_market_compare_source_filter
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +48,11 @@ def _db_fingerprint(db: Session) -> tuple[int, str | None]:
     if _fingerprint_cache and now - _fingerprint_cache[0] < 15:
         return _fingerprint_cache[1]
     row = (
-        db.query(func.count(Tour.id), func.max(Tour.updated_at))
-        .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
-        .one()
+        apply_market_compare_source_filter(
+            db.query(func.count(Tour.id), func.max(Tour.updated_at)).filter(
+                Tour.gia != None, Tour.gia > 0  # noqa: E711
+            )
+        ).one()
     )
     fp = (int(row[0] or 0), row[1].isoformat() if row[1] else None)
     _fingerprint_cache = (now, fp)
@@ -66,7 +69,9 @@ def load_tours(
     tuyen_tour: str = "",
     diem_kh: str = "",
 ) -> list[Tour]:
-    q = db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+    q = apply_market_compare_source_filter(
+        db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+    )
     if thi_truong:
         q = q.filter(Tour.thi_truong.in_(thi_truong))
     if tuyen_tour:

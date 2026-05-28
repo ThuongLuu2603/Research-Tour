@@ -179,9 +179,13 @@ def price_stats(
 ):
     from market_analytics import build_price_analysis
 
+    from tour_sources import apply_market_compare_source_filter
+
     q = db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)
     if nguon:
         q = q.filter(Tour.nguon.in_(nguon))
+    else:
+        q = apply_market_compare_source_filter(q)
     rows = build_price_analysis(q.all(), group_by)[:limit]
     return [PriceStatsItem(**r) for r in rows]
 
@@ -192,11 +196,15 @@ def treemap(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    from tour_sources import apply_market_compare_source_filter
+
     q = db.query(
         Tour.thi_truong, Tour.cong_ty, func.count(Tour.id).label("cnt")
     )
     if nguon:
         q = q.filter(Tour.nguon.in_(nguon))
+    else:
+        q = apply_market_compare_source_filter(q)
     rows = (
         q.filter(Tour.thi_truong != "", Tour.cong_ty != "")
         .group_by(Tour.thi_truong, Tour.cong_ty)
@@ -224,9 +232,13 @@ def market_intelligence(
 ):
     from market_analytics import build_market_intelligence
 
+    from tour_sources import apply_market_compare_source_filter
+
     q = db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
     if nguon:
         q = q.filter(Tour.nguon.in_(nguon))
+    else:
+        q = apply_market_compare_source_filter(q)
     return build_market_intelligence(q.all())
 
 

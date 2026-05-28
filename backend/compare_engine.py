@@ -19,7 +19,8 @@ from models import Tour
 from stats_utils import robust_weighted_avg, weighted_avg, weighted_median
 
 COMPANY = settings.company_name
-NGUON_PRIORITY = {"FindTourGo": 3, "Vietravel": 2, "Main": 1, "Manual": 0}
+# Main = catalog thị trường chuẩn; Vietravel tab riêng; FindTourGo không vào compare (xem tour_sources.py)
+NGUON_PRIORITY = {"Main": 3, "Manual": 2, "Vietravel": 2, "FindTourGo": 0}
 
 DEPART_ALIASES: list[tuple[str, str]] = []  # legacy; dùng classification.resolve_departure_point
 

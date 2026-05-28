@@ -142,7 +142,11 @@ def get_home_brief(db: Session) -> dict:
     daily = db.query(DailySnapshot).order_by(DailySnapshot.snapshot_date.desc()).first()
     if not daily:
         from snapshot_service import capture_daily_snapshot
-        tours = db.query(Tour).filter(Tour.gia != None, Tour.gia > 0).all()  # noqa: E711
+        from tour_sources import apply_market_compare_source_filter
+
+        tours = apply_market_compare_source_filter(
+            db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+        ).all()
         daily = capture_daily_snapshot(db, tours)
 
     try:

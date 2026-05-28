@@ -10,6 +10,7 @@ from compare_engine import build_segment_stats, deduplicate_tours
 from coverage_engine import build_coverage_summary
 from data_quality import compute_data_quality
 from models import DailySnapshot, Tour
+from tour_sources import apply_market_compare_source_filter
 
 
 def _fmt(n: float | None) -> str:
@@ -20,7 +21,9 @@ def _fmt(n: float | None) -> str:
 
 def build_report_html(db: Session, report_type: str = "daily") -> str:
     daily = db.query(DailySnapshot).order_by(DailySnapshot.snapshot_date.desc()).first()
-    tours = db.query(Tour).filter(Tour.gia != None, Tour.gia > 0).all()  # noqa: E711
+    tours = apply_market_compare_source_filter(
+        db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+    ).all()
     tours = deduplicate_tours(tours)
     segments = build_segment_stats(tours, dedup=False)
     quality = compute_data_quality(db, tours)

@@ -10,6 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from compare_engine import build_segment_stats, deduplicate_tours, is_vietravel, route_for_segment
+from tour_sources import apply_market_compare_source_filter
 from departure_parser import parse_departure_dates, parse_departure_frequency
 from models import IntelAlert, RouteDailyMetrics, Tour
 
@@ -486,11 +487,11 @@ def get_market_lab_overview(
 
 def get_supply_calendar(db: Session, thi_truong: str, tuyen_tour: str) -> dict:
     rk = make_route_key(thi_truong, tuyen_tour)
-    tours = (
-        db.query(Tour)
-        .filter(Tour.gia != None, Tour.gia > 0, Tour.thi_truong == thi_truong)  # noqa: E711
-        .all()
-    )
+    tours = apply_market_compare_source_filter(
+        db.query(Tour).filter(
+            Tour.gia != None, Tour.gia > 0, Tour.thi_truong == thi_truong  # noqa: E711
+        )
+    ).all()
     tours = deduplicate_tours(tours)
     matched = [
         t for t in tours

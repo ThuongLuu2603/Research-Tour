@@ -65,6 +65,26 @@ async def _daily_snapshot():
         db.close()
 
 
+async def _sync_main_sheet():
+    """Sheet Main — cập nhật sau Google Apps Script scrape (≈ 00:00–06:00)."""
+    from database import SessionLocal
+    from sheets_tour_sync import merge_sheet_source_to_db
+
+    db = SessionLocal()
+    try:
+        result = merge_sheet_source_to_db(db, "Main", mirror_delete=False)
+        logger.info(
+            "Main sheet sync: inserted=%s updated=%s unchanged=%s",
+            result.get("inserted"),
+            result.get("updated"),
+            result.get("unchanged"),
+        )
+    except Exception as e:
+        logger.exception("Main sheet sync failed: %s", e)
+    finally:
+        db.close()
+
+
 async def _daily_sheet_sync():
     from database import SessionLocal
     from sheets_tour_sync import merge_all_sheets_to_db
@@ -72,7 +92,12 @@ async def _daily_sheet_sync():
     db = SessionLocal()
     try:
         result = merge_all_sheets_to_db(db)
-        logger.info("Daily sheet sync: updated=%s inserted=%s", result.get("total_updated"), result.get("total_inserted"))
+        logger.info(
+            "Daily sheet sync: updated=%s inserted=%s deleted=%s",
+            result.get("total_updated"),
+            result.get("total_inserted"),
+            result.get("total_deleted"),
+        )
     except Exception as e:
         logger.exception("Daily sheet sync failed: %s", e)
     finally:
@@ -97,6 +122,12 @@ def start_scheduler():
         replace_existing=True,
     )
     _scheduler.add_job(
+        _sync_main_sheet,
+        CronTrigger(hour=6, minute=30),
+        id="daily_main_sheet_sync",
+        replace_existing=True,
+    )
+    _scheduler.add_job(
         _daily_snapshot,
         CronTrigger(hour=8, minute=30),
         id="daily_intel_snapshot",
@@ -110,11 +141,12 @@ def start_scheduler():
     )
     _scheduler.start()
     logger.info(
-        "Scheduler started: Vietravel at %02d:%02d, FindTourGo at %02d:%02d daily",
+        "Scheduler: Main sheet 06:30, Vietravel %02d:%02d, FindTourGo %02d:%02d, "
+        "snapshot 08:30, all sheets 09:00",
         _schedule_hour,
         _schedule_minute,
         _schedule_hour,
-        _schedule_minute + 20,
+        (_schedule_minute + 20) % 60,
     )
 
 
