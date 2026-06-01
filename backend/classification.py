@@ -158,10 +158,17 @@ def seed_duration_aliases_from_defaults() -> int:
         db.close()
 
 
-def apply_duration_aliases_to_tours(db) -> int:
+def _canonical_tour_query(db):
+    from data_sources import DB_CANONICAL_NGUON
     from models import Tour
+
+    return db.query(Tour).filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
+
+
+def apply_duration_aliases_to_tours(db) -> int:
     count = 0
-    for t in db.query(Tour).all():
+    batch = 0
+    for t in _canonical_tour_query(db).yield_per(500):
         days, matched = resolve_duration_days(t.thoi_gian, t.so_ngay)
         if days is None:
             continue
@@ -171,6 +178,9 @@ def apply_duration_aliases_to_tours(db) -> int:
             changed = True
         if changed:
             count += 1
+        batch += 1
+        if batch % 500 == 0:
+            db.commit()
     db.commit()
     return count
 
@@ -349,13 +359,16 @@ def seed_company_aliases_from_defaults() -> int:
 
 
 def apply_company_aliases_to_tours(db) -> int:
-    from models import Tour
     count = 0
-    for t in db.query(Tour).all():
+    batch = 0
+    for t in _canonical_tour_query(db).yield_per(500):
         resolved = resolve_company_name(t.cong_ty)
-        if resolved and resolved != t.cong_ty:
+        if resolved and resolved != (t.cong_ty or ""):
             t.cong_ty = resolved[:256]
             count += 1
+        batch += 1
+        if batch % 500 == 0:
+            db.commit()
     db.commit()
     return count
 
@@ -457,24 +470,49 @@ def seed_departure_aliases_from_defaults() -> int:
 
 
 def apply_departure_aliases_to_tours(db) -> int:
-    from models import Tour
     count = 0
-    for t in db.query(Tour).all():
+    batch = 0
+    for t in _canonical_tour_query(db).yield_per(500):
         resolved = resolve_departure_point(t.diem_kh)
-        if resolved and resolved != t.diem_kh:
+        if resolved and resolved != (t.diem_kh or ""):
             t.diem_kh = resolved[:256]
             count += 1
+        batch += 1
+        if batch % 500 == 0:
+            db.commit()
     db.commit()
     return count
 
 
+def apply_all_rules_to_tours(db) -> dict:
+    """Áp dụng toàn bộ quy tắc DB lên tour (Main + Vietravel)."""
+    invalidate_classification_cache()
+    result = apply_classification_rules_to_tours(db)
+    result["company_updated"] = apply_company_aliases_to_tours(db)
+    result["departure_updated"] = apply_departure_aliases_to_tours(db)
+    result["duration_updated"] = apply_duration_aliases_to_tours(db)
+    try:
+        from pricing_segments import recompute_all_phan_khuc
+
+        result["phan_khuc"] = recompute_all_phan_khuc(db)
+    except Exception as e:
+        logger.warning("recompute phan_khuc after rules apply failed: %s", e)
+        result["phan_khuc"] = {"error": str(e)}
+    result["message"] = (
+        f"Thị trường {result.get('market_updated', 0)}, tuyến {result.get('route_updated', 0)}, "
+        f"công ty {result.get('company_updated', 0)}, điểm KH {result.get('departure_updated', 0)}, "
+        f"thời gian {result.get('duration_updated', 0)} tour"
+    )
+    return result
+
+
 def apply_classification_rules_to_tours(db) -> dict:
-    """Áp dụng lại rules Thị trường + Tuyến tour cho toàn bộ tour."""
+    """Áp dụng lại rules Thị trường + Tuyến tour cho tour trong DB."""
     from link_utils import normalize_tour_link
-    from models import Tour
 
     market_n = route_n = link_n = 0
-    for t in db.query(Tour).all():
+    batch = 0
+    for t in _canonical_tour_query(db).yield_per(500):
         mk = resolve_thi_truong(t.ten_tour or "", t.lich_trinh or "")
         rt = resolve_tuyen_tour(mk, t.ten_tour or "", t.lich_trinh or "")
         if mk and mk != (t.thi_truong or ""):
@@ -482,7 +520,6 @@ def apply_classification_rules_to_tours(db) -> dict:
             market_n += 1
         current_route = (t.tuyen_tour or "").strip()
         if rt and rt != current_route:
-            # Không thay tuyến cụ thể (vd. Bờ Đông) bằng nhãn thị trường chung (Châu Mỹ)
             if rt == mk and current_route and current_route.casefold() not in {mk.casefold(), "khác", "khac"}:
                 pass
             else:
@@ -492,6 +529,9 @@ def apply_classification_rules_to_tours(db) -> dict:
         if fixed_link != (t.link_url or ""):
             t.link_url = fixed_link
             link_n += 1
+        batch += 1
+        if batch % 500 == 0:
+            db.commit()
     db.commit()
     try:
         from compare_cache import invalidate_compare_cache

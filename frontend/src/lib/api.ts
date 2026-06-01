@@ -528,7 +528,7 @@ export const deleteMarketRule = async (id: number) => {
 };
 
 export const updateMarketRule = async (id: number, body: { market: string; keyword: string }) => {
-  const { data } = await api.put(`/admin/rules/market/${id}`, body);
+  const { data } = await api.patch(`/admin/rules/market/${id}`, body);
   return data;
 };
 
@@ -548,7 +548,7 @@ export const deleteRouteRule = async (id: number) => {
 };
 
 export const updateRouteRule = async (id: number, body: { thi_truong: string; tuyen_tour: string; keywords: string }) => {
-  const { data } = await api.put(`/admin/rules/route/${id}`, body);
+  const { data } = await api.patch(`/admin/rules/route/${id}`, body);
   return data;
 };
 
@@ -911,7 +911,9 @@ export const copyWorkspaceOverrides = async (workspaceId: number, sourceWorkspac
 };
 
 export const applyClassificationToTours = async () => {
-  const { data } = await api.post("/admin/rules/apply-classification-to-tours");
+  const { data } = await api.post("/admin/rules/apply-classification-to-tours", null, {
+    timeout: 300_000,
+  });
   return data;
 };
 

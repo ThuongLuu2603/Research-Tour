@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from api.auth import require_admin
 from classification import (
+    apply_all_rules_to_tours,
     apply_company_aliases_to_tours,
     apply_departure_aliases_to_tours,
     apply_duration_aliases_to_tours,
@@ -87,6 +88,39 @@ def _try_push_route(db: Session) -> str | None:
         return f"Cảnh báo: không ghi được Sheet tuyến tour — {e}"
 
 
+def _auto_apply_tours(db: Session, enabled: bool, scope: str = "all") -> dict | None:
+    """Áp dụng quy tắc lên tour — chạy nền (~8k tour, tránh timeout HTTP)."""
+    if not enabled:
+        return None
+    import logging
+    import threading
+
+    from database import SessionLocal
+
+    log = logging.getLogger(__name__)
+
+    def _work() -> None:
+        session = SessionLocal()
+        try:
+            if scope in ("market", "route"):
+                apply_classification_rules_to_tours(session)
+            elif scope == "company":
+                apply_company_aliases_to_tours(session)
+            elif scope == "departure":
+                apply_departure_aliases_to_tours(session)
+            elif scope == "duration":
+                apply_duration_aliases_to_tours(session)
+            else:
+                apply_all_rules_to_tours(session)
+        except Exception:
+            log.exception("auto_apply_tours failed scope=%s", scope)
+        finally:
+            session.close()
+
+    threading.Thread(target=_work, daemon=True, name=f"apply-rules-{scope}").start()
+    return {"started": True, "message": "Đang áp dụng quy tắc lên tour (chạy nền)…"}
+
+
 # ── Market rules ──────────────────────────────────────────────────────────────
 
 @router.get("/market", response_model=list[MarketRuleOut])
@@ -97,7 +131,8 @@ def list_market_rules(_: User = Depends(require_admin), db: Session = Depends(ge
 @router.post("/market", response_model=MarketRuleOut)
 def create_market_rule(
     body: MarketRuleIn,
-    push_sheet: bool = Query(True),
+    push_sheet: bool = Query(False),
+    auto_apply: bool = Query(True),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -108,6 +143,7 @@ def create_market_rule(
     invalidate_classification_cache()
     if push_sheet:
         _try_push_market(db)
+    _auto_apply_tours(db, auto_apply, scope="market")
     return rule
 
 
@@ -115,7 +151,8 @@ def create_market_rule(
 def update_market_rule(
     rule_id: int,
     body: MarketRuleIn,
-    push_sheet: bool = Query(True),
+    push_sheet: bool = Query(False),
+    auto_apply: bool = Query(True),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -129,13 +166,15 @@ def update_market_rule(
     invalidate_classification_cache()
     if push_sheet:
         _try_push_market(db)
+    _auto_apply_tours(db, auto_apply, scope="market")
     return rule
 
 
 @router.delete("/market/{rule_id}")
 def delete_market_rule(
     rule_id: int,
-    push_sheet: bool = Query(True),
+    push_sheet: bool = Query(False),
+    auto_apply: bool = Query(True),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -146,7 +185,8 @@ def delete_market_rule(
     db.commit()
     invalidate_classification_cache()
     msg = _try_push_market(db) if push_sheet else None
-    return {"deleted": rule_id, "sheet_sync": msg}
+    stats = _auto_apply_tours(db, auto_apply, scope="market")
+    return {"deleted": rule_id, "sheet_sync": msg, "tours_apply": stats}
 
 
 # ── Route rules ───────────────────────────────────────────────────────────────
@@ -166,7 +206,8 @@ def list_route_rules(
 @router.post("/route", response_model=RouteRuleOut)
 def create_route_rule(
     body: RouteRuleIn,
-    push_sheet: bool = Query(True),
+    push_sheet: bool = Query(False),
+    auto_apply: bool = Query(True),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -177,6 +218,7 @@ def create_route_rule(
     invalidate_classification_cache()
     if push_sheet:
         _try_push_route(db)
+    _auto_apply_tours(db, auto_apply, scope="route")
     return rule
 
 
@@ -184,7 +226,8 @@ def create_route_rule(
 def update_route_rule(
     rule_id: int,
     body: RouteRuleIn,
-    push_sheet: bool = Query(True),
+    push_sheet: bool = Query(False),
+    auto_apply: bool = Query(True),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -198,13 +241,15 @@ def update_route_rule(
     invalidate_classification_cache()
     if push_sheet:
         _try_push_route(db)
+    _auto_apply_tours(db, auto_apply, scope="route")
     return rule
 
 
 @router.delete("/route/{rule_id}")
 def delete_route_rule(
     rule_id: int,
-    push_sheet: bool = Query(True),
+    push_sheet: bool = Query(False),
+    auto_apply: bool = Query(True),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -215,7 +260,8 @@ def delete_route_rule(
     db.commit()
     invalidate_classification_cache()
     msg = _try_push_route(db) if push_sheet else None
-    return {"deleted": rule_id, "sheet_sync": msg}
+    stats = _auto_apply_tours(db, auto_apply, scope="route")
+    return {"deleted": rule_id, "sheet_sync": msg, "tours_apply": stats}
 
 
 # ── Sync endpoints ────────────────────────────────────────────────────────────
@@ -238,10 +284,15 @@ def seed_market_defaults(
 
 
 @router.post("/sync-route-from-sheet")
-def sync_route_from_sheet(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+def sync_route_from_sheet(
+    auto_apply: bool = Query(True),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     try:
         count = import_route_rules_to_db(db)
-        return {"imported": count, "message": f"Đã kéo {count} rule tuyến tour từ Sheet → DB"}
+        tours = _auto_apply_tours(db, auto_apply, scope="route")
+        return {"imported": count, "message": f"Đã kéo {count} rule tuyến tour từ Sheet → DB", "tours_apply": tours}
     except Exception as e:
         raise HTTPException(502, f"Lỗi đọc Google Sheet: {e}") from e
 
@@ -256,10 +307,15 @@ def sync_route_to_sheet(_: User = Depends(require_admin), db: Session = Depends(
 
 
 @router.post("/sync-market-from-sheet")
-def sync_market_from_sheet(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+def sync_market_from_sheet(
+    auto_apply: bool = Query(True),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     try:
         count = import_market_rules_from_sheet(db)
-        return {"imported": count, "message": f"Đã kéo {count} rule thị trường từ Sheet → DB"}
+        tours = _auto_apply_tours(db, auto_apply, scope="market")
+        return {"imported": count, "message": f"Đã kéo {count} rule thị trường từ Sheet → DB", "tours_apply": tours}
     except Exception as e:
         raise HTTPException(502, f"Lỗi đọc Google Sheet: {e}") from e
 
@@ -274,10 +330,15 @@ def sync_market_to_sheet(_: User = Depends(require_admin), db: Session = Depends
 
 
 @router.post("/sync-all-from-sheet")
-def sync_all_from_sheet_endpoint(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+def sync_all_from_sheet_endpoint(
+    auto_apply: bool = Query(True),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     try:
         result = sync_all_from_sheet(db)
-        return {**result, "message": "Đã đồng bộ Sheet → DB (thị trường + tuyến tour)"}
+        tours = _auto_apply_tours(db, auto_apply, scope="all")
+        return {**result, "message": "Đã đồng bộ Sheet → DB (thị trường + tuyến tour)", "tours_apply": tours}
     except Exception as e:
         raise HTTPException(502, f"Lỗi đồng bộ từ Sheet: {e}") from e
 
@@ -319,18 +380,28 @@ def list_company_rules(_: User = Depends(require_admin), db: Session = Depends(g
 
 
 @router.post("/company", response_model=CompanyRuleOut)
-def create_company_rule(body: CompanyRuleIn, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+def create_company_rule(
+    body: CompanyRuleIn,
+    auto_apply: bool = Query(True),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     rule = CompanyAliasRule(**body.model_dump())
     db.add(rule)
     db.commit()
     db.refresh(rule)
     invalidate_classification_cache()
+    _auto_apply_tours(db, auto_apply, scope="company")
     return rule
 
 
 @router.put("/company/{rule_id}", response_model=CompanyRuleOut)
 def update_company_rule(
-    rule_id: int, body: CompanyRuleIn, _: User = Depends(require_admin), db: Session = Depends(get_db)
+    rule_id: int,
+    body: CompanyRuleIn,
+    auto_apply: bool = Query(True),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
 ):
     rule = db.query(CompanyAliasRule).filter(CompanyAliasRule.id == rule_id).first()
     if not rule:
@@ -340,18 +411,25 @@ def update_company_rule(
     db.commit()
     db.refresh(rule)
     invalidate_classification_cache()
+    _auto_apply_tours(db, auto_apply, scope="company")
     return rule
 
 
 @router.delete("/company/{rule_id}")
-def delete_company_rule(rule_id: int, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+def delete_company_rule(
+    rule_id: int,
+    auto_apply: bool = Query(True),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     rule = db.query(CompanyAliasRule).filter(CompanyAliasRule.id == rule_id).first()
     if not rule:
         raise HTTPException(404, "Rule không tồn tại")
     db.delete(rule)
     db.commit()
     invalidate_classification_cache()
-    return {"deleted": rule_id}
+    stats = _auto_apply_tours(db, auto_apply, scope="company")
+    return {"deleted": rule_id, "tours_apply": stats}
 
 
 @router.post("/company/seed-defaults")
@@ -394,18 +472,28 @@ def list_departure_rules(_: User = Depends(require_admin), db: Session = Depends
 
 
 @router.post("/departure", response_model=DepartureRuleOut)
-def create_departure_rule(body: DepartureRuleIn, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+def create_departure_rule(
+    body: DepartureRuleIn,
+    auto_apply: bool = Query(True),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     rule = DepartureAliasRule(**body.model_dump())
     db.add(rule)
     db.commit()
     db.refresh(rule)
     invalidate_classification_cache()
+    _auto_apply_tours(db, auto_apply, scope="departure")
     return rule
 
 
 @router.put("/departure/{rule_id}", response_model=DepartureRuleOut)
 def update_departure_rule(
-    rule_id: int, body: DepartureRuleIn, _: User = Depends(require_admin), db: Session = Depends(get_db)
+    rule_id: int,
+    body: DepartureRuleIn,
+    auto_apply: bool = Query(True),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
 ):
     rule = db.query(DepartureAliasRule).filter(DepartureAliasRule.id == rule_id).first()
     if not rule:
@@ -415,18 +503,25 @@ def update_departure_rule(
     db.commit()
     db.refresh(rule)
     invalidate_classification_cache()
+    _auto_apply_tours(db, auto_apply, scope="departure")
     return rule
 
 
 @router.delete("/departure/{rule_id}")
-def delete_departure_rule(rule_id: int, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+def delete_departure_rule(
+    rule_id: int,
+    auto_apply: bool = Query(True),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     rule = db.query(DepartureAliasRule).filter(DepartureAliasRule.id == rule_id).first()
     if not rule:
         raise HTTPException(404, "Rule không tồn tại")
     db.delete(rule)
     db.commit()
     invalidate_classification_cache()
-    return {"deleted": rule_id}
+    stats = _auto_apply_tours(db, auto_apply, scope="departure")
+    return {"deleted": rule_id, "tours_apply": stats}
 
 
 @router.post("/departure/seed-defaults")
@@ -443,20 +538,7 @@ def apply_departure_rules_to_tours(_: User = Depends(require_admin), db: Session
 
 @router.post("/apply-classification-to-tours")
 def apply_classification_endpoint(_: User = Depends(require_admin), db: Session = Depends(get_db)):
-    result = apply_classification_rules_to_tours(db)
-    co = apply_company_aliases_to_tours(db)
-    dep = apply_departure_aliases_to_tours(db)
-    dur = apply_duration_aliases_to_tours(db)
-    return {
-        **result,
-        "company_updated": co,
-        "departure_updated": dep,
-        "duration_updated": dur,
-        "message": (
-            f"Thị trường {result['market_updated']}, tuyến {result['route_updated']}, "
-            f"công ty {co}, điểm KH {dep}, thời gian {dur} tour"
-        ),
-    }
+    return apply_all_rules_to_tours(db)
 
 
 # ── Duration alias rules (Thời gian) ─────────────────────────────────────────
@@ -487,18 +569,28 @@ def list_duration_rules(_: User = Depends(require_admin), db: Session = Depends(
 
 
 @router.post("/duration", response_model=DurationRuleOut)
-def create_duration_rule(body: DurationRuleIn, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+def create_duration_rule(
+    body: DurationRuleIn,
+    auto_apply: bool = Query(True),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     rule = DurationAliasRule(**body.model_dump())
     db.add(rule)
     db.commit()
     db.refresh(rule)
     invalidate_classification_cache()
+    _auto_apply_tours(db, auto_apply, scope="duration")
     return rule
 
 
 @router.put("/duration/{rule_id}", response_model=DurationRuleOut)
 def update_duration_rule(
-    rule_id: int, body: DurationRuleIn, _: User = Depends(require_admin), db: Session = Depends(get_db)
+    rule_id: int,
+    body: DurationRuleIn,
+    auto_apply: bool = Query(True),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
 ):
     rule = db.query(DurationAliasRule).filter(DurationAliasRule.id == rule_id).first()
     if not rule:
@@ -508,18 +600,25 @@ def update_duration_rule(
     db.commit()
     db.refresh(rule)
     invalidate_classification_cache()
+    _auto_apply_tours(db, auto_apply, scope="duration")
     return rule
 
 
 @router.delete("/duration/{rule_id}")
-def delete_duration_rule(rule_id: int, _: User = Depends(require_admin), db: Session = Depends(get_db)):
+def delete_duration_rule(
+    rule_id: int,
+    auto_apply: bool = Query(True),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     rule = db.query(DurationAliasRule).filter(DurationAliasRule.id == rule_id).first()
     if not rule:
         raise HTTPException(404, "Rule không tồn tại")
     db.delete(rule)
     db.commit()
     invalidate_classification_cache()
-    return {"deleted": rule_id}
+    stats = _auto_apply_tours(db, auto_apply, scope="duration")
+    return {"deleted": rule_id, "tours_apply": stats}
 
 
 @router.post("/duration/seed-defaults")

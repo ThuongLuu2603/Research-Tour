@@ -9,18 +9,14 @@ import {
   listDepartureRules, createDepartureRule, deleteDepartureRule, updateDepartureRule,
   listDurationRules, createDurationRule, deleteDurationRule, updateDurationRule,
   seedMarketDefaults, seedCompanyDefaults, seedDepartureDefaults, seedDurationDefaults,
-  applyCompanyRulesToTours, applyDepartureRulesToTours, applyDurationRulesToTours,
   applyClassificationToTours,
-  syncRouteFromSheet, syncRouteToSheet,
-  syncMarketFromSheet, syncMarketToSheet,
-  syncAllFromSheet, syncAllToSheet,
   getRulesUnmatched,
   MarketRule, RouteRule, CompanyRule, DepartureRule, DurationRule, UnmatchedItem,
 } from "@/lib/api";
 import { COL } from "@/lib/glossary";
 import { InfoTip } from "@/components/InfoTip";
 import { cn } from "@/lib/utils";
-import { Plus, Trash2, RefreshCw, Database, Upload, Download, ArrowLeftRight, Search, Pencil, Check, X, GripVertical } from "lucide-react";
+import { Plus, Trash2, RefreshCw, Database, Search, Pencil, Check, X, GripVertical } from "lucide-react";
 
 type Tab = "market" | "route" | "company" | "departure" | "duration";
 type AliasTab = "company" | "departure" | "duration";
@@ -86,6 +82,7 @@ export default function RulesAdminPage() {
   const [tab, setTab] = useState<Tab>("market");
   const [search, setSearch] = useState("");
   const [syncMsg, setSyncMsg] = useState("");
+  const [applying, setApplying] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<Record<string, string>>({});
 
@@ -123,6 +120,8 @@ export default function RulesAdminPage() {
     qc.invalidateQueries({ queryKey: ["duration-rules"] });
     qc.invalidateQueries({ queryKey: ["rules-unmatched"] });
     qc.invalidateQueries({ queryKey: ["compare-class-gaps"] });
+    qc.invalidateQueries({ queryKey: ["workspace-tours"] });
+    qc.invalidateQueries({ queryKey: ["filter-options"] });
   };
 
   const assignCompanyAlias = async (canonical: string, alias: string) => {
@@ -141,8 +140,22 @@ export default function RulesAdminPage() {
     setSyncMsg(`Đã gán "${alias}" → ${days}N`);
   };
 
-  const onSync = (fn: () => Promise<{ message?: string }>, label: string) =>
-    fn().then((r) => { setSyncMsg(r.message || label); invalidate(); }).catch((e) => setSyncMsg(String(e.response?.data?.detail || e.message)));
+  const showErr = (e: unknown) =>
+    setSyncMsg(String((e as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail || (e as Error)?.message || e));
+
+  const onApplyTours = () => {
+    setApplying(true);
+    setSyncMsg("Đang áp dụng quy tắc lên tour (có thể mất vài phút)…");
+    applyClassificationToTours()
+      .then((r) => { setSyncMsg(r.message || "Đã áp dụng quy tắc lên tour"); invalidate(); })
+      .catch(showErr)
+      .finally(() => setApplying(false));
+  };
+
+  const afterRuleSaved = (label: string) => {
+    invalidate();
+    setSyncMsg(`${label} — tour sẽ cập nhật trong vài phút (chạy nền). Bấm «Áp dụng ngay» nếu cần kết quả tức thì.`);
+  };
 
   const startEdit = (id: number, draft: Record<string, string>) => {
     setEditingId(id);
@@ -182,23 +195,23 @@ export default function RulesAdminPage() {
 
   const addMarket = useMutation({
     mutationFn: () => createMarketRule({ market: mMarket, keyword: mKeyword }),
-    onSuccess: () => { invalidate(); setMKeyword(""); setSyncMsg("Đã lưu DB và tự động ghi lên Sheet (nếu có quyền)"); },
+    onSuccess: () => { setMKeyword(""); afterRuleSaved("Đã lưu quy tắc thị trường"); },
   });
   const addRoute = useMutation({
     mutationFn: () => createRouteRule({ thi_truong: rMarket, tuyen_tour: rRoute, keywords: rKeywords }),
-    onSuccess: () => { invalidate(); setRKeywords(""); setSyncMsg("Đã lưu DB và tự động ghi lên Sheet 'Điểm tuyến Tour'"); },
+    onSuccess: () => { setRKeywords(""); afterRuleSaved("Đã lưu quy tắc tuyến"); },
   });
   const addCompany = useMutation({
     mutationFn: () => createCompanyRule({ canonical_name: cCanonical, alias: cAlias }),
-    onSuccess: () => { invalidate(); setCAlias(""); setSyncMsg("Đã thêm alias công ty"); },
+    onSuccess: () => { setCAlias(""); afterRuleSaved("Đã thêm alias công ty"); },
   });
   const addDeparture = useMutation({
     mutationFn: () => createDepartureRule({ canonical_name: dCanonical, alias: dAlias }),
-    onSuccess: () => { invalidate(); setDAlias(""); setSyncMsg("Đã thêm alias điểm khởi hành"); },
+    onSuccess: () => { setDAlias(""); afterRuleSaved("Đã thêm alias điểm khởi hành"); },
   });
   const addDuration = useMutation({
     mutationFn: () => createDurationRule({ canonical_days: parseFloat(durDays), alias: durAlias }),
-    onSuccess: () => { invalidate(); setDurAlias(""); setSyncMsg("Đã thêm alias thời gian"); },
+    onSuccess: () => { setDurAlias(""); afterRuleSaved("Đã thêm alias thời gian"); },
   });
 
   if (!isAdmin) return <Navigate to="/" replace />;
@@ -222,23 +235,17 @@ export default function RulesAdminPage() {
     <div className="p-6 max-w-5xl space-y-6">
       <div>
         <h1 className="text-xl font-bold">Quy tắc phân loại & Key matching</h1>
-        <p className="text-sm text-gray-500">Bảng alias trong DB — tìm kiếm, sửa inline, thêm/xóa. Thời gian dùng cùng cơ chế với Công ty & Điểm KH.</p>
+        <p className="text-sm text-gray-500">
+          Quy tắc lưu trong database (Supabase). Sau khi sửa, tour Main/Vietravel được cập nhật tự động (nền).
+        </p>
       </div>
 
-      <div className="card p-4 space-y-3 bg-slate-50">
-        <p className="text-sm font-medium flex items-center gap-2"><ArrowLeftRight size={16} /> Đồng bộ Google Sheet</p>
-        <div className="flex flex-wrap gap-2">
-          <button onClick={() => onSync(syncAllFromSheet, "OK")} className="btn-secondary text-xs flex items-center gap-1">
-            <Download size={13} /> Kéo tất cả Sheet → App
-          </button>
-          <button onClick={() => onSync(syncAllToSheet, "OK")} className="btn-secondary text-xs flex items-center gap-1">
-            <Upload size={13} /> Đẩy tất cả App → Sheet
-          </button>
-          <button onClick={() => onSync(applyClassificationToTours, "Đã áp dụng phân loại lên toàn bộ tour")} className="btn-primary text-xs flex items-center gap-1">
-            <RefreshCw size={13} /> Áp dụng phân loại → tour
-          </button>
-        </div>
-        {syncMsg && <p className="text-xs text-green-700 bg-green-50 px-3 py-2 rounded">{syncMsg}</p>}
+      <div className="card p-4 space-y-2 bg-slate-50 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-gray-600">Áp dụng toàn bộ quy tắc lên tour trong database (đồng bộ Research Grid & So sánh VTR).</p>
+        <button type="button" onClick={onApplyTours} disabled={applying} className="btn-primary text-xs flex items-center gap-1 shrink-0 disabled:opacity-60">
+          <RefreshCw size={13} className={applying ? "animate-spin" : ""} /> {applying ? "Đang áp dụng…" : "Áp dụng ngay lên tour"}
+        </button>
+        {syncMsg && <p className="text-xs text-green-700 bg-green-50 px-3 py-2 rounded w-full">{syncMsg}</p>}
       </div>
 
       <div className="flex gap-2 flex-wrap">
@@ -285,8 +292,13 @@ export default function RulesAdminPage() {
             <div className="flex-1 min-w-[200px]"><label className="text-xs text-gray-500">Keyword</label>
               <input className="input text-sm" value={mKeyword} onChange={(e) => setMKeyword(e.target.value)} placeholder="bangkok, pattaya..." /></div>
             <button onClick={() => addMarket.mutate()} disabled={!mMarket || !mKeyword} className="btn-primary text-sm"><Plus size={14} /> Thêm</button>
-            <button onClick={() => onSync(seedMarketDefaults, "Import xong")} className="btn-secondary text-sm"><Database size={14} /> Import mặc định</button>
-            <button onClick={() => onSync(syncMarketFromSheet, "OK")} className="btn-secondary text-sm"><Download size={14} /> Sheet → App</button>
+            <button
+              type="button"
+              onClick={() => seedMarketDefaults().then(() => afterRuleSaved("Đã import quy tắc mặc định")).catch(showErr)}
+              className="btn-secondary text-sm"
+            >
+              <Database size={14} /> Import mặc định
+            </button>
           </div>
           <div className="card overflow-auto max-h-[500px]">
             <table className="w-full text-sm">
@@ -311,8 +323,8 @@ export default function RulesAdminPage() {
                       ) : r.keyword}
                     </td>
                     {actionBtns(
-                      () => deleteMarketRule(r.id).then(() => { invalidate(); setSyncMsg("Đã xóa"); }),
-                      editingId === r.id ? () => updateMarketRule(r.id, { market: editDraft.market, keyword: editDraft.keyword }).then(() => { invalidate(); cancelEdit(); setSyncMsg("Đã cập nhật"); }) : undefined,
+                      () => deleteMarketRule(r.id).then(() => afterRuleSaved("Đã xóa quy tắc")),
+                      editingId === r.id ? () => updateMarketRule(r.id, { market: editDraft.market, keyword: editDraft.keyword }).then(() => { cancelEdit(); afterRuleSaved("Đã cập nhật"); }).catch(showErr) : undefined,
                     )}
                   </tr>
                 ))}
@@ -348,8 +360,8 @@ export default function RulesAdminPage() {
                     <td className="px-3 py-2">{editingId === r.id ? <input className="input text-sm py-1" value={editDraft.tuyen_tour ?? ""} onChange={(e) => setEditDraft({ ...editDraft, tuyen_tour: e.target.value })} /> : r.tuyen_tour}</td>
                     <td className="px-3 py-2 font-mono text-xs">{editingId === r.id ? <input className="input text-sm py-1 font-mono" value={editDraft.keywords ?? ""} onChange={(e) => setEditDraft({ ...editDraft, keywords: e.target.value })} /> : r.keywords}</td>
                     {actionBtns(
-                      () => deleteRouteRule(r.id).then(() => { invalidate(); setSyncMsg("Đã xóa"); }),
-                      editingId === r.id ? () => updateRouteRule(r.id, { thi_truong: editDraft.thi_truong, tuyen_tour: editDraft.tuyen_tour, keywords: editDraft.keywords }).then(() => { invalidate(); cancelEdit(); setSyncMsg("Đã cập nhật"); }) : undefined,
+                      () => deleteRouteRule(r.id).then(() => afterRuleSaved("Đã xóa quy tắc")),
+                      editingId === r.id ? () => updateRouteRule(r.id, { thi_truong: editDraft.thi_truong, tuyen_tour: editDraft.tuyen_tour, keywords: editDraft.keywords }).then(() => { cancelEdit(); afterRuleSaved("Đã cập nhật"); }).catch(showErr) : undefined,
                     )}
                   </tr>
                 ))}
@@ -368,8 +380,7 @@ export default function RulesAdminPage() {
               <input className="input text-sm" value={cAlias} onChange={(e) => setCAlias(e.target.value)} placeholder="vietravel, vtr..."
                 onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); setCAlias(e.dataTransfer.getData("text/plain")); }} /></div>
             <button onClick={() => addCompany.mutate()} disabled={!cCanonical || !cAlias} className="btn-primary text-sm"><Plus size={14} /> Thêm</button>
-            <button onClick={() => onSync(seedCompanyDefaults, "Import xong")} className="btn-secondary text-sm"><Database size={14} /> Alias mặc định</button>
-            <button onClick={() => onSync(applyCompanyRulesToTours, "OK")} className="btn-secondary text-sm"><RefreshCw size={14} /> Áp dụng → tour</button>
+            <button onClick={() => seedCompanyDefaults().then(() => afterRuleSaved("Đã import alias mặc định"))} className="btn-secondary text-sm"><Database size={14} /> Alias mặc định</button>
           </div>
           <AliasTable
             rows={filteredCompany}
@@ -383,8 +394,8 @@ export default function RulesAdminPage() {
             onStartEdit={(r) => startEdit(r.id, { canonical_name: r.canonical_name, alias: r.alias })}
             onDraftChange={setEditDraft}
             onCancel={cancelEdit}
-            onSave={(r) => updateCompanyRule(r.id, { canonical_name: editDraft.canonical_name, alias: editDraft.alias }).then(() => { invalidate(); cancelEdit(); setSyncMsg("Đã cập nhật alias công ty"); })}
-            onDelete={(r) => deleteCompanyRule(r.id).then(() => { invalidate(); setSyncMsg("Đã xóa alias"); })}
+            onSave={(r) => updateCompanyRule(r.id, { canonical_name: editDraft.canonical_name, alias: editDraft.alias }).then(() => { cancelEdit(); afterRuleSaved("Đã cập nhật alias công ty"); })}
+            onDelete={(r) => deleteCompanyRule(r.id).then(() => afterRuleSaved("Đã xóa alias"))}
             canonicalLabel="Tên chính thức"
           />
         </div>
@@ -399,8 +410,7 @@ export default function RulesAdminPage() {
               <input className="input text-sm" value={dAlias} onChange={(e) => setDAlias(e.target.value)} placeholder="sài gòn, hcm..."
                 onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); setDAlias(e.dataTransfer.getData("text/plain")); }} /></div>
             <button onClick={() => addDeparture.mutate()} disabled={!dCanonical || !dAlias} className="btn-primary text-sm"><Plus size={14} /> Thêm</button>
-            <button onClick={() => onSync(seedDepartureDefaults, "Import xong")} className="btn-secondary text-sm"><Database size={14} /> Alias mặc định</button>
-            <button onClick={() => onSync(applyDepartureRulesToTours, "OK")} className="btn-secondary text-sm"><RefreshCw size={14} /> Áp dụng → tour</button>
+            <button onClick={() => seedDepartureDefaults().then(() => afterRuleSaved("Đã import alias mặc định"))} className="btn-secondary text-sm"><Database size={14} /> Alias mặc định</button>
           </div>
           <p className="text-xs text-gray-500 inline-flex items-center gap-1">
             Chuẩn hóa {COL.diemKhoiHanh}.
@@ -418,8 +428,8 @@ export default function RulesAdminPage() {
             onStartEdit={(r) => startEdit(r.id, { canonical_name: r.canonical_name, alias: r.alias })}
             onDraftChange={setEditDraft}
             onCancel={cancelEdit}
-            onSave={(r) => updateDepartureRule(r.id, { canonical_name: editDraft.canonical_name, alias: editDraft.alias }).then(() => { invalidate(); cancelEdit(); setSyncMsg("Đã cập nhật alias điểm KH"); })}
-            onDelete={(r) => deleteDepartureRule(r.id).then(() => { invalidate(); setSyncMsg("Đã xóa alias"); })}
+            onSave={(r) => updateDepartureRule(r.id, { canonical_name: editDraft.canonical_name, alias: editDraft.alias }).then(() => { cancelEdit(); afterRuleSaved("Đã cập nhật alias điểm KH"); })}
+            onDelete={(r) => deleteDepartureRule(r.id).then(() => afterRuleSaved("Đã xóa alias"))}
             canonicalLabel="Tên chính thức"
           />
         </div>
@@ -434,8 +444,7 @@ export default function RulesAdminPage() {
               <input className="input text-sm" value={durAlias} onChange={(e) => setDurAlias(e.target.value)} placeholder="5n4d, 5 ngày 4 đêm..."
                 onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); setDurAlias(e.dataTransfer.getData("text/plain")); }} /></div>
             <button onClick={() => addDuration.mutate()} disabled={!durDays || !durAlias || Number.isNaN(parseFloat(durDays))} className="btn-primary text-sm"><Plus size={14} /> Thêm</button>
-            <button onClick={() => onSync(seedDurationDefaults, "Import xong")} className="btn-secondary text-sm"><Database size={14} /> Alias mặc định</button>
-            <button onClick={() => onSync(applyDurationRulesToTours, "OK")} className="btn-secondary text-sm"><RefreshCw size={14} /> Áp dụng → tour</button>
+            <button onClick={() => seedDurationDefaults().then(() => afterRuleSaved("Đã import alias mặc định"))} className="btn-secondary text-sm"><Database size={14} /> Alias mặc định</button>
           </div>
           <p className="text-xs text-gray-500 inline-flex items-center gap-1">
             Key matching {COL.thoiGian} — lưu trong bảng <code className="text-[10px] bg-gray-100 px-1 rounded">duration_alias_rules</code>.
