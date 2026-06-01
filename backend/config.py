@@ -33,8 +33,14 @@ class Settings(BaseSettings):
     @field_validator("database_url", mode="before")
     @classmethod
     def fix_postgres_url(cls, v: str) -> str:
-        if isinstance(v, str) and v.startswith("postgres://"):
-            return v.replace("postgres://", "postgresql://", 1)
+        if not isinstance(v, str):
+            return v
+        if v.startswith("postgres://"):
+            v = v.replace("postgres://", "postgresql://", 1)
+        # Supabase: bắt buộc SSL nếu chưa có trong URL
+        if "supabase.co" in v and "sslmode=" not in v:
+            sep = "&" if "?" in v else "?"
+            v = f"{v}{sep}sslmode=require"
         return v
 
 

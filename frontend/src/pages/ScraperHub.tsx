@@ -237,12 +237,12 @@ export default function ScraperHub() {
         <ScraperCard
           scraper="vietravel"
           label="Vietravel — travel.com.vn"
-          desc="Quét tour trong nước và nước ngoài từ travel.com.vn"
+          desc="DB trước → xuất tab Sheet Vietravel"
         />
         <ScraperCard
           scraper="findtourgo"
           label="FindTourGo — OTA Aggregator"
-          desc="Quét toàn bộ quốc gia (30+ nước, ~600 tour) qua API"
+          desc="Chỉ ghi Google Sheet (không lưu database)"
         />
       </div>
 
@@ -265,10 +265,10 @@ export default function ScraperHub() {
           <tbody className="divide-y divide-gray-100">
             {(schedule?.jobs ?? [
               { label: "Sync Main → DB", time_vn: "06:30" },
-              { label: "Scrape Vietravel", time_vn: `${String(schedHour).padStart(2, "0")}:${String(schedMin).padStart(2, "0")}` },
-              { label: "Scrape FindTourGo", time_vn: (() => { const t = addMinutes(schedHour, schedMin, 20); return `${String(t.h).padStart(2, "0")}:${String(t.m).padStart(2, "0")}`; })() },
+              { label: "Scrape Vietravel → DB → Sheet", time_vn: `${String(schedHour).padStart(2, "0")}:${String(schedMin).padStart(2, "0")}` },
+              { label: "Scrape FindTourGo → Sheet", time_vn: (() => { const t = addMinutes(schedHour, schedMin, 20); return `${String(t.h).padStart(2, "0")}:${String(t.m).padStart(2, "0")}`; })() },
               { label: "Snapshot", time_vn: "08:30" },
-              { label: "Sync tất cả tab", time_vn: "09:00" },
+              { label: "Sync Main + Vietravel → DB", time_vn: "09:00" },
             ]).map((j) => (
               <tr key={j.label}>
                 <td className="py-2 text-gray-800">{j.label}</td>

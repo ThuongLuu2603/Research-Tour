@@ -66,7 +66,7 @@ class Tour(Base):
     phan_khuc: Mapped[str] = mapped_column(String(64), default="")
 
     # Source tracking
-    nguon: Mapped[str] = mapped_column(String(64), default="", index=True)  # Vietravel|FindTourGo|Manual
+    nguon: Mapped[str] = mapped_column(String(64), default="", index=True)  # Main|Vietravel|Manual (FindTourGo chỉ Sheet)
     scrape_job_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("scrape_jobs.id"), nullable=True)
     scrape_job: Mapped[ScrapeJob | None] = relationship("ScrapeJob", back_populates="tours")
 

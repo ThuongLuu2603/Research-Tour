@@ -84,14 +84,19 @@ def sync_sheet_source(
     _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Đồng bộ một tab Sheet (Vietravel | FindTourGo | Main) — tránh timeout khi gọi tuần tự."""
-    from sheets_tour_sync import NGUON_GID, merge_sheet_source_to_db
+    """Đồng bộ tab Sheet → DB (Main | Vietravel). FindTourGo chỉ trên Sheet."""
+    from data_sources import ALL_SHEET_TABS, is_db_canonical_source
+    from sheets_tour_sync import merge_sheet_source_to_db
 
-    if nguon not in NGUON_GID:
+    if nguon not in ALL_SHEET_TABS:
         raise HTTPException(status_code=400, detail=f"nguon không hợp lệ: {nguon}")
-    mirror = nguon in ("Vietravel", "FindTourGo")
+    if not is_db_canonical_source(nguon):
+        raise HTTPException(
+            status_code=400,
+            detail="FindTourGo chỉ lưu trên Google Sheet, không đồng bộ vào database",
+        )
     try:
-        return merge_sheet_source_to_db(db, nguon, mirror_delete=mirror)
+        return merge_sheet_source_to_db(db, nguon)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Lỗi đồng bộ tab {nguon}: {e}") from e
 
@@ -112,7 +117,7 @@ def sync_main_sheet(_: User = Depends(get_current_user), db: Session = Depends(g
     """Chỉ đồng bộ tab Main (thị trường) — sau khi Google Apps Script cập nhật Sheet."""
     from sheets_tour_sync import merge_sheet_source_to_db
     try:
-        return merge_sheet_source_to_db(db, "Main", mirror_delete=False)
+        return merge_sheet_source_to_db(db, "Main", mirror_delete=True)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Lỗi đồng bộ Main: {e}") from e
 

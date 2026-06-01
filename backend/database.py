@@ -5,11 +5,23 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from config import settings
 
-connect_args = {}
-if settings.database_url.startswith("sqlite"):
-    connect_args = {"check_same_thread": False}
+_url = settings.database_url
+_is_sqlite = _url.startswith("sqlite")
+_is_postgres = _url.startswith("postgresql")
 
-engine = create_engine(settings.database_url, connect_args=connect_args)
+connect_args: dict = {}
+engine_kwargs: dict = {}
+
+if _is_sqlite:
+    connect_args = {"check_same_thread": False}
+elif _is_postgres:
+    engine_kwargs = {
+        "pool_pre_ping": True,
+        "pool_size": 5,
+        "max_overflow": 10,
+    }
+
+engine = create_engine(_url, connect_args=connect_args, **engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -39,13 +51,26 @@ def init_db():
 def run_deferred_db_maintenance() -> None:
     """Heavy one-off / batch work — run in background after app is up."""
     from migrations import _backfill_external_ids, _ensure_default_workspaces
+
     try:
         _backfill_external_ids()
         _ensure_default_workspaces()
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning("Deferred DB maintenance failed: %s", e)
-    # Alias công ty / điểm KH / thời gian: chỉ cấu hình qua Quy tắc vận hành (không auto-seed hardcode).
+    try:
+        from data_sources import SHEET_ONLY_NGUON
+        from sheets_tour_sync import purge_nguon_from_db
+
+        db = SessionLocal()
+        try:
+            for nguon in SHEET_ONLY_NGUON:
+                purge_nguon_from_db(db, nguon)
+        finally:
+            db.close()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Purge sheet-only tours failed: %s", e)
     try:
         from classification import seed_market_rules_from_hardcode
         seed_market_rules_from_hardcode()

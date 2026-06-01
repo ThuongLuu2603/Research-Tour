@@ -286,6 +286,39 @@ def _sheet_headers() -> list[str]:
     return headers
 
 
+def db_tours_to_dataframe(tours: list) -> pd.DataFrame:
+    """Chuyển tour DB (nguon=Vietravel) sang DataFrame để ghi Sheet."""
+    records: list[dict[str, Any]] = []
+    for t in tours:
+        link = str(getattr(t, "link_url", "") or "")
+        cap = ""
+        if getattr(t, "updated_at", None):
+            cap = t.updated_at.strftime("%d/%m/%Y %H:%M")
+        gia_disp = ""
+        if getattr(t, "gia_raw", None):
+            gia_disp = str(t.gia_raw)
+        elif getattr(t, "gia", None):
+            gia_disp = _fmt_price(int(t.gia))
+        records.append(
+            {
+                "cong_ty": getattr(t, "cong_ty", "") or COMPANY,
+                "thi_truong": getattr(t, "thi_truong", "") or "",
+                "tuyen_tour": getattr(t, "tuyen_tour", "") or "",
+                "ten_tour": getattr(t, "ten_tour", "") or "",
+                "lich_trinh": getattr(t, "lich_trinh", "") or "",
+                "diem_kh": getattr(t, "diem_kh", "") or "",
+                "thoi_gian": getattr(t, "thoi_gian", "") or "",
+                "gia": gia_disp,
+                "lich_kh": getattr(t, "lich_kh", "") or "",
+                "link_tour": _hyperlink_formula(link) if link else "",
+                "link_url": link,
+                "page_code": getattr(t, "ma_tour", "") or "",
+                "cap_nhat": cap,
+            }
+        )
+    return pd.DataFrame(records)
+
+
 def tours_to_sheet_rows(df: pd.DataFrame) -> list[list[str]]:
     """Map scraped data to columns A–Z (link thô ở cột Z)."""
     rows = [_sheet_headers()]

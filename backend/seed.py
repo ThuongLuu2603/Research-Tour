@@ -48,14 +48,12 @@ HEADER_MAP = {
 
 SHEET_SOURCES: list[tuple[str, str, str]] = [
     ("Vietravel", settings.gid_vietravel, "vietravel.csv.gz"),
-    ("FindTourGo", settings.gid_findtourgo, "findtourgo.csv.gz"),
 ]
 
 MAIN_CHUNK_FILES = sorted(DATA_DIR.glob("main_*.csv.gz"))
 
 EXPECTED_MIN: dict[str, int] = {
     "Vietravel": 100,
-    "FindTourGo": 500,
     "Main": 7500,
 }
 

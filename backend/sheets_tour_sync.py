@@ -115,6 +115,35 @@ def _parse_price(v: str) -> float | None:
     return val if val > 0 else None
 
 
+def _scrape_row_to_fields(row) -> dict | None:
+    """DataFrame/Series row từ scraper Vietravel → fields chuẩn."""
+    from classification import resolve_company_name, resolve_departure_point
+    from link_utils import normalize_tour_link
+
+    ten = str(row.get("ten_tour") or "").strip()
+    if not ten or ten.lower() in ("tên tour", "nan"):
+        return None
+    gia_col = "gia" if "gia" in row.index else "gia_tu" if "gia_tu" in row.index else None
+    gia_raw = str(row.get(gia_col) or "") if gia_col else ""
+    link = normalize_tour_link(str(row.get("link_url") or "").strip())
+    return {
+        "cong_ty": resolve_company_name(str(row.get("cong_ty") or "").strip()),
+        "thi_truong": str(row.get("thi_truong") or "").strip(),
+        "tuyen_tour": str(row.get("tuyen_tour") or "").strip(),
+        "ten_tour": ten,
+        "lich_trinh": str(row.get("lich_trinh") or "").strip(),
+        "diem_kh": resolve_departure_point(str(row.get("diem_kh") or "").strip()),
+        "thoi_gian": str(row.get("thoi_gian") or "").strip(),
+        "gia_raw": gia_raw,
+        "gia": _parse_price(gia_raw),
+        "lich_kh": str(row.get("lich_kh") or "").strip(),
+        "link_url": link,
+        "ma_tour": str(row.get("ma_tour") or row.get("page_code") or "").strip(),
+        "khach_san": _clean_field(str(row.get("khach_san") or "")),
+        "hang_khong": _clean_field(str(row.get("hang_khong") or "")),
+    }
+
+
 def _row_to_fields(row: list[str]) -> dict | None:
     if len(row) < 4:
         return None
@@ -278,6 +307,123 @@ def _prune_stale_tours_for_source(db, nguon: str, synced_tour_ids: set[int]) -> 
     return deleted
 
 
+def purge_nguon_from_db(db, nguon: str) -> int:
+    """Xóa toàn bộ tour một nguồn khỏi DB (vd. FindTourGo chỉ lưu Sheet)."""
+    from models import Tour
+
+    ids = [tid for (tid,) in db.query(Tour.id).filter(Tour.nguon == nguon).all()]
+    if not ids:
+        return 0
+    deleted = _delete_tour_ids(db, ids)
+    db.commit()
+    logger.info("Purged %s tours with nguon=%s from DB", deleted, nguon)
+    return deleted
+
+
+def merge_dataframe_to_db(
+    db,
+    df,
+    nguon: str,
+    *,
+    mirror_delete: bool | None = None,
+    recompute_segments: bool = True,
+) -> dict:
+    """Scraper → DB trước (Vietravel). Tour.id giữ nguyên khi match external_id."""
+    from data_sources import is_db_canonical_source, should_mirror_prune
+
+    if not is_db_canonical_source(nguon):
+        raise ValueError(f"Nguồn {nguon} không lưu DB — chỉ Sheet")
+    if mirror_delete is None:
+        mirror_delete = should_mirror_prune(nguon)
+
+    updated = inserted = skipped = unchanged = 0
+    synced_tour_ids: set[int] = set()
+    now = datetime.utcnow()
+    for _, row in df.iterrows():
+        fields = _scrape_row_to_fields(row)
+        if not fields:
+            skipped += 1
+            continue
+        if not fields.get("gia"):
+            skipped += 1
+            continue
+        external_id = compute_external_id(
+            nguon,
+            ma_tour=fields.get("ma_tour", ""),
+            link_url=fields.get("link_url", ""),
+            ten_tour=fields.get("ten_tour", ""),
+        )
+        tour = _find_db_tour(db, nguon, fields, external_id)
+        is_new = tour is None
+        if is_new:
+            tour = _create_tour_from_fields(fields, nguon, now)
+            db.add(tour)
+            db.flush()
+            synced_tour_ids.add(tour.id)
+            inserted += 1
+        else:
+            synced_tour_ids.add(tour.id)
+            new_hash = compute_content_hash(fields)
+            if tour.content_hash == new_hash and tour.sheet_source == nguon:
+                unchanged += 1
+                continue
+            updated += 1
+
+        _apply_fields_to_tour(
+            tour,
+            fields,
+            nguon,
+            now,
+            preserve_nguon=(not is_new and tour.nguon not in ("", nguon)),
+            external_id=external_id,
+        )
+
+    db.commit()
+
+    deleted = 0
+    if mirror_delete:
+        deleted = _prune_stale_tours_for_source(db, nguon, synced_tour_ids)
+        if deleted:
+            db.commit()
+
+    phan_khuc_stats: dict | None = None
+    if recompute_segments and (inserted or updated or deleted):
+        try:
+            from pricing_segments import recompute_all_phan_khuc
+
+            phan_khuc_stats = recompute_all_phan_khuc(db)
+        except Exception as e:
+            logger.warning("recompute phan_khuc after %s scrape failed: %s", nguon, e)
+            phan_khuc_stats = {"error": str(e)}
+
+    if inserted or updated or deleted:
+        _post_sync_cache(db)
+
+    out = {
+        "nguon": nguon,
+        "updated": updated,
+        "inserted": inserted,
+        "skipped": skipped,
+        "unchanged": unchanged,
+        "deleted": deleted,
+        "synced": len(synced_tour_ids),
+    }
+    if phan_khuc_stats is not None:
+        out["phan_khuc"] = phan_khuc_stats
+    return out
+
+
+def export_vietravel_tab_from_db(db) -> dict:
+    """DB (nguon=Vietravel) → ghi đè tab Sheet Vietravel."""
+    from models import Tour
+    from scrapers.vietravel_scraper import db_tours_to_dataframe, write_to_google_sheet
+
+    tours = db.query(Tour).filter(Tour.nguon == "Vietravel").order_by(Tour.id).all()
+    df = db_tours_to_dataframe(tours)
+    write_to_google_sheet(df)
+    return {"ok": True, "rows": len(tours)}
+
+
 def merge_sheet_source_to_db(
     db,
     nguon: str,
@@ -285,8 +431,14 @@ def merge_sheet_source_to_db(
     mirror_delete: bool | None = None,
     recompute_segments: bool = True,
 ) -> dict:
+    from data_sources import is_db_canonical_source, should_mirror_prune
+
+    if not is_db_canonical_source(nguon):
+        raise ValueError(
+            f"Tab {nguon} không đồng bộ vào DB — FindTourGo chỉ lưu trên Google Sheet"
+        )
     if mirror_delete is None:
-        mirror_delete = nguon in ("Vietravel", "FindTourGo")
+        mirror_delete = should_mirror_prune(nguon)
 
     ws = _worksheet(nguon)
     rows = ws.get_all_values()
@@ -399,12 +551,14 @@ def _post_sync_cache(db) -> None:
 
 
 def merge_all_sheets_to_db(db) -> dict:
+    """Sheet → DB: chỉ Main + Vietravel (FindTourGo bỏ qua)."""
+    from data_sources import DB_CANONICAL_NGUON
+
     results = []
-    for nguon in NGUON_GID:
+    for nguon in sorted(DB_CANONICAL_NGUON):
         try:
-            mirror = nguon in ("Vietravel", "FindTourGo")
             results.append(
-                merge_sheet_source_to_db(db, nguon, mirror_delete=mirror, recompute_segments=False)
+                merge_sheet_source_to_db(db, nguon, recompute_segments=False)
             )
         except Exception as e:
             logger.exception("Sheet sync failed for %s", nguon)

@@ -1,9 +1,3 @@
-databases:
-  - name: ota-research-db
-    databaseName: ota_research
-    user: ota_research
-    plan: free
-
 services:
   - type: web
     name: ota-research-platform
@@ -20,9 +14,7 @@ services:
     healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: ota-research-db
-          property: connectionString
+        sync: false
       - key: SECRET_KEY
         generateValue: true
       - key: PYTHON_VERSION

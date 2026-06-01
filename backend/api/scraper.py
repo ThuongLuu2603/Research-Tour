@@ -250,35 +250,29 @@ def _run_job(job_id: int, scraper_name: str):
 def _run_vietravel(db: Session, job_id: int, job: ScrapeJob):
     sys.path.insert(0, "scrapers")
     from scrapers.vietravel_scraper import scrape_all_vietravel_tours
+    from sheets_tour_sync import export_vietravel_tab_from_db, merge_dataframe_to_db
 
     _emit(job_id, 15, "Đang tải trang travel.com.vn...")
     df = scrape_all_vietravel_tours()
-    _emit(job_id, 60, f"Đã quét {len(df)} tour...")
+    _emit(job_id, 55, f"Đã quét {len(df)} tour...")
 
     job.tours_total = len(df)
     db.commit()
 
-    sheet_ok = False
-    _emit(job_id, 75, "Đang ghi Google Sheet...")
+    _emit(job_id, 65, "Đang lưu database (Supabase)...")
+    result = merge_dataframe_to_db(db, df, "Vietravel", mirror_delete=True)
+
+    _emit(job_id, 82, "Đang xuất database → Google Sheet...")
     try:
-        from scrapers.vietravel_scraper import write_to_google_sheet
-        write_to_google_sheet(df)
-        sheet_ok = True
-        _emit(job_id, 88, "Đã ghi Sheet — đồng bộ vào DB...")
+        export_vietravel_tab_from_db(db)
     except Exception as e:
-        _emit(job_id, 88, f"Sheet lỗi, fallback DB trực tiếp: {e}")
+        _emit(job_id, 88, f"DB đã lưu; ghi Sheet lỗi: {e}")
 
-    if sheet_ok:
-        from sheets_tour_sync import merge_sheet_source_to_db
-        result = merge_sheet_source_to_db(db, "Vietravel", mirror_delete=True)
-        return (
-            result.get("inserted", 0),
-            result.get("updated", 0),
-            result.get("deleted", 0),
-        )
-
-    added, updated = _upsert_tours(db, df, "Vietravel", job.id, job_id)
-    return added, updated, 0
+    return (
+        result.get("inserted", 0),
+        result.get("updated", 0),
+        result.get("deleted", 0),
+    )
 
 
 def _run_findtourgo(db: Session, job_id: int, job: ScrapeJob):
@@ -292,26 +286,10 @@ def _run_findtourgo(db: Session, job_id: int, job: ScrapeJob):
     job.tours_total = len(df)
     db.commit()
 
-    sheet_ok = False
-    _emit(job_id, 78, "Đang ghi Google Sheet...")
-    try:
-        write_to_google_sheet(df)
-        sheet_ok = True
-        _emit(job_id, 90, "Đã ghi Sheet — đồng bộ vào DB...")
-    except Exception as e:
-        _emit(job_id, 90, f"Sheet lỗi, fallback DB trực tiếp: {e}")
-
-    if sheet_ok:
-        from sheets_tour_sync import merge_sheet_source_to_db
-        result = merge_sheet_source_to_db(db, "FindTourGo", mirror_delete=True)
-        return (
-            result.get("inserted", 0),
-            result.get("updated", 0),
-            result.get("deleted", 0),
-        )
-
-    added, updated = _upsert_tours(db, df, "FindTourGo", job.id, job_id)
-    return added, updated, 0
+    _emit(job_id, 78, "Đang ghi Google Sheet (không lưu DB)...")
+    write_to_google_sheet(df)
+    _emit(job_id, 95, f"Đã ghi {len(df)} tour lên tab FindTourGo")
+    return 0, len(df), 0
 
 
 def _parse_price(raw: str) -> float | None:

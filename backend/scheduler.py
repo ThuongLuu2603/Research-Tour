@@ -29,9 +29,9 @@ def get_schedule_config() -> dict:
     jobs = [
         {"id": "daily_main_sheet_sync", "label": "Sync Main → DB", "time_vn": "06:30"},
         {"id": "daily_vietravel", "label": "Scrape Vietravel", "time_vn": f"{_schedule_hour:02d}:{_schedule_minute:02d}"},
-        {"id": "daily_findtourgo", "label": "Scrape FindTourGo", "time_vn": f"{ftg_h:02d}:{ftg_m:02d}"},
+        {"id": "daily_findtourgo", "label": "Scrape FindTourGo → Sheet", "time_vn": f"{ftg_h:02d}:{ftg_m:02d}"},
         {"id": "daily_intel_snapshot", "label": "Snapshot", "time_vn": "08:30"},
-        {"id": "daily_sheet_sync", "label": "Sync tất cả tab", "time_vn": "09:00"},
+        {"id": "daily_sheet_sync", "label": "Sync Main + Vietravel Sheet → DB", "time_vn": "09:00"},
     ]
     return {
         "hour": _schedule_hour,
@@ -100,7 +100,7 @@ async def _sync_main_sheet():
 
     db = SessionLocal()
     try:
-        result = merge_sheet_source_to_db(db, "Main", mirror_delete=False)
+        result = merge_sheet_source_to_db(db, "Main", mirror_delete=True)
         logger.info(
             "Main sheet sync: inserted=%s updated=%s unchanged=%s",
             result.get("inserted"),

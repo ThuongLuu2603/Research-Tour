@@ -173,7 +173,7 @@ export type SheetSyncResult = {
 
 /** Kéo Sheet → DB theo từng tab (tránh timeout Render khi Main ~9k dòng). */
 export const syncToursFromGoogleSheet = async (): Promise<SheetSyncResult> => {
-  const order = ["Vietravel", "FindTourGo", "Main"] as const;
+  const order = ["Vietravel", "Main"] as const;
   const sources: SheetSyncSourceResult[] = [];
   let total_updated = 0;
   let total_inserted = 0;
