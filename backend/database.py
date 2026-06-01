@@ -24,6 +24,18 @@ elif _is_postgres:
 engine = create_engine(_url, connect_args=connect_args, **engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+if _is_postgres and "supabase" in _url:
+    import logging
+
+    _db_log = logging.getLogger(__name__)
+    if "pooler.supabase.com" in _url:
+        _db_log.info("Supabase: using pooler connection (IPv4-friendly)")
+    elif "@db." in _url:
+        _db_log.warning(
+            "Supabase direct host (db.*.supabase.co) may fail on Render (no IPv6). "
+            "Set DATABASE_POOLER_URL from Dashboard → Session pooler."
+        )
+
 
 class Base(DeclarativeBase):
     pass

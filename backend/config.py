@@ -1,7 +1,40 @@
 from __future__ import annotations
 
+import os
+import re
+from urllib.parse import quote, unquote, urlparse, urlunparse
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _append_sslmode(url: str) -> str:
+    if "supabase.co" in url and "sslmode=" not in url:
+        sep = "&" if "?" in url else "?"
+        return f"{url}{sep}sslmode=require"
+    return url
+
+
+def _rewrite_supabase_direct_to_pooler(url: str, pooler_host: str) -> str:
+    """
+    Render (và nhiều host) không ra IPv6 — db.*.supabase.co thường chỉ có AAAA.
+    Session pooler dùng IPv4: aws-0-<region>.pooler.supabase.com:5432
+  user postgres.<project_ref>
+    """
+    m = re.search(r"@db\.([a-z0-9]+)\.supabase\.co(?::5432)?", url, re.I)
+    if not m:
+        return url
+    project_ref = m.group(1)
+    parsed = urlparse(url)
+    user = parsed.username or "postgres"
+    if user == "postgres":
+        user = f"postgres.{project_ref}"
+    password = unquote(parsed.password or "")
+    path = parsed.path or "/postgres"
+    query = parsed.query
+    auth = f"{quote(user, safe='')}:{quote(password, safe='')}" if password else quote(user, safe="")
+    netloc = f"{auth}@{pooler_host}:5432"
+    return _append_sslmode(urlunparse((parsed.scheme or "postgresql", netloc, path, "", query, "")))
 
 
 class Settings(BaseSettings):
@@ -30,6 +63,10 @@ class Settings(BaseSettings):
     # Công ty của bạn (dùng cho so sánh đối thủ)
     company_name: str = "Vietravel"
 
+    # Supabase pooler (Render không có IPv6) — lấy host từ Dashboard → Connect → Session pooler
+    supabase_pooler_host: str = ""
+    supabase_force_pooler: bool = True
+
     @field_validator("database_url", mode="before")
     @classmethod
     def fix_postgres_url(cls, v: str) -> str:
@@ -37,10 +74,26 @@ class Settings(BaseSettings):
             return v
         if v.startswith("postgres://"):
             v = v.replace("postgres://", "postgresql://", 1)
-        # Supabase: bắt buộc SSL nếu chưa có trong URL
-        if "supabase.co" in v and "sslmode=" not in v:
-            sep = "&" if "?" in v else "?"
-            v = f"{v}{sep}sslmode=require"
+        v = _append_sslmode(v)
+
+        # Ưu tiên URL pooler riêng nếu set (khuyên dùng trên Render)
+        pooler_url = (os.getenv("DATABASE_POOLER_URL") or os.getenv("SUPABASE_POOLER_URL") or "").strip()
+        if pooler_url:
+            if pooler_url.startswith("postgres://"):
+                pooler_url = pooler_url.replace("postgres://", "postgresql://", 1)
+            return _append_sslmode(pooler_url)
+
+        if "pooler.supabase.com" in v:
+            return v
+
+        on_render = bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"))
+        force = os.getenv("SUPABASE_FORCE_POOLER", "true").lower() not in ("0", "false", "no")
+        if (on_render or force) and "@db." in v and ".supabase.co" in v:
+            host = (os.getenv("SUPABASE_POOLER_HOST") or "").strip()
+            if not host:
+                region = (os.getenv("SUPABASE_REGION") or "ap-southeast-1").strip()
+                host = f"aws-0-{region}.pooler.supabase.com"
+            v = _rewrite_supabase_direct_to_pooler(v, host)
         return v
 
 
