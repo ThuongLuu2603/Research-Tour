@@ -8,6 +8,13 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _sanitize_postgres_url(url: str) -> str:
+    """Sửa lỗi copy/paste: mật khẩu ...%40@@host → một ký tự @ trước hostname."""
+    if "@@" in url:
+        url = url.replace("@@", "@", 1)
+    return url
+
+
 def _append_sslmode(url: str) -> str:
     if "supabase.co" in url and "sslmode=" not in url:
         sep = "&" if "?" in url else "?"
@@ -74,17 +81,18 @@ class Settings(BaseSettings):
             return v
         if v.startswith("postgres://"):
             v = v.replace("postgres://", "postgresql://", 1)
-        v = _append_sslmode(v)
+        v = _sanitize_postgres_url(v)
 
         # Ưu tiên URL pooler riêng nếu set (khuyên dùng trên Render)
         pooler_url = (os.getenv("DATABASE_POOLER_URL") or os.getenv("SUPABASE_POOLER_URL") or "").strip()
         if pooler_url:
             if pooler_url.startswith("postgres://"):
                 pooler_url = pooler_url.replace("postgres://", "postgresql://", 1)
+            pooler_url = _sanitize_postgres_url(pooler_url)
             return _append_sslmode(pooler_url)
 
         if "pooler.supabase.com" in v:
-            return v
+            return _append_sslmode(v)
 
         on_render = bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"))
         force = os.getenv("SUPABASE_FORCE_POOLER", "true").lower() not in ("0", "false", "no")
