@@ -144,12 +144,14 @@ def filter_options(
             for r in db.query(col).filter(col != "").distinct().order_by(col).all()
         ]
 
+    from data_sources import DB_CANONICAL_NGUON
+
     return FilterOptions(
         thi_truong=distinct(Tour.thi_truong),
         tuyen_tour=distinct(Tour.tuyen_tour),
         cong_ty=distinct(Tour.cong_ty),
         diem_kh=distinct(Tour.diem_kh),
-        nguon=distinct(Tour.nguon),
+        nguon=[n for n in distinct(Tour.nguon) if n in DB_CANONICAL_NGUON],
         phan_khuc=distinct(Tour.phan_khuc),
     )
 

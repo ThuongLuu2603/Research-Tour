@@ -156,7 +156,10 @@ def list_workspace_tours(
     ws = get_workspace_or_404(db, workspace_id)
     require_permission(db, ws, user, "view")
 
+    from data_sources import DB_CANONICAL_NGUON
+
     q = _apply_tour_filters(db.query(Tour), search, thi_truong, tuyen_tour, cong_ty, nguon, flagged)
+    q = q.filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
 
     if only_overridden:
         override_tour_ids = [

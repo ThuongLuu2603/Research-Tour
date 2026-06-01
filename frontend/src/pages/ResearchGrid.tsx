@@ -1,15 +1,14 @@
 import { useState, useCallback, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  getFilterOptions, syncToursFromGoogleSheet, Tour,
+  getFilterOptions, Tour,
   listWorkspaces, getWorkspaceTours, patchWorkspaceTour, bulkPatchWorkspaceTours,
   shareWorkspace, listWorkspaceMembers, revokeWorkspaceShare, copyWorkspaceOverrides,
   WorkspaceInfo,
 } from "@/lib/api";
 import { fmtVND, formatPhanKhuc, segmentColor, cn } from "@/lib/utils";
-import { formatApiError } from "@/lib/apiError";
 import { COL } from "@/lib/glossary";
-import { Search, Download, Flag, FlagOff, ChevronLeft, ChevronRight, ExternalLink, Pencil, Check, X, RefreshCw, Users, Copy } from "lucide-react";
+import { Search, Download, Flag, FlagOff, ChevronLeft, ChevronRight, ExternalLink, Pencil, Check, X, Users, Copy } from "lucide-react";
 
 const PAGE_SIZE = 50;
 
@@ -89,6 +88,9 @@ export default function ResearchGrid() {
     }),
     enabled: !!workspaceId,
     placeholderData: (prev) => prev,
+    staleTime: 30_000,
+    refetchInterval: 120_000,
+    refetchOnWindowFocus: true,
   });
 
   const { data: members, refetch: refetchMembers } = useQuery({
@@ -106,26 +108,6 @@ export default function ResearchGrid() {
     },
     onError: (e: { response?: { data?: { detail?: string } } }) => {
       setToast(e.response?.data?.detail || "Lỗi lưu tour");
-    },
-  });
-
-  const syncMutation = useMutation({
-    mutationFn: syncToursFromGoogleSheet,
-    onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ["workspace-tours"] });
-      qc.invalidateQueries({ queryKey: ["filter-options"] });
-      if (res.errors?.length) {
-        const msg = res.errors.map((s) => `${s.nguon}: ${s.error}`).join(" · ");
-        setToast(`Đồng bộ một phần — lỗi: ${msg}`);
-        return;
-      }
-      const seg = res.phan_khuc?.updated != null ? ` · Phân khúc: ${res.phan_khuc.updated} tour` : "";
-      setToast(
-        `Đã kéo Sheet: +${res.total_inserted} mới, ${res.total_updated} cập nhật${seg}`
-      );
-    },
-    onError: (e) => {
-      setToast(formatApiError(e, "Lỗi đồng bộ từ Sheet (timeout hoặc Google API)"));
     },
   });
 
@@ -193,7 +175,7 @@ export default function ResearchGrid() {
         <div>
           <h1 className="text-xl font-bold text-gray-900">Research Grid</h1>
           <p className="text-sm text-gray-500">
-            {(data?.total ?? 0).toLocaleString("vi-VN")} tour · Chỉnh sửa chỉ trong workspace (So sánh VTR dùng dữ liệu chung)
+            {(data?.total ?? 0).toLocaleString("vi-VN")} tour từ database chung (Main + Vietravel) · chỉnh sửa lưu workspace · tự làm mới ~2 phút
           </p>
         </div>
         <div className="flex gap-2 flex-wrap items-center">
@@ -213,15 +195,6 @@ export default function ResearchGrid() {
               <Users size={14} /> Chia sẻ
             </button>
           )}
-          <button
-            onClick={() => syncMutation.mutate()}
-            disabled={syncMutation.isPending}
-            className="btn-secondary text-xs flex items-center gap-1"
-            title="Kéo dữ liệu chung từ Google Sheet"
-          >
-            <RefreshCw size={14} className={syncMutation.isPending ? "animate-spin" : ""} />
-            Kéo từ Sheet
-          </button>
           <button onClick={handleExport} className="btn-secondary text-xs">
             <Download size={14} /> CSV
           </button>
