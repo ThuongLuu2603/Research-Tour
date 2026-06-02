@@ -653,16 +653,24 @@ def apply_duration_rules_to_tours(_: User = Depends(require_admin), db: Session 
 
 @router.get("/unmatched")
 def list_unmatched_rules(
-    scope: str = Query("company", pattern="^(company|departure|duration|all)$"),
+    scope: str = Query(
+        "company",
+        pattern="^(market|route|company|departure|duration|all)$",
+    ),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """Giá trị từ tour chưa khớp alias — dùng kéo thả gán thủ công."""
+    """Tour chưa khớp quy tắc — kéo thả / gán keyword (toàn bộ tour Main+Vietravel trong DB)."""
     from classification import collect_unmatched_values
+    from data_sources import DB_CANONICAL_NGUON
     from models import Tour
 
-    tours = db.query(Tour).all()
+    tours = db.query(Tour).filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON))).all()
     data = collect_unmatched_values(tours, vtr_only=False)
+    if scope == "market":
+        return {"scope": scope, "items": data["thi_truong"]}
+    if scope == "route":
+        return {"scope": scope, "items": data["tuyen_tour"]}
     if scope == "company":
         return {"scope": scope, "items": data["cong_ty"]}
     if scope == "departure":

@@ -105,7 +105,7 @@ def classification_rules_status() -> dict:
             "db_rules": dur_n,
             "using_code_defaults": dur_n == 0,
         },
-        "note": "Khi db_rules > 0, runtime chỉ đọc Quy tắc vận hành. Sau khi sửa rule, bấm «Áp dụng → tour».",
+        "note": "Quy tắc áp dụng toàn hệ thống (tour Main/Vietravel trong DB). Sau khi sửa, bấm «Áp dụng ngay lên tour».",
     }
 
 
@@ -241,17 +241,49 @@ def resolve_duration_days(thoi_gian: str, so_ngay: float | None) -> tuple[float 
     return None, False
 
 
+def _tour_title_hint(t) -> str:
+    return re.sub(r"\s+", " ", (t.ten_tour or "").strip())[:120]
+
+
+def is_market_rule_matched(ten_tour: str, lich_trinh: str = "") -> bool:
+    return resolve_thi_truong(ten_tour or "", lich_trinh or "") != "Khác"
+
+
+def is_route_rule_matched(thi_truong: str, ten_tour: str, lich_trinh: str = "") -> bool:
+    market = (thi_truong or "").strip() or resolve_thi_truong(ten_tour or "", lich_trinh or "")
+    if not market or market == "Khác":
+        return True
+    route = resolve_tuyen_tour(market, ten_tour or "", lich_trinh or "")
+    generic = {market.casefold(), "khác", "khac", ""}
+    return route.strip().casefold() not in generic
+
+
 def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
-    """Giá trị chưa khớp alias — Công ty, Điểm KH, Thời gian."""
+    """Giá trị tour chưa khớp quy tắc — dùng gán keyword/alias trên UI admin."""
+    from data_sources import DB_CANONICAL_NGUON
     from tour_sources import is_vietravel_tab
 
     cong_ty: dict[str, int] = {}
     diem_kh: dict[str, int] = {}
     thoi_gian: dict[str, int] = {}
+    thi_truong: dict[str, int] = {}
+    tuyen_tour: dict[str, dict] = {}
 
     for t in tours:
         if vtr_only and not is_vietravel_tab(t):
             continue
+        if getattr(t, "nguon", None) not in DB_CANONICAL_NGUON:
+            continue
+        title = _tour_title_hint(t)
+        if title and not is_market_rule_matched(t.ten_tour or "", t.lich_trinh or ""):
+            thi_truong[title] = thi_truong.get(title, 0) + 1
+        market = resolve_thi_truong(t.ten_tour or "", t.lich_trinh or "")
+        if title and market not in ("", "Khác") and not is_route_rule_matched(
+            market, t.ten_tour or "", t.lich_trinh or ""
+        ):
+            if title not in tuyen_tour:
+                tuyen_tour[title] = {"count": 0, "thi_truong": market}
+            tuyen_tour[title]["count"] += 1
         raw_co = (t.cong_ty or "").strip()
         if raw_co and not is_company_alias_matched(raw_co):
             cong_ty[raw_co] = cong_ty.get(raw_co, 0) + 1
@@ -267,7 +299,17 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
     def _rows(d: dict[str, int]) -> list[dict]:
         return sorted([{"value": k, "count": v} for k, v in d.items()], key=lambda x: -x["count"])[:40]
 
+    route_rows = sorted(
+        [
+            {"value": k, "count": v["count"], "thi_truong": v["thi_truong"]}
+            for k, v in tuyen_tour.items()
+        ],
+        key=lambda x: -x["count"],
+    )[:40]
+
     return {
+        "thi_truong": _rows(thi_truong),
+        "tuyen_tour": route_rows,
         "cong_ty": _rows(cong_ty),
         "diem_kh": _rows(diem_kh),
         "thoi_gian": _rows(thoi_gian),

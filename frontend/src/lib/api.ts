@@ -694,9 +694,11 @@ export const applyDurationRulesToTours = async () => {
   return data;
 };
 
-export type UnmatchedItem = { value: string; count: number };
+export type UnmatchedItem = { value: string; count: number; thi_truong?: string };
 
-export const getRulesUnmatched = async (scope: "company" | "departure" | "duration") => {
+export const getRulesUnmatched = async (
+  scope: "market" | "route" | "company" | "departure" | "duration",
+) => {
   const { data } = await api.get(`/admin/rules/unmatched?scope=${scope}`);
   return data as { scope: string; items: UnmatchedItem[] };
 };

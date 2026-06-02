@@ -21,8 +21,6 @@ import { formatDurationLabel, parseDurationInput } from "@/lib/durationFormat";
 import { Plus, Trash2, RefreshCw, Database, Search, Pencil, Check, X, GripVertical } from "lucide-react";
 
 type Tab = "market" | "route" | "company" | "departure" | "duration";
-type AliasTab = "company" | "departure" | "duration";
-
 function matchSearch(q: string, ...parts: (string | number | undefined | null)[]) {
   if (!q.trim()) return true;
   const needle = q.trim().toLowerCase();
@@ -101,17 +99,15 @@ export default function RulesAdminPage() {
   const [durAlias, setDurAlias] = useState("");
   const [dropTarget, setDropTarget] = useState<string | null>(null);
 
-  const aliasTab: AliasTab | null = tab === "company" || tab === "departure" || tab === "duration" ? tab : null;
-
   const { data: marketRules } = useQuery({ queryKey: ["market-rules"], queryFn: listMarketRules, enabled: isAdmin });
   const { data: routeRules } = useQuery({ queryKey: ["route-rules"], queryFn: listRouteRules, enabled: isAdmin });
   const { data: companyRules } = useQuery({ queryKey: ["company-rules"], queryFn: listCompanyRules, enabled: isAdmin });
   const { data: departureRules } = useQuery({ queryKey: ["departure-rules"], queryFn: listDepartureRules, enabled: isAdmin });
   const { data: durationRules } = useQuery({ queryKey: ["duration-rules"], queryFn: listDurationRules, enabled: isAdmin });
   const { data: unmatched } = useQuery({
-    queryKey: ["rules-unmatched", aliasTab],
-    queryFn: () => getRulesUnmatched(aliasTab!),
-    enabled: isAdmin && !!aliasTab,
+    queryKey: ["rules-unmatched", tab],
+    queryFn: () => getRulesUnmatched(tab),
+    enabled: isAdmin,
   });
 
   const invalidate = () => {
@@ -140,6 +136,18 @@ export default function RulesAdminPage() {
     await createDurationRule({ canonical_days: days, alias });
     invalidate();
     setSyncMsg(`Đã gán "${alias}" → ${days}N`);
+  };
+  const assignMarketKeyword = async (market: string, keyword: string) => {
+    const kw = keyword.trim().toLowerCase();
+    if (!kw) return;
+    await createMarketRule({ market: market.trim(), keyword: kw });
+    afterRuleSaved(`Đã thêm keyword «${kw}» → ${market}`);
+  };
+  const assignRouteKeyword = async (thiTruong: string, tuyenTour: string, keyword: string) => {
+    const kw = keyword.trim().toLowerCase();
+    if (!kw || !thiTruong.trim() || !tuyenTour.trim()) return;
+    await createRouteRule({ thi_truong: thiTruong.trim(), tuyen_tour: tuyenTour.trim(), keywords: kw });
+    afterRuleSaved(`Đã thêm keyword tuyến «${kw}»`);
   };
 
   const showErr = (e: unknown) =>
@@ -188,7 +196,7 @@ export default function RulesAdminPage() {
     [durationRules, search],
   );
   const filteredUnmatched = useMemo(
-    () => (unmatched?.items ?? []).filter((x) => matchSearch(search, x.value, x.count)),
+    () => (unmatched?.items ?? []).filter((x) => matchSearch(search, x.value, x.count, x.thi_truong)),
     [unmatched, search],
   );
   const canonicalOptions = useMemo(() => {
@@ -196,6 +204,14 @@ export default function RulesAdminPage() {
     if (tab === "departure") return [...new Set((departureRules ?? []).map((r) => r.canonical_name))];
     return [];
   }, [tab, companyRules, departureRules]);
+  const marketOptions = useMemo(
+    () => [...new Set((marketRules ?? []).map((r) => r.market))].sort(),
+    [marketRules],
+  );
+  const routeMarketOptions = useMemo(
+    () => [...new Set((routeRules ?? []).map((r) => r.thi_truong))].sort(),
+    [routeRules],
+  );
 
   const addMarket = useMutation({
     mutationFn: () => createMarketRule({ market: mMarket, keyword: mKeyword }),
@@ -241,12 +257,13 @@ export default function RulesAdminPage() {
       <div>
         <h1 className="text-xl font-bold">Quy tắc phân loại & Key matching</h1>
         <p className="text-sm text-gray-500">
-          Quy tắc lưu trong database (Supabase). Sau khi sửa, tour Main/Vietravel được cập nhật tự động (nền).
+          Quy tắc lưu trong Supabase và áp dụng <strong>toàn hệ thống</strong> (mọi tour Main/Vietravel): Research Grid, So sánh VTR, Market Lab, phân khúc, báo cáo…
+          Sau khi sửa, tour được cập nhật tự động (nền) hoặc bấm «Áp dụng ngay lên tour».
         </p>
       </div>
 
       <div className="card p-4 space-y-2 bg-slate-50 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-gray-600">Áp dụng toàn bộ quy tắc lên tour trong database (đồng bộ Research Grid & So sánh VTR).</p>
+        <p className="text-sm text-gray-600">Áp dụng lại toàn bộ quy tắc lên mọi tour trong database (toàn hệ thống).</p>
         <button type="button" onClick={onApplyTours} disabled={applying} className="btn-primary text-xs flex items-center gap-1 shrink-0 disabled:opacity-60">
           <RefreshCw size={13} className={applying ? "animate-spin" : ""} /> {applying ? "Đang áp dụng…" : "Áp dụng ngay lên tour"}
         </button>
@@ -272,16 +289,16 @@ export default function RulesAdminPage() {
         value={search}
         onChange={setSearch}
         total={
-          tab === "market" ? (marketRules?.length ?? 0)
-            : tab === "route" ? (routeRules?.length ?? 0)
+          tab === "market" ? (marketRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
+            : tab === "route" ? (routeRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
             : tab === "company" ? (companyRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
             : tab === "departure" ? (departureRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
             : tab === "duration" ? (durationRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
             : (durationRules?.length ?? 0)
         }
         filtered={
-          tab === "market" ? filteredMarket.length
-            : tab === "route" ? filteredRoute.length
+          tab === "market" ? filteredMarket.length + filteredUnmatched.length
+            : tab === "route" ? filteredRoute.length + filteredUnmatched.length
             : tab === "company" ? filteredCompany.length + filteredUnmatched.length
             : tab === "departure" ? filteredDeparture.length + filteredUnmatched.length
             : tab === "duration" ? filteredDuration.length + filteredUnmatched.length
@@ -305,15 +322,19 @@ export default function RulesAdminPage() {
               <Database size={14} /> Import mặc định
             </button>
           </div>
-          <div className="card overflow-auto max-h-[500px]">
+          <div className="card overflow-auto max-h-[560px]">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 sticky top-0"><tr>
-                <th className="px-3 py-2 text-left">Thị trường</th><th className="px-3 py-2 text-left">Keyword</th><th className="w-20"></th>
+              <thead className="bg-gray-50 sticky top-0 z-10"><tr>
+                <th className="px-3 py-2 text-left">Thị trường <span className="text-[10px] font-normal text-gray-400">(thả keyword vào đây)</span></th>
+                <th className="px-3 py-2 text-left">Keyword</th><th className="w-20"></th>
               </tr></thead>
               <tbody>
-                {filteredMarket.map((r: MarketRule) => (
+                {filteredMarket.map((r: MarketRule) => {
+                  const dropKey = `mkt-${r.market}`;
+                  const { dropClassName, ...drop } = dropHandlers(dropKey, dropTarget, setDropTarget, (kw) => assignMarketKeyword(r.market, kw));
+                  return (
                   <tr key={r.id} className={cn("border-t", editingId === r.id && "bg-blue-50")}>
-                    <td className="px-3 py-2">
+                    <td className={cn("px-3 py-2", dropClassName)} {...drop}>
                       {editingId === r.id ? (
                         <input className="input text-sm py-1" value={editDraft.market ?? ""} onChange={(e) => setEditDraft({ ...editDraft, market: e.target.value })} />
                       ) : (
@@ -332,9 +353,13 @@ export default function RulesAdminPage() {
                       editingId === r.id ? () => updateMarketRule(r.id, { market: editDraft.market, keyword: editDraft.keyword }).then(() => { cancelEdit(); afterRuleSaved("Đã cập nhật"); }).catch(showErr) : undefined,
                     )}
                   </tr>
-                ))}
+                  );
+                })}
+                <UnmatchedMarketRows items={filteredUnmatched} onAssign={assignMarketKeyword} />
               </tbody>
             </table>
+            <datalist id="market-suggestions">{marketOptions.map((m) => <option key={m} value={m} />)}</datalist>
+            <p className="text-xs text-gray-400 p-3">{filteredMarket.length} rules · {filteredUnmatched.length} tour chưa khớp</p>
           </div>
         </div>
       )}
@@ -361,32 +386,41 @@ export default function RulesAdminPage() {
               Chưa có quy tắc tuyến trong Supabase. Bấm <strong>Import mặc định</strong> hoặc thêm thủ công — quy tắc chỉ lưu trong database, không đồng bộ Sheet.
             </p>
           )}
-          <div className="card overflow-auto max-h-[500px]">
+          <div className="card overflow-auto max-h-[560px]">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 sticky top-0"><tr>
-                <th className="px-3 py-2 text-left">Thị trường</th><th className="px-3 py-2 text-left">Tuyến</th><th className="px-3 py-2 text-left">Keywords</th><th className="w-20"></th>
+              <thead className="bg-gray-50 sticky top-0 z-10"><tr>
+                <th className="px-3 py-2 text-left">Thị trường</th>
+                <th className="px-3 py-2 text-left">Tuyến <span className="text-[10px] font-normal text-gray-400">(thả keyword)</span></th>
+                <th className="px-3 py-2 text-left">Keywords</th><th className="w-20"></th>
               </tr></thead>
               <tbody>
-                {filteredRoute.length === 0 && (
+                {filteredRoute.length === 0 && filteredUnmatched.length === 0 && (
                   <tr><td colSpan={4} className="px-3 py-8 text-center text-gray-400 text-sm">Không có dòng nào</td></tr>
                 )}
-                {filteredRoute.map((r: RouteRule) => (
+                {filteredRoute.map((r: RouteRule) => {
+                  const dropKey = `route-${r.thi_truong}-${r.tuyen_tour}`;
+                  const { dropClassName, ...drop } = dropHandlers(dropKey, dropTarget, setDropTarget, (kw) => assignRouteKeyword(r.thi_truong, r.tuyen_tour, kw));
+                  return (
                   <tr key={r.id} className={cn("border-t", editingId === r.id && "bg-blue-50")}>
                     <td className="px-3 py-2">
                       {editingId === r.id ? <input className="input text-sm py-1" value={editDraft.thi_truong ?? ""} onChange={(e) => setEditDraft({ ...editDraft, thi_truong: e.target.value })} /> : (
                         <span className="flex items-center gap-1">{r.thi_truong}<button type="button" className="text-gray-400 hover:text-primary-600" onClick={() => startEdit(r.id, { thi_truong: r.thi_truong, tuyen_tour: r.tuyen_tour, keywords: r.keywords })}><Pencil size={12} /></button></span>
                       )}
                     </td>
-                    <td className="px-3 py-2">{editingId === r.id ? <input className="input text-sm py-1" value={editDraft.tuyen_tour ?? ""} onChange={(e) => setEditDraft({ ...editDraft, tuyen_tour: e.target.value })} /> : r.tuyen_tour}</td>
+                    <td className={cn("px-3 py-2", dropClassName)} {...drop}>{editingId === r.id ? <input className="input text-sm py-1" value={editDraft.tuyen_tour ?? ""} onChange={(e) => setEditDraft({ ...editDraft, tuyen_tour: e.target.value })} /> : r.tuyen_tour}</td>
                     <td className="px-3 py-2 font-mono text-xs">{editingId === r.id ? <input className="input text-sm py-1 font-mono" value={editDraft.keywords ?? ""} onChange={(e) => setEditDraft({ ...editDraft, keywords: e.target.value })} /> : r.keywords}</td>
                     {actionBtns(
                       () => deleteRouteRule(r.id).then(() => afterRuleSaved("Đã xóa quy tắc")),
                       editingId === r.id ? () => updateRouteRule(r.id, { thi_truong: editDraft.thi_truong, tuyen_tour: editDraft.tuyen_tour, keywords: editDraft.keywords }).then(() => { cancelEdit(); afterRuleSaved("Đã cập nhật"); }).catch(showErr) : undefined,
                     )}
                   </tr>
-                ))}
+                  );
+                })}
+                <UnmatchedRouteRows items={filteredUnmatched} onAssign={assignRouteKeyword} />
               </tbody>
             </table>
+            <datalist id="route-market-suggestions">{routeMarketOptions.map((m) => <option key={m} value={m} />)}</datalist>
+            <p className="text-xs text-gray-400 p-3">{filteredRoute.length} rules · {filteredUnmatched.length} tour chưa khớp tuyến</p>
           </div>
         </div>
       )}
@@ -543,6 +577,154 @@ export default function RulesAdminPage() {
         </div>
       )}
     </div>
+  );
+}
+
+function UnmatchedMarketRows({
+  items,
+  onAssign,
+}: {
+  items: UnmatchedItem[];
+  onAssign: (market: string, keyword: string) => void | Promise<void>;
+}) {
+  const [pending, setPending] = useState<Record<string, string>>({});
+  const [keywords, setKeywords] = useState<Record<string, string>>({});
+  if (!items.length) return null;
+  return (
+    <>
+      <tr className="bg-amber-100 border-t-2 border-amber-400">
+        <td colSpan={3} className="px-3 py-2 text-xs font-semibold text-amber-900">
+          <span className="inline-flex items-center gap-1">
+            <GripVertical size={12} /> Chưa khớp thị trường ({items.length}) — kéo tên tour lên dòng Thị trường, hoặc nhập keyword rồi Gán
+            <InfoTip text="Tour phân loại «Khác» vì chưa có keyword trong tên/lịch trình." />
+          </span>
+        </td>
+      </tr>
+      {items.map((item) => (
+        <tr key={item.value} className="bg-amber-50/70 border-t border-amber-200">
+          <td className="px-3 py-2">
+            <input
+              className="input text-xs py-1 w-full border-amber-300 bg-white"
+              placeholder="Thị trường..."
+              list="market-suggestions"
+              value={pending[item.value] ?? ""}
+              onChange={(e) => setPending({ ...pending, [item.value]: e.target.value })}
+            />
+          </td>
+          <td className="px-3 py-2 font-mono text-xs text-amber-950 space-y-1">
+            <input
+              className="input text-xs py-1 w-full border-amber-200 bg-white font-mono"
+              placeholder="keyword (vd: bangkok)..."
+              value={keywords[item.value] ?? ""}
+              onChange={(e) => setKeywords({ ...keywords, [item.value]: e.target.value })}
+            />
+            <span {...dragAliasProps(item.value)} title={`${item.count} tour · kéo lên Thị trường phía trên`} className="block truncate max-w-md">
+              <GripVertical size={10} className="text-amber-600 shrink-0 inline" />
+              {item.value}
+              <span className="text-gray-500 ml-1">({item.count})</span>
+            </span>
+          </td>
+          <td className="px-3 py-2">
+            <button
+              type="button"
+              className="btn-primary text-[10px] py-1 px-2"
+              disabled={!(pending[item.value] ?? "").trim() || !((keywords[item.value] ?? "").trim() || item.value)}
+              onClick={async () => {
+                const market = (pending[item.value] ?? "").trim();
+                const kw = (keywords[item.value] ?? "").trim() || item.value;
+                if (!market) return;
+                await onAssign(market, kw);
+                setPending((p) => { const n = { ...p }; delete n[item.value]; return n; });
+                setKeywords((k) => { const n = { ...k }; delete n[item.value]; return n; });
+              }}
+            >
+              Gán
+            </button>
+          </td>
+        </tr>
+      ))}
+    </>
+  );
+}
+
+function UnmatchedRouteRows({
+  items,
+  onAssign,
+}: {
+  items: UnmatchedItem[];
+  onAssign: (thiTruong: string, tuyenTour: string, keyword: string) => void | Promise<void>;
+}) {
+  const [pendingMarket, setPendingMarket] = useState<Record<string, string>>({});
+  const [pendingRoute, setPendingRoute] = useState<Record<string, string>>({});
+  const [keywords, setKeywords] = useState<Record<string, string>>({});
+  if (!items.length) return null;
+  return (
+    <>
+      <tr className="bg-amber-100 border-t-2 border-amber-400">
+        <td colSpan={4} className="px-3 py-2 text-xs font-semibold text-amber-900">
+          <span className="inline-flex items-center gap-1">
+            <GripVertical size={12} /> Chưa khớp tuyến ({items.length}) — kéo keyword lên cột Tuyến, hoặc nhập tuyến + keyword rồi Gán
+            <InfoTip text="Đã có thị trường nhưng tuyến vẫn = tên thị trường (chưa match rule tuyến)." />
+          </span>
+        </td>
+      </tr>
+      {items.map((item) => (
+        <tr key={item.value} className="bg-amber-50/70 border-t border-amber-200">
+          <td className="px-3 py-2">
+            <input
+              className="input text-xs py-1 w-full border-amber-300 bg-white"
+              placeholder="Thị trường"
+              list="route-market-suggestions"
+              value={pendingMarket[item.value] ?? item.thi_truong ?? ""}
+              onChange={(e) => setPendingMarket({ ...pendingMarket, [item.value]: e.target.value })}
+            />
+          </td>
+          <td className="px-3 py-2">
+            <input
+              className="input text-xs py-1 w-full border-amber-300 bg-white"
+              placeholder="Tuyến tour..."
+              value={pendingRoute[item.value] ?? ""}
+              onChange={(e) => setPendingRoute({ ...pendingRoute, [item.value]: e.target.value })}
+            />
+          </td>
+          <td className="px-3 py-2 font-mono text-xs text-amber-950 space-y-1">
+            <input
+              className="input text-xs py-1 w-full border-amber-200 bg-white font-mono"
+              placeholder="keyword..."
+              value={keywords[item.value] ?? ""}
+              onChange={(e) => setKeywords({ ...keywords, [item.value]: e.target.value })}
+            />
+            <span {...dragAliasProps(item.value)} title={`${item.count} tour`} className="block truncate max-w-xs">
+              <GripVertical size={10} className="text-amber-600 shrink-0 inline" />
+              {item.value}
+              <span className="text-gray-500 ml-1">({item.count})</span>
+            </span>
+          </td>
+          <td className="px-3 py-2">
+            <button
+              type="button"
+              className="btn-primary text-[10px] py-1 px-2"
+              disabled={
+                !(pendingMarket[item.value] ?? item.thi_truong ?? "").trim()
+                || !(pendingRoute[item.value] ?? "").trim()
+                || !((keywords[item.value] ?? "").trim())
+              }
+              onClick={async () => {
+                const mk = (pendingMarket[item.value] ?? item.thi_truong ?? "").trim();
+                const route = (pendingRoute[item.value] ?? "").trim();
+                const kw = (keywords[item.value] ?? "").trim();
+                if (!mk || !route || !kw) return;
+                await onAssign(mk, route, kw);
+                setPendingRoute((p) => { const n = { ...p }; delete n[item.value]; return n; });
+                setKeywords((k) => { const n = { ...k }; delete n[item.value]; return n; });
+              }}
+            >
+              Gán
+            </button>
+          </td>
+        </tr>
+      ))}
+    </>
   );
 }
 
