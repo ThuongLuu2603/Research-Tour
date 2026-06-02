@@ -45,13 +45,15 @@ def route_for_segment(t: Tour) -> str:
     """Tuyến dùng để gom nhóm — ưu tiên cột Tuyến tour, không ghi đè bằng tên thị trường."""
     from classification import resolve_market_and_route
 
-    market, resolved_route = resolve_market_and_route(t.ten_tour or "", t.lich_trinh or "")
+    market, resolved_route, from_route_rule = resolve_market_and_route(t.ten_tour or "", t.lich_trinh or "")
     market = market or (t.thi_truong or "").strip() or "Khác"
     explicit = normalize_route(t.tuyen_tour)
     generic = {market.casefold(), "khác", "khac", ""}
     if explicit and explicit.casefold() not in generic:
         return explicit
     resolved = normalize_route(resolved_route)
+    if from_route_rule and resolved:
+        return resolved
     if resolved and resolved.casefold() not in generic:
         return resolved
     return explicit or resolved or market

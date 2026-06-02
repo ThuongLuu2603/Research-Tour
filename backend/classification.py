@@ -378,8 +378,10 @@ def is_market_rule_matched(ten_tour: str, lich_trinh: str = "") -> bool:
 
 
 def is_route_rule_matched(thi_truong: str, ten_tour: str, lich_trinh: str = "") -> bool:
-    market, route = resolve_market_and_route(ten_tour or "", lich_trinh or "")
+    market, route, from_route_rule = resolve_market_and_route(ten_tour or "", lich_trinh or "")
     if not market or market == "Khác":
+        return True
+    if from_route_rule:
         return True
     generic = {market.casefold(), "khác", "khac", ""}
     return route.strip().casefold() not in generic
@@ -428,9 +430,8 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
                     "bucket_key": f"market:{title}",
                 }
             _unmatched_add_member(thi_truong[title], title)
-        market, route = resolve_market_and_route(t.ten_tour or "", t.lich_trinh or "")
-        generic = {market.casefold(), "khác", "khac", ""}
-        if title and market not in ("", "Khác") and route.strip().casefold() in generic:
+        market, route, from_route_rule = resolve_market_and_route(t.ten_tour or "", t.lich_trinh or "")
+        if title and market not in ("", "Khác") and not from_route_rule:
             hint = _market_unmatched_entry(title)
             if title not in tuyen_tour:
                 tuyen_tour[title] = {
@@ -738,7 +739,7 @@ def apply_classification_rules_to_tours(db) -> dict:
     market_n = route_n = link_n = 0
     for batch in _iter_canonical_tour_batches(db):
         for t in batch:
-            mk, rt = resolve_market_and_route(t.ten_tour or "", t.lich_trinh or "")
+            mk, rt, _from_rule = resolve_market_and_route(t.ten_tour or "", t.lich_trinh or "")
             if mk and mk != (t.thi_truong or ""):
                 t.thi_truong = mk[:128]
                 market_n += 1
@@ -793,21 +794,24 @@ def _route_rules_from_db() -> tuple[tuple[str, str, tuple[str, ...]], ...]:
         db.close()
 
 
-def resolve_market_and_route(ten_tour: str, lich_trinh: str = "") -> tuple[str, str]:
-    """Ưu tiên quy tắc tuyến theo tên tour (không phụ thuộc thị trường đang lưu sai)."""
+def resolve_market_and_route(ten_tour: str, lich_trinh: str = "") -> tuple[str, str, bool]:
+    """
+    (thị trường, tuyến, đã khớp rule tuyến).
+    Tuyến trùng tên thị trường (vd Đài Loan/Đài Loan) vẫn tính là đã khớp nếu có rule keyword.
+    """
     combined = f"{ten_tour or ''} {lich_trinh or ''}".lower().strip()
     if not combined:
-        return "Khác", "Khác"
+        return "Khác", "Khác", False
     for mkt, route, kws in _route_rules_from_db():
         if all(kw in combined for kw in kws):
-            return mkt, route
+            return mkt, route, True
     mk = resolve_thi_truong(ten_tour, lich_trinh)
-    return mk, mk
+    return mk, mk, False
 
 
 def resolve_tuyen_tour(thi_truong: str, ten_tour: str, lich_trinh: str = "") -> str:
     """Trả về tuyến; tham số thi_truong giữ tương thích API cũ (không còn lọc theo market)."""
-    _mk, route = resolve_market_and_route(ten_tour, lich_trinh)
+    _mk, route, _matched = resolve_market_and_route(ten_tour, lich_trinh)
     return route
 
 
