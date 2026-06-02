@@ -694,6 +694,8 @@ export const applyDurationRulesToTours = async () => {
   return data;
 };
 
+export type UnmatchedTourMember = { title: string; count: number };
+
 export type UnmatchedItem = {
   value: string;
   count: number;
@@ -707,6 +709,10 @@ export type UnmatchedItem = {
   grouped?: boolean;
   /** Gợi ý thị trường đúng khi cột hiện tại sai (tab tuyến tour) */
   suggested_thi_truong?: string;
+  /** Id nhóm (để tách tour khỏi bucket) */
+  bucket_key?: string;
+  /** Danh sách tên tour trong nhóm */
+  members?: UnmatchedTourMember[];
 };
 
 export const getRulesUnmatched = async (

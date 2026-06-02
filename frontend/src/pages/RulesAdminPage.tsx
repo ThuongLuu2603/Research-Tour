@@ -20,7 +20,14 @@ import { COL } from "@/lib/glossary";
 import { InfoTip } from "@/components/InfoTip";
 import { cn } from "@/lib/utils";
 import { formatDurationLabel, parseDurationInput } from "@/lib/durationFormat";
-import { Plus, Trash2, RefreshCw, Database, Search, Pencil, Check, X, GripVertical } from "lucide-react";
+import {
+  buildRouteKeywordConflicts,
+  conflictHintForKeyword,
+  expandUnmatchedWithSplits,
+  loadUnmatchedSplits,
+  splitUnmatchedTitle,
+} from "@/lib/rulesUnmatched";
+import { Plus, Trash2, RefreshCw, Database, Search, Pencil, Check, X, GripVertical, ChevronDown, ChevronRight } from "lucide-react";
 
 type Tab = "market" | "route" | "company" | "departure" | "duration";
 function matchSearch(q: string, ...parts: (string | number | undefined | null)[]) {
@@ -115,6 +122,7 @@ export default function RulesAdminPage() {
   const [cCanonical, setCCanonical] = useState("");
   const [cAlias, setCAlias] = useState("");
   const [dCanonical, setDCanonical] = useState("");
+  const [splitRevision, setSplitRevision] = useState(0);
   const [dAlias, setDAlias] = useState("");
   const [durDays, setDurDays] = useState("");
   const [durAlias, setDurAlias] = useState("");
@@ -405,7 +413,11 @@ export default function RulesAdminPage() {
                   </tr>
                   );
                 })}
-                <UnmatchedMarketRows items={filteredUnmatched} onAssign={assignMarketKeyword} />
+                <UnmatchedMarketRows
+                  items={filteredUnmatched}
+                  onAssign={assignMarketKeyword}
+                  onSplitTour={splitUnmatchedTour}
+                />
               </tbody>
             </table>
             <datalist id="market-suggestions">{marketOptions.map((m) => <option key={m} value={m} />)}</datalist>
@@ -438,6 +450,12 @@ export default function RulesAdminPage() {
               Chưa có quy tắc tuyến trong Supabase. Bấm <strong>Import mặc định</strong> hoặc thêm thủ công — quy tắc chỉ lưu trong database, không đồng bộ Sheet.
             </p>
           )}
+          {routeKeywordConflicts.size > 0 && (
+            <p className="text-sm text-red-800 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+              Có <strong>{routeKeywordConflicts.size}</strong> keyword trùng giữa nhiều tuyến (hiển thị đỏ trong cột Keywords).
+              Khi áp dụng, rule có <strong>sort_order</strong> nhỏ hơn được ưu tiên — nên dùng keyword cụ thể hoặc chỉnh thứ tự rule.
+            </p>
+          )}
           <div className="card overflow-auto max-h-[560px]">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 sticky top-0 z-10"><tr>
@@ -467,7 +485,13 @@ export default function RulesAdminPage() {
                       )}
                     </td>
                     <td className={cn("px-3 py-2", dropClassName)} {...drop}>{editingId === r.id ? <input className="input text-sm py-1" value={editDraft.tuyen_tour ?? ""} onChange={(e) => setEditDraft({ ...editDraft, tuyen_tour: e.target.value })} /> : r.tuyen_tour}</td>
-                    <td className="px-3 py-2 font-mono text-xs">{editingId === r.id ? <input className="input text-sm py-1 font-mono" value={editDraft.keywords ?? ""} onChange={(e) => setEditDraft({ ...editDraft, keywords: e.target.value })} /> : r.keywords}</td>
+                    <td className="px-3 py-2 font-mono text-xs">
+                      {editingId === r.id ? (
+                        <input className="input text-sm py-1 font-mono" value={editDraft.keywords ?? ""} onChange={(e) => setEditDraft({ ...editDraft, keywords: e.target.value })} />
+                      ) : (
+                        <RouteKeywordsCell keywords={r.keywords} conflicts={routeKeywordConflicts} />
+                      )}
+                    </td>
                     {actionBtns(
                       () => deleteRouteRule(r.id).then(() => afterRuleSaved("Đã xóa quy tắc")),
                       editingId === r.id ? () => updateRouteRule(r.id, { thi_truong: editDraft.thi_truong, tuyen_tour: editDraft.tuyen_tour, keywords: editDraft.keywords }).then(() => { cancelEdit(); afterRuleSaved("Đã cập nhật"); }).catch(showErr) : undefined,
@@ -475,7 +499,12 @@ export default function RulesAdminPage() {
                   </tr>
                   );
                 })}
-                <UnmatchedRouteRows items={filteredUnmatched} onAssign={assignRouteKeyword} />
+                <UnmatchedRouteRows
+                  items={filteredUnmatched}
+                  onAssign={assignRouteKeyword}
+                  onSplitTour={splitUnmatchedTour}
+                  routeConflicts={routeKeywordConflicts}
+                />
               </tbody>
             </table>
             <datalist id="route-market-suggestions">{routeMarketOptions.map((m) => <option key={m} value={m} />)}</datalist>
@@ -640,15 +669,92 @@ export default function RulesAdminPage() {
 }
 
 function marketUnmatchedKey(item: UnmatchedItem) {
-  return item.sample || item.value;
+  return item.bucket_key || item.sample || item.value;
+}
+
+function RouteKeywordsCell({
+  keywords,
+  conflicts,
+}: {
+  keywords: string;
+  conflicts: ReturnType<typeof buildRouteKeywordConflicts>;
+}) {
+  const parts = keywords.split(",");
+  return (
+    <span>
+      {parts.map((part, i) => {
+        const kw = part.trim();
+        const hint = conflictHintForKeyword(kw, conflicts);
+        return (
+          <span key={`${i}-${kw}`}>
+            {i > 0 && ", "}
+            <span className={hint ? "text-red-700 font-semibold underline decoration-dotted" : undefined} title={hint ?? undefined}>
+              {kw}
+            </span>
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+function UnmatchedMembersPanel({
+  item,
+  onSplitTour,
+}: {
+  item: UnmatchedItem;
+  onSplitTour: (title: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const members = item.members ?? [];
+  if (!members.length) return null;
+  const nameCount = members.length;
+  const canSplit = nameCount > 1;
+
+  return (
+    <div className="mt-1 border border-amber-200 rounded bg-white/80">
+      <button
+        type="button"
+        className="w-full flex items-center gap-1 px-2 py-1 text-[10px] text-amber-900 hover:bg-amber-50"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        Xem {item.count} tour · {nameCount} tên khác nhau
+      </button>
+      {open && (
+        <ul className="max-h-36 overflow-y-auto px-2 pb-2 space-y-1 text-[10px] text-gray-800">
+          {members.map((m) => (
+            <li key={m.title} className="flex items-start gap-1 border-t border-amber-100 pt-1 first:border-0 first:pt-0">
+              <span className="flex-1 min-w-0" title={m.title}>
+                <span className="font-medium text-amber-950">{m.count > 1 ? `${m.count}× ` : ""}</span>
+                <span className="break-words">{m.title}</span>
+              </span>
+              {canSplit && (
+                <button
+                  type="button"
+                  className="shrink-0 text-primary-700 hover:underline"
+                  onClick={() => onSplitTour(m.title)}
+                  title="Tách tour này ra dòng riêng để gán keyword khác"
+                >
+                  Tách
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 function UnmatchedMarketRows({
   items,
   onAssign,
+  onSplitTour,
 }: {
   items: UnmatchedItem[];
   onAssign: (market: string, keyword: string) => void | Promise<void>;
+  onSplitTour: (title: string) => void;
 }) {
   const [pendingMarket, setPendingMarket] = useState<Record<string, string>>({});
   const [pendingKeyword, setPendingKeyword] = useState<Record<string, string>>({});
@@ -660,7 +766,7 @@ function UnmatchedMarketRows({
         <td colSpan={3} className="px-3 py-2 text-xs font-semibold text-amber-900">
           <span className="inline-flex items-center gap-1">
             <GripVertical size={12} /> Chưa khớp thị trường ({items.length} dòng · {totalTours} tour) — nhập Thị trường + keyword cụ thể (địa danh), rồi Gán
-            <InfoTip text="Chỉ gom nhóm khi có địa danh/esim/voucher. Tour không có từ đặc thù hiển thị từng tên — tránh gán theo «tour», «lịch»… Keyword phải khớp đúng thị trường bạn chọn." />
+            <InfoTip text="Bấm «Xem tour» để thấy từng tên trong nhóm. «Tách» đưa 1 tour ra dòng riêng (lưu trên trình duyệt). Keyword phải khớp đúng thị trường bạn chọn." />
           </span>
         </td>
       </tr>
@@ -692,11 +798,7 @@ function UnmatchedMarketRows({
                 {item.count > 1 && <span className="text-gray-500 font-normal ml-1">({item.count} tour cùng tên)</span>}
               </span>
             )}
-            {item.sample && item.grouped !== false && item.keyword && item.sample !== item.keyword && (
-              <span className="block text-[10px] text-gray-500 truncate max-w-md mt-0.5" title={item.sample}>
-                VD: {item.sample}
-              </span>
-            )}
+            <UnmatchedMembersPanel item={item} onSplitTour={onSplitTour} />
             <input
               className="input text-xs py-1 w-full mt-1 font-mono border-amber-300 bg-white"
               placeholder={item.keyword ? "Keyword (sửa nếu cần)" : "Keyword: bangkok, esim…"}
@@ -738,9 +840,13 @@ function UnmatchedMarketRows({
 function UnmatchedRouteRows({
   items,
   onAssign,
+  onSplitTour,
+  routeConflicts,
 }: {
   items: UnmatchedItem[];
   onAssign: (thiTruong: string, tuyenTour: string, keyword: string) => void | Promise<void>;
+  onSplitTour: (title: string) => void;
+  routeConflicts: ReturnType<typeof buildRouteKeywordConflicts>;
 }) {
   const [pendingMarket, setPendingMarket] = useState<Record<string, string>>({});
   const [pendingRoute, setPendingRoute] = useState<Record<string, string>>({});
@@ -752,12 +858,15 @@ function UnmatchedRouteRows({
         <td colSpan={4} className="px-3 py-2 text-xs font-semibold text-amber-900">
           <span className="inline-flex items-center gap-1">
             <GripVertical size={12} /> Chưa khớp tuyến ({items.length}) — kéo keyword lên cột Tuyến, hoặc nhập tuyến + keyword rồi Gán
-            <InfoTip text="Nếu thị trường hiển thị sai (vd Du thuyền nhưng tour là Thái Lan): kéo keyword ngắn (bangkok) lên rule Thái Lan, rồi bấm Áp dụng — hệ thống sửa cả thị trường + tuyến theo rule khớp tên tour." />
+            <InfoTip text="Xem danh sách tour trong nhóm; Tách nếu 1 tour cần keyword khác. Keyword đỏ = trùng nhiều tuyến (rule đầu tiên thắng khi Áp dụng)." />
           </span>
         </td>
       </tr>
-      {items.map((item) => (
-        <tr key={item.value} className="bg-amber-50/70 border-t border-amber-200">
+      {items.map((item) => {
+        const rowKw = (keywords[item.value] ?? keywordForRouteDrop(item.value)).trim();
+        const kwConflict = conflictHintForKeyword(rowKw, routeConflicts);
+        return (
+        <tr key={item.bucket_key || item.value} className="bg-amber-50/70 border-t border-amber-200">
           <td className="px-3 py-2">
             <input
               className="input text-xs py-1 w-full border-amber-300 bg-white"
@@ -787,13 +896,15 @@ function UnmatchedRouteRows({
               value={keywords[item.value] ?? keywordForRouteDrop(item.value)}
               onChange={(e) => setKeywords({ ...keywords, [item.value]: e.target.value })}
             />
+            {kwConflict && <p className="text-[10px] text-red-700 mt-0.5">{kwConflict}</p>}
+            <UnmatchedMembersPanel item={item} onSplitTour={onSplitTour} />
             <span
               {...dragAliasProps(keywordForRouteDrop(item.value) || item.value)}
               title={`${item.count} tour — kéo keyword ngắn lên cột Tuyến`}
               className="block truncate max-w-xs"
             >
               <GripVertical size={10} className="text-amber-600 shrink-0 inline" />
-              {item.value}
+              {item.sample || item.value}
               <span className="text-gray-500 ml-1">({item.count})</span>
             </span>
           </td>
@@ -804,12 +915,12 @@ function UnmatchedRouteRows({
               disabled={
                 !(pendingMarket[item.value] ?? item.suggested_thi_truong ?? item.thi_truong ?? "").trim()
                 || !(pendingRoute[item.value] ?? "").trim()
-                || !((keywords[item.value] ?? keywordForRouteDrop(item.value)).trim())
+                || !rowKw
               }
               onClick={async () => {
                 const mk = (pendingMarket[item.value] ?? item.suggested_thi_truong ?? item.thi_truong ?? "").trim();
                 const route = (pendingRoute[item.value] ?? "").trim();
-                const kw = (keywords[item.value] ?? "").trim();
+                const kw = rowKw;
                 if (!mk || !route || !kw) return;
                 await onAssign(mk, route, kw);
                 setPendingRoute((p) => { const n = { ...p }; delete n[item.value]; return n; });
@@ -820,7 +931,8 @@ function UnmatchedRouteRows({
             </button>
           </td>
         </tr>
-      ))}
+      );
+      })}
     </>
   );
 }

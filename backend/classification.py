@@ -385,6 +385,20 @@ def is_route_rule_matched(thi_truong: str, ten_tour: str, lich_trinh: str = "") 
     return route.strip().casefold() not in generic
 
 
+def _unmatched_add_member(bucket: dict, title: str) -> None:
+    members: dict[str, int] = bucket.setdefault("_members", {})
+    members[title] = members.get(title, 0) + 1
+    bucket["count"] = bucket.get("count", 0) + 1
+
+
+def _unmatched_members_list(bucket: dict, *, limit: int = 40) -> list[dict]:
+    raw: dict[str, int] = bucket.get("_members") or {}
+    return [
+        {"title": t, "count": c}
+        for t, c in sorted(raw.items(), key=lambda x: (-x[1], x[0]))[:limit]
+    ]
+
+
 def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
     """Giá trị tour chưa khớp quy tắc — dùng gán keyword/alias trên UI admin."""
     from data_sources import DB_CANONICAL_NGUON
@@ -413,9 +427,10 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
                     "keyword": entry.get("keyword") or "",
                     "suggested_market": entry.get("suggested_market") or "",
                     "grouped": entry.get("grouped", False),
+                    "bucket_key": key,
                 },
             )
-            bucket["count"] += 1
+            _unmatched_add_member(bucket, title)
         market, route = resolve_market_and_route(t.ten_tour or "", t.lich_trinh or "")
         generic = {market.casefold(), "khác", "khac", ""}
         if title and market not in ("", "Khác") and route.strip().casefold() in generic:
@@ -426,8 +441,9 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
                     "thi_truong": market,
                     "sample": title,
                     "suggested_thi_truong": hint.get("suggested_market") or "",
+                    "bucket_key": f"route:{title}",
                 }
-            tuyen_tour[title]["count"] += 1
+            _unmatched_add_member(tuyen_tour[title], title)
         raw_co = (t.cong_ty or "").strip()
         if raw_co and not is_company_alias_matched(raw_co):
             cong_ty[raw_co] = cong_ty.get(raw_co, 0) + 1
@@ -452,6 +468,8 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
                 "keyword": v.get("keyword") or "",
                 "suggested_market": v.get("suggested_market") or "",
                 "grouped": bool(v.get("grouped")),
+                "bucket_key": v.get("bucket_key") or k,
+                "members": _unmatched_members_list(v),
             }
             for k, v in thi_truong.items()
         ],
@@ -465,6 +483,9 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
                 "thi_truong": v["thi_truong"],
                 "sample": v.get("sample", k),
                 "suggested_thi_truong": v.get("suggested_thi_truong") or "",
+                "bucket_key": v.get("bucket_key") or f"route:{k}",
+                "grouped": v["count"] > 1,
+                "members": _unmatched_members_list(v),
             }
             for k, v in tuyen_tour.items()
         ],
