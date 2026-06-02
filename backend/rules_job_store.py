@@ -65,9 +65,25 @@ def _tour_fingerprint(db) -> tuple[int, str | None]:
     return (int(row[0] or 0), row[1].isoformat() if row[1] else None)
 
 
+def _rules_fingerprint(db) -> tuple:
+    from sqlalchemy import func
+
+    from models import MarketKeywordRule, RouteKeywordRule
+
+    mk = db.query(func.count(MarketKeywordRule.id), func.max(MarketKeywordRule.updated_at)).one()
+    rt = db.query(func.count(RouteKeywordRule.id), func.max(RouteKeywordRule.updated_at)).one()
+    return (
+        int(mk[0] or 0),
+        mk[1].isoformat() if mk[1] else None,
+        int(rt[0] or 0),
+        rt[1].isoformat() if rt[1] else None,
+    )
+
+
 def get_unmatched_cached(db, scope: str, loader: Callable[[], dict]) -> dict:
     fp = _tour_fingerprint(db)
-    key = (scope, fp)
+    rules_fp = _rules_fingerprint(db)
+    key = (scope, fp, rules_fp)
     now = time.time()
     with _lock:
         hit = _unmatched_cache.get(key)

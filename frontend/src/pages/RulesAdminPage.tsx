@@ -136,11 +136,12 @@ export default function RulesAdminPage() {
   const { data: departureRules } = useQuery({ queryKey: ["departure-rules"], queryFn: listDepartureRules, enabled: isAdmin });
   const { data: durationRules } = useQuery({ queryKey: ["duration-rules"], queryFn: listDurationRules, enabled: isAdmin });
   const unmatchedScope = tab === "market" || tab === "route" || tab === "company" || tab === "departure" || tab === "duration" ? tab : null;
+  const [unmatchedFresh, setUnmatchedFresh] = useState(false);
   const { data: unmatched, isLoading: unmatchedLoading } = useQuery({
-    queryKey: ["rules-unmatched", unmatchedScope],
-    queryFn: () => getRulesUnmatched(unmatchedScope!),
+    queryKey: ["rules-unmatched", unmatchedScope, unmatchedFresh],
+    queryFn: () => getRulesUnmatched(unmatchedScope!, unmatchedFresh),
     enabled: isAdmin && !!unmatchedScope,
-    staleTime: 3 * 60_000,
+    staleTime: unmatchedFresh ? 0 : 3 * 60_000,
   });
 
   const invalidate = () => {
@@ -211,27 +212,53 @@ export default function RulesAdminPage() {
   const showErr = (e: unknown) =>
     setSyncMsg(String((e as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail || (e as Error)?.message || e));
 
+  const finishApplyPoll = (st: { running?: boolean; error?: string; message?: string; last_result?: unknown }) => {
+    setApplying(false);
+    setUnmatchedFresh(true);
+    if (st.error) {
+      setSyncMsg(st.error);
+      return;
+    }
+    const msg =
+      st.message
+      || (st.last_result && typeof (st.last_result as { message?: string }).message === "string"
+        ? (st.last_result as { message: string }).message
+        : "");
+    if (msg) setSyncMsg(msg);
+    invalidate();
+    window.setTimeout(() => setUnmatchedFresh(false), 500);
+  };
+
   const pollApplyStatus = (attempt = 0) => {
     getApplyClassificationStatus()
       .then((st) => {
         if (st.running) {
-          if (attempt < 120) window.setTimeout(() => pollApplyStatus(attempt + 1), 3000);
+          if (attempt < 120) window.setTimeout(() => pollApplyStatus(attempt + 1), 2000);
           return;
         }
-        setApplying(false);
-        if (st.error) {
-          setSyncMsg(st.error);
-          return;
-        }
-        if (st.message) {
-          setSyncMsg(st.message);
-          invalidate();
-        } else if (st.last_result && typeof (st.last_result as { message?: string }).message === "string") {
-          setSyncMsg((st.last_result as { message: string }).message);
-          invalidate();
-        }
+        finishApplyPoll(st);
       })
       .catch(() => setApplying(false));
+  };
+
+  const pollAfterRuleSave = (attempt = 0) => {
+    getApplyClassificationStatus()
+      .then((st) => {
+        if (st.running && attempt < 60) {
+          setSyncMsg(st.message || "Đang áp dụng quy tắc lên tour…");
+          window.setTimeout(() => pollAfterRuleSave(attempt + 1), 2000);
+          return;
+        }
+        setUnmatchedFresh(true);
+        invalidate();
+        if (st.message && !st.running) setSyncMsg(st.message);
+        window.setTimeout(() => setUnmatchedFresh(false), 500);
+      })
+      .catch(() => {
+        setUnmatchedFresh(true);
+        invalidate();
+        window.setTimeout(() => setUnmatchedFresh(false), 500);
+      });
   };
 
   const onApplyTours = () => {
@@ -247,7 +274,8 @@ export default function RulesAdminPage() {
 
   const afterRuleSaved = (label: string) => {
     invalidate();
-    setSyncMsg(`${label} — tour sẽ cập nhật trong vài phút (chạy nền). Bấm «Áp dụng ngay» nếu cần kết quả tức thì.`);
+    setSyncMsg(`${label} — đang cập nhật tour và danh sách chưa khớp…`);
+    pollAfterRuleSave();
   };
 
   const startEdit = (id: number, draft: Record<string, string>) => {

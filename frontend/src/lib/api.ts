@@ -717,8 +717,9 @@ export type UnmatchedItem = {
 
 export const getRulesUnmatched = async (
   scope: "market" | "route" | "company" | "departure" | "duration",
+  fresh = false,
 ) => {
-  const { data } = await api.get(`/admin/rules/unmatched?scope=${scope}`);
+  const { data } = await api.get(`/admin/rules/unmatched?scope=${scope}${fresh ? "&fresh=1" : ""}`);
   return data as { scope: string; items: UnmatchedItem[] };
 };
 

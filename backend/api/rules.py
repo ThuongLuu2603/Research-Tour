@@ -105,7 +105,7 @@ def _auto_apply_tours(db: Session, enabled: bool, scope: str = "all") -> dict | 
     def _work() -> None:
         session = SessionLocal()
         try:
-            if scope in ("market", "route"):
+            if scope in ("market", "route", "all"):
                 apply_classification_rules_to_tours(session)
             elif scope == "company":
                 apply_company_aliases_to_tours(session)
@@ -118,6 +118,10 @@ def _auto_apply_tours(db: Session, enabled: bool, scope: str = "all") -> dict | 
         except Exception as e:
             log.exception("auto_apply_tours failed scope=%s: %s", scope, e)
         finally:
+            try:
+                invalidate_classification_cache()
+            except Exception:
+                pass
             session.close()
 
     threading.Thread(target=_work, daemon=True, name=f"apply-rules-{scope}").start()
@@ -731,14 +735,15 @@ def list_unmatched_rules(
         "company",
         pattern="^(market|route|company|departure|duration|all)$",
     ),
+    fresh: bool = Query(False, description="Bỏ cache — dùng ngay sau Gán/Áp dụng"),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """Tour chưa khớp quy tắc — thị trường/tuyến: mỗi dòng một tên tour (cache 3 phút)."""
+    """Tour chưa khớp quy tắc — thị trường/tuyến: mỗi dòng một tên tour."""
     from classification import collect_unmatched_values
     from data_sources import DB_CANONICAL_NGUON
     from models import Tour
-    from rules_job_store import get_unmatched_cached
+    from rules_job_store import get_unmatched_cached, invalidate_unmatched_cache
 
     def _load() -> dict:
         tours = (
@@ -748,7 +753,11 @@ def list_unmatched_rules(
         )
         return collect_unmatched_values(tours, vtr_only=False)
 
-    data = get_unmatched_cached(db, "all", _load)
+    if fresh:
+        invalidate_unmatched_cache()
+        data = _load()
+    else:
+        data = get_unmatched_cached(db, "all", _load)
     if scope == "market":
         return {"scope": scope, "items": data["thi_truong"]}
     if scope == "route":
