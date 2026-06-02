@@ -17,6 +17,7 @@ from classification import (
     seed_departure_aliases_from_defaults,
     seed_duration_aliases_from_defaults,
     seed_market_rules_from_hardcode,
+    seed_route_rules_from_bundle,
 )
 from database import get_db
 from models import CompanyAliasRule, DepartureAliasRule, DurationAliasRule, MarketKeywordRule, RouteKeywordRule, User
@@ -283,19 +284,21 @@ def seed_market_defaults(
     }
 
 
-@router.post("/seed-route-from-sheet")
-def seed_route_from_sheet(
+@router.post("/seed-route-defaults")
+def seed_route_defaults(
     auto_apply: bool = Query(True),
+    force: bool = Query(False, description="Ghi đè toàn bộ rule tuyến trong DB bằng bản bundle"),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """Import tuyến tour từ Sheet (xóa rule cũ trong DB, thay bằng Sheet)."""
-    try:
-        count = import_route_rules_to_db(db)
-        tours = _auto_apply_tours(db, auto_apply, scope="route")
-        return {"imported": count, "message": f"Đã import {count} rule tuyến tour từ Sheet", "tours_apply": tours}
-    except Exception as e:
-        raise HTTPException(502, f"Lỗi đọc Google Sheet: {e}") from e
+    """Nạp quy tắc tuyến từ bundle JSON vào Supabase (không đọc Google Sheet)."""
+    count = seed_route_rules_from_bundle(db, force=force)
+    tours = _auto_apply_tours(db, auto_apply, scope="route") if count else None
+    return {
+        "imported": count,
+        "message": f"Đã nạp {count} rule tuyến tour vào DB" if count else "DB đã có rules (bỏ qua)",
+        "tours_apply": tours,
+    }
 
 
 @router.post("/sync-route-from-sheet")

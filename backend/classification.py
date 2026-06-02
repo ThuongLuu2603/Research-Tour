@@ -576,29 +576,11 @@ def _route_rules_from_db() -> tuple[tuple[str, str, tuple[str, ...]], ...]:
         db.close()
 
 
-def _route_rules_from_sheet() -> tuple[tuple[str, str, tuple[str, ...]], ...]:
-    try:
-        from scrapers.route_rules import load_route_rules
-        raw = load_route_rules()
-        out = []
-        for market, rule_list in raw.items():
-            for rule in rule_list:
-                kws = tuple(kw.strip().lower() for kw in rule.get("keywords", []) if kw.strip())
-                if kws:
-                    out.append((market, rule.get("route", market), kws))
-        return tuple(out)
-    except Exception as e:
-        logger.warning("Could not load route rules from sheet: %s", e)
-        return ()
-
-
 def resolve_tuyen_tour(thi_truong: str, ten_tour: str, lich_trinh: str = "") -> str:
     market = (thi_truong or "").strip()
     combined = f"{ten_tour or ''} {lich_trinh or ''}".lower()
 
     rules = _route_rules_from_db()
-    if not rules:
-        rules = _route_rules_from_sheet()
 
     for mkt, route, kws in rules:
         if mkt == market and all(kw in combined for kw in kws):
@@ -606,23 +588,43 @@ def resolve_tuyen_tour(thi_truong: str, ten_tour: str, lich_trinh: str = "") -> 
     return market or "Khác"
 
 
-def ensure_route_rules_imported(db=None) -> int:
-    """Import rule tuyến từ Google Sheet nếu bảng DB đang trống."""
+def seed_route_rules_from_bundle(db=None, *, force: bool = False) -> int:
+    """Seed quy tắc tuyến từ backend/data/route_rules.json → Supabase (không đọc Sheet)."""
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).parent / "data" / "route_rules.json"
+    if not path.is_file():
+        logger.warning("route_rules.json not found — skip route seed")
+        return 0
+
     own_session = db is None
     if own_session:
         db = SessionLocal()
     try:
-        if db.query(RouteKeywordRule).count() > 0:
+        if not force and db.query(RouteKeywordRule).count() > 0:
             return 0
-        from sheets_rules_sync import import_route_rules_to_db
-
-        count = import_route_rules_to_db(db)
+        rows = json.loads(path.read_text(encoding="utf-8"))
+        if force:
+            db.query(RouteKeywordRule).delete()
+        count = 0
+        for row in rows:
+            kws = (row.get("keywords") or "").strip()
+            if not kws:
+                continue
+            db.add(
+                RouteKeywordRule(
+                    thi_truong=row["thi_truong"],
+                    tuyen_tour=row.get("tuyen_tour") or row["thi_truong"],
+                    keywords=kws,
+                    sort_order=int(row.get("sort_order", count)),
+                )
+            )
+            count += 1
+        db.commit()
         invalidate_classification_cache()
-        logger.info("Imported %s route keyword rules from Sheet", count)
+        logger.info("Seeded %s route rules from bundle", count)
         return count
-    except Exception as e:
-        logger.warning("Route rules import from Sheet failed: %s", e)
-        return 0
     finally:
         if own_session:
             db.close()

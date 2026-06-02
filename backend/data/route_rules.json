@@ -1,0 +1,1934 @@
+[
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Alaska",
+    "keywords": "alaska",
+    "sort_order": 0
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Bờ Tây",
+    "keywords": "bờ tây",
+    "sort_order": 1
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Bờ Tây",
+    "keywords": "los angeles",
+    "sort_order": 2
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Bờ Tây",
+    "keywords": "san francisco",
+    "sort_order": 3
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Bờ Tây",
+    "keywords": "san jose",
+    "sort_order": 4
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Bờ Tây",
+    "keywords": "grand canyon",
+    "sort_order": 5
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Bờ Tây",
+    "keywords": "cung đường 17 dặm",
+    "sort_order": 6
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Bờ Đông",
+    "keywords": "bờ đông",
+    "sort_order": 7
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Bờ Đông",
+    "keywords": "new york",
+    "sort_order": 8
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Bờ Đông",
+    "keywords": "washington d.c.",
+    "sort_order": 9
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Bờ Đông",
+    "keywords": "pittsburgh",
+    "sort_order": 10
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Bờ Đông",
+    "keywords": "niagara falls",
+    "sort_order": 11
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Bờ Đông",
+    "keywords": "boston",
+    "sort_order": 12
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Bờ Đông",
+    "keywords": "albany",
+    "sort_order": 13
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Canada",
+    "keywords": "vancouver",
+    "sort_order": 14
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Canada",
+    "keywords": "whistler village",
+    "sort_order": 15
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Canada",
+    "keywords": "granville island",
+    "sort_order": 16
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Canada",
+    "keywords": "toronto",
+    "sort_order": 17
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Canada",
+    "keywords": "ottawa",
+    "sort_order": 18
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Canada",
+    "keywords": "montreal",
+    "sort_order": 19
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Canada",
+    "keywords": "quebec",
+    "sort_order": 20
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Canada",
+    "keywords": "canada",
+    "sort_order": 21
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Hawaii",
+    "keywords": "hawaii",
+    "sort_order": 22
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Hawaii",
+    "keywords": "honolulu",
+    "sort_order": 23
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Houston",
+    "keywords": "houston",
+    "sort_order": 24
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Liên Tuyến Châu Mỹ",
+    "keywords": "canada, cuba, mexico",
+    "sort_order": 25
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Liên Tuyến Châu Mỹ",
+    "keywords": "san diego, mexico",
+    "sort_order": 26
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Mexico",
+    "keywords": "mexico",
+    "sort_order": 27
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "WorldCup",
+    "keywords": "fifa",
+    "sort_order": 28
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "WorldCup",
+    "keywords": "worldcup",
+    "sort_order": 29
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "WorldCup",
+    "keywords": "world cup",
+    "sort_order": 30
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "WorldCup",
+    "keywords": "fi fa",
+    "sort_order": 31
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Đông Tây",
+    "keywords": "đông tây",
+    "sort_order": 32
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Đông Tây",
+    "keywords": "new york, las vegas",
+    "sort_order": 33
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Đông Tây",
+    "keywords": "liên tuyến đông - tây",
+    "sort_order": 34
+  },
+  {
+    "thi_truong": "Châu Mỹ",
+    "tuyen_tour": "Đông Tây",
+    "keywords": "tây đông",
+    "sort_order": 35
+  },
+  {
+    "thi_truong": "Châu Phi",
+    "tuyen_tour": "Ai Cập",
+    "keywords": "cairo",
+    "sort_order": 36
+  },
+  {
+    "thi_truong": "Châu Phi",
+    "tuyen_tour": "Ai Cập",
+    "keywords": "ai cập",
+    "sort_order": 37
+  },
+  {
+    "thi_truong": "Châu Phi",
+    "tuyen_tour": "Kenya",
+    "keywords": "kenya",
+    "sort_order": 38
+  },
+  {
+    "thi_truong": "Châu Phi",
+    "tuyen_tour": "Madagascar",
+    "keywords": "madagascar",
+    "sort_order": 39
+  },
+  {
+    "thi_truong": "Châu Phi",
+    "tuyen_tour": "Nam Phi",
+    "keywords": "nam phi",
+    "sort_order": 40
+  },
+  {
+    "thi_truong": "Châu Phi",
+    "tuyen_tour": "Nam Phi",
+    "keywords": "johannesburg",
+    "sort_order": 41
+  },
+  {
+    "thi_truong": "Châu Á khác",
+    "tuyen_tour": "Mông Cổ",
+    "keywords": "mông cổ",
+    "sort_order": 42
+  },
+  {
+    "thi_truong": "Châu Á khác",
+    "tuyen_tour": "Đường tơ lụa",
+    "keywords": "đường tơ lụa",
+    "sort_order": 43
+  },
+  {
+    "thi_truong": "Châu Á khác",
+    "tuyen_tour": "Đường tơ lụa",
+    "keywords": "uzbekistan, turkmenistan",
+    "sort_order": 44
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "BẮC ÂU",
+    "keywords": "đan mạch",
+    "sort_order": 45
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "BẮC ÂU",
+    "keywords": "na uy",
+    "sort_order": 46
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "BẮC ÂU",
+    "keywords": "thụy điển",
+    "sort_order": 47
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "BẮC ÂU",
+    "keywords": "phần lan",
+    "sort_order": 48
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "BẮC ÂU",
+    "keywords": "bắc âu",
+    "sort_order": 49
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "LIÊN BANG NGA",
+    "keywords": "moscow",
+    "sort_order": 50
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "LIÊN BANG NGA",
+    "keywords": "saint petersburg",
+    "sort_order": 51
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "LIÊN BANG NGA",
+    "keywords": "nước nga",
+    "sort_order": 52
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "LIÊN BANG NGA",
+    "keywords": "matxcova",
+    "sort_order": 53
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "LIÊN BANG NGA",
+    "keywords": "petersburg",
+    "sort_order": 54
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "LIÊN BANG NGA",
+    "keywords": "nga",
+    "sort_order": 55
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "NAM ÂU",
+    "keywords": "ý",
+    "sort_order": 56
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "NAM ÂU",
+    "keywords": "vatican",
+    "sort_order": 57
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "NAM ÂU",
+    "keywords": "tây ban nha",
+    "sort_order": 58
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "NAM ÂU",
+    "keywords": "bồ đào nha",
+    "sort_order": 59
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "THỔ NHĨ KỲ",
+    "keywords": "istanbul",
+    "sort_order": 60
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "THỔ NHĨ KỲ",
+    "keywords": "cappadocia",
+    "sort_order": 61
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "THỔ NHĨ KỲ",
+    "keywords": "pamukkale",
+    "sort_order": 62
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "THỔ NHĨ KỲ",
+    "keywords": "thổ nhĩ kỳ",
+    "sort_order": 63
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "TÂY ÂU",
+    "keywords": "pháp",
+    "sort_order": 64
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "TÂY ÂU",
+    "keywords": "đức",
+    "sort_order": 65
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "TÂY ÂU",
+    "keywords": "hà lan",
+    "sort_order": 66
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "TÂY ÂU",
+    "keywords": "bỉ",
+    "sort_order": 67
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "TÂY ÂU",
+    "keywords": "luxembourg",
+    "sort_order": 68
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "TÂY ÂU",
+    "keywords": "thụy sĩ",
+    "sort_order": 69
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "TÂY ÂU",
+    "keywords": "núi titlis",
+    "sort_order": 70
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "TÂY ÂU",
+    "keywords": "tây đông âu",
+    "sort_order": 71
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "TÂY ÂU",
+    "keywords": "thuỵ sĩ",
+    "sort_order": 72
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "VƯƠNG QUỐC ANH",
+    "keywords": "vương quốc anh",
+    "sort_order": 73
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "VƯƠNG QUỐC ANH",
+    "keywords": "scotland",
+    "sort_order": 74
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "VƯƠNG QUỐC ANH",
+    "keywords": "du lịch anh",
+    "sort_order": 75
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "VƯƠNG QUỐC ANH",
+    "keywords": "xứ wales",
+    "sort_order": 76
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "VƯƠNG QUỐC ANH",
+    "keywords": "anh quốc",
+    "sort_order": 77
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "VƯƠNG QUỐC ANH",
+    "keywords": "london",
+    "sort_order": 78
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "ĐÔNG ÂU",
+    "keywords": "hungary",
+    "sort_order": 79
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "ĐÔNG ÂU",
+    "keywords": "slovakia",
+    "sort_order": 80
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "ĐÔNG ÂU",
+    "keywords": "áo",
+    "sort_order": 81
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "ĐÔNG ÂU",
+    "keywords": "cộng hòa séc",
+    "sort_order": 82
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "ĐÔNG ÂU",
+    "keywords": "ba lan",
+    "sort_order": 83
+  },
+  {
+    "thi_truong": "Châu Âu",
+    "tuyen_tour": "Địa Trung Hải",
+    "keywords": "địa trung hải",
+    "sort_order": 84
+  },
+  {
+    "thi_truong": "Châu Úc",
+    "tuyen_tour": "Mono Sydney",
+    "keywords": "sydney",
+    "sort_order": 85
+  },
+  {
+    "thi_truong": "Châu Úc",
+    "tuyen_tour": "Mono Sydney",
+    "keywords": "blue mountains",
+    "sort_order": 86
+  },
+  {
+    "thi_truong": "Châu Úc",
+    "tuyen_tour": "New Zealand",
+    "keywords": "new zealand",
+    "sort_order": 87
+  },
+  {
+    "thi_truong": "Châu Úc",
+    "tuyen_tour": "SYDNEY - MELBOURNE",
+    "keywords": "sydney, melbourne",
+    "sort_order": 88
+  },
+  {
+    "thi_truong": "Châu Úc",
+    "tuyen_tour": "Tasmania",
+    "keywords": "tasmania",
+    "sort_order": 89
+  },
+  {
+    "thi_truong": "Châu Úc",
+    "tuyen_tour": "Tây  Nam Úc",
+    "keywords": "perth, adelaide",
+    "sort_order": 90
+  },
+  {
+    "thi_truong": "Châu Úc",
+    "tuyen_tour": "Tây Úc",
+    "keywords": "peth",
+    "sort_order": 91
+  },
+  {
+    "thi_truong": "Châu Úc",
+    "tuyen_tour": "Tây Úc",
+    "keywords": "perth",
+    "sort_order": 92
+  },
+  {
+    "thi_truong": "Châu Úc",
+    "tuyen_tour": "Tây Úc",
+    "keywords": "tây úc",
+    "sort_order": 93
+  },
+  {
+    "thi_truong": "Châu Úc",
+    "tuyen_tour": "Úc - New Zealand",
+    "keywords": "úc, new zealand",
+    "sort_order": 94
+  },
+  {
+    "thi_truong": "Châu Úc",
+    "tuyen_tour": "Đông Tây Úc",
+    "keywords": "sydney, peth",
+    "sort_order": 95
+  },
+  {
+    "thi_truong": "Châu Úc",
+    "tuyen_tour": "Đông Tây Úc",
+    "keywords": "peth, melbourne",
+    "sort_order": 96
+  },
+  {
+    "thi_truong": "Châu Úc",
+    "tuyen_tour": "Đông Úc",
+    "keywords": "brisbane",
+    "sort_order": 97
+  },
+  {
+    "thi_truong": "Châu Úc",
+    "tuyen_tour": "Đông Úc",
+    "keywords": "gold coast",
+    "sort_order": 98
+  },
+  {
+    "thi_truong": "Hàn Quốc",
+    "tuyen_tour": "Busan",
+    "keywords": "busan",
+    "sort_order": 99
+  },
+  {
+    "thi_truong": "Hàn Quốc",
+    "tuyen_tour": "Busan - Seoul",
+    "keywords": "busan, seoul",
+    "sort_order": 100
+  },
+  {
+    "thi_truong": "Hàn Quốc",
+    "tuyen_tour": "Hàn Quốc khác",
+    "keywords": "gyeongju",
+    "sort_order": 101
+  },
+  {
+    "thi_truong": "Hàn Quốc",
+    "tuyen_tour": "Hàn Quốc khác",
+    "keywords": "dmz",
+    "sort_order": 102
+  },
+  {
+    "thi_truong": "Hàn Quốc",
+    "tuyen_tour": "Jeju",
+    "keywords": "jeju",
+    "sort_order": 103
+  },
+  {
+    "thi_truong": "Hàn Quốc",
+    "tuyen_tour": "Seoul",
+    "keywords": "seoul",
+    "sort_order": 104
+  },
+  {
+    "thi_truong": "Hàn Quốc",
+    "tuyen_tour": "Seoul",
+    "keywords": "nami",
+    "sort_order": 105
+  },
+  {
+    "thi_truong": "Nam Á",
+    "tuyen_tour": "Bhutan",
+    "keywords": "bhutan",
+    "sort_order": 106
+  },
+  {
+    "thi_truong": "Nam Á",
+    "tuyen_tour": "Maldives",
+    "keywords": "maldives",
+    "sort_order": 107
+  },
+  {
+    "thi_truong": "Nam Á",
+    "tuyen_tour": "Nam Á",
+    "keywords": "pakistan",
+    "sort_order": 108
+  },
+  {
+    "thi_truong": "Nam Á",
+    "tuyen_tour": "Sri Lanka",
+    "keywords": "sri lanka",
+    "sort_order": 109
+  },
+  {
+    "thi_truong": "Nam Á",
+    "tuyen_tour": "Sri Lanka",
+    "keywords": "srilanka",
+    "sort_order": 110
+  },
+  {
+    "thi_truong": "Nam Á",
+    "tuyen_tour": "Ấn Độ",
+    "keywords": "ấn độ",
+    "sort_order": 111
+  },
+  {
+    "thi_truong": "Nam Á",
+    "tuyen_tour": "Ấn Độ - Nepal",
+    "keywords": "ấn độ, nepal",
+    "sort_order": 112
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Cung Đường Vàng",
+    "keywords": "shirakawa-go",
+    "sort_order": 113
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Cung Đường Vàng",
+    "keywords": "takayama, shirakawa",
+    "sort_order": 114
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Cung Đường Vàng",
+    "keywords": "kanazawa",
+    "sort_order": 115
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Cung Đường Vàng",
+    "keywords": "chubu",
+    "sort_order": 116
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Cung Đường Vàng",
+    "keywords": "tokyo, oshino hakkai",
+    "sort_order": 117
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Cung Đường Vàng",
+    "keywords": "tokyo, kawaguchi",
+    "sort_order": 118
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Cung Đường Vàng",
+    "keywords": "tokyo, kanazawa",
+    "sort_order": 119
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Cung Đường Vàng",
+    "keywords": "tokyo, osaka",
+    "sort_order": 120
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Cung Đường Vàng",
+    "keywords": "osaka, nagoya",
+    "sort_order": 121
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Cung Đường Vàng",
+    "keywords": "cung đường vàng",
+    "sort_order": 122
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Hokkaido",
+    "keywords": "hokkaido",
+    "sort_order": 123
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Hokkaido",
+    "keywords": "sapporo",
+    "sort_order": 124
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Hokkaido",
+    "keywords": "furano",
+    "sort_order": 125
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Hokkaido",
+    "keywords": "otaru",
+    "sort_order": 126
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Hokkaido",
+    "keywords": "asahikawa",
+    "sort_order": 127
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Kansai",
+    "keywords": "kyoto, osaka",
+    "sort_order": 128
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Kansai",
+    "keywords": "kyoto, kobe",
+    "sort_order": 129
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Kansai",
+    "keywords": "kyoto, nara",
+    "sort_order": 130
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Kansai",
+    "keywords": "kyoto, izumisano",
+    "sort_order": 131
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Kansai - Hiroshima",
+    "keywords": "hiroshima",
+    "sort_order": 132
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Kansai - Hiroshima",
+    "keywords": "hiroshima, miyajima",
+    "sort_order": 133
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Kansai - Hiroshima",
+    "keywords": "miyajima",
+    "sort_order": 134
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Kansai - Hiroshima",
+    "keywords": "osaka",
+    "sort_order": 135
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Kansai - Shikoku",
+    "keywords": "kobe, matsuyama",
+    "sort_order": 136
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Kansai - Shikoku",
+    "keywords": "osaka, matsuyama",
+    "sort_order": 137
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Kyushu",
+    "keywords": "kyushu",
+    "sort_order": 138
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Kyushu",
+    "keywords": "fukuoka",
+    "sort_order": 139
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Kyushu",
+    "keywords": "beppu",
+    "sort_order": 140
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Kyushu",
+    "keywords": "nagasaki",
+    "sort_order": 141
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Kyushu",
+    "keywords": "kumamoto",
+    "sort_order": 142
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Okinawa",
+    "keywords": "okinawa",
+    "sort_order": 143
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Okinawa",
+    "keywords": "ishigaki",
+    "sort_order": 144
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Okinawa",
+    "keywords": "miyako",
+    "sort_order": 145
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Shikoku",
+    "keywords": "shikoku",
+    "sort_order": 146
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Shikoku",
+    "keywords": "kagawa",
+    "sort_order": 147
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Shikoku",
+    "keywords": "tokushima",
+    "sort_order": 148
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Shikoku",
+    "keywords": "ehime",
+    "sort_order": 149
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Tohoku",
+    "keywords": "tohoku",
+    "sort_order": 150
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Tohoku",
+    "keywords": "fukushima",
+    "sort_order": 151
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Tohoku",
+    "keywords": "aomori",
+    "sort_order": 152
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Tohoku",
+    "keywords": "sendai",
+    "sort_order": 153
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Tokyo - Yamanashi/Núi Phú Sĩ",
+    "keywords": "tokyo, yamanashi",
+    "sort_order": 154
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Tokyo - Yamanashi/Núi Phú Sĩ",
+    "keywords": "tokyo, phú sĩ",
+    "sort_order": 155
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Tokyo - Yamanashi/Núi Phú Sĩ",
+    "keywords": "tokyo, phú sỹ",
+    "sort_order": 156
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Tokyo mono",
+    "keywords": "tokyo, disneyland",
+    "sort_order": 157
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Tokyo mono",
+    "keywords": "tokyo, asakusa",
+    "sort_order": 158
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Tokyo mono",
+    "keywords": "tokyo, shibuya",
+    "sort_order": 159
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Tokyo mono",
+    "keywords": "tokyo, odaiba",
+    "sort_order": 160
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Tokyo mono",
+    "keywords": "tokyo, ginza",
+    "sort_order": 161
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Tokyo mono",
+    "keywords": "tokyo, ueno",
+    "sort_order": 162
+  },
+  {
+    "thi_truong": "Nhật Bản",
+    "tuyen_tour": "Tokyo mono",
+    "keywords": "tokyo, chiba",
+    "sort_order": 163
+  },
+  {
+    "thi_truong": "Singapore - Malaysia",
+    "tuyen_tour": "Batam",
+    "keywords": "singapore, batam",
+    "sort_order": 164
+  },
+  {
+    "thi_truong": "Singapore - Malaysia",
+    "tuyen_tour": "Brunei - Malaysia",
+    "keywords": "brunei, malaysia",
+    "sort_order": 165
+  },
+  {
+    "thi_truong": "Singapore - Malaysia",
+    "tuyen_tour": "Kota Kinabalu",
+    "keywords": "malaysia, kota kinabalu",
+    "sort_order": 166
+  },
+  {
+    "thi_truong": "Singapore - Malaysia",
+    "tuyen_tour": "Malaysia Mono",
+    "keywords": "malaysia",
+    "sort_order": 167
+  },
+  {
+    "thi_truong": "Singapore - Malaysia",
+    "tuyen_tour": "Singapore - Indonesia - Malaysia",
+    "keywords": "indonesia, singapore, malaysia",
+    "sort_order": 168
+  },
+  {
+    "thi_truong": "Singapore - Malaysia",
+    "tuyen_tour": "Singapore - Malaysia",
+    "keywords": "singapore, malaysia",
+    "sort_order": 169
+  },
+  {
+    "thi_truong": "Singapore - Malaysia",
+    "tuyen_tour": "Singapore mono",
+    "keywords": "singapore",
+    "sort_order": 170
+  },
+  {
+    "thi_truong": "Thái Lan",
+    "tuyen_tour": "Bangkok - Pattaya",
+    "keywords": "bangkok",
+    "sort_order": 171
+  },
+  {
+    "thi_truong": "Thái Lan",
+    "tuyen_tour": "Bangkok - Pattaya",
+    "keywords": "pattaya",
+    "sort_order": 172
+  },
+  {
+    "thi_truong": "Thái Lan",
+    "tuyen_tour": "Bangkok - Pattaya",
+    "keywords": "safari world",
+    "sort_order": 173
+  },
+  {
+    "thi_truong": "Thái Lan",
+    "tuyen_tour": "Bangkok - Pattaya",
+    "keywords": "wat arun",
+    "sort_order": 174
+  },
+  {
+    "thi_truong": "Thái Lan",
+    "tuyen_tour": "Bangkok - Pattaya",
+    "keywords": "nong nooch",
+    "sort_order": 175
+  },
+  {
+    "thi_truong": "Thái Lan",
+    "tuyen_tour": "Bangkok - Pattaya",
+    "keywords": "đảo coral",
+    "sort_order": 176
+  },
+  {
+    "thi_truong": "Thái Lan",
+    "tuyen_tour": "Bangkok - Pattaya",
+    "keywords": "baiyoke sky",
+    "sort_order": 177
+  },
+  {
+    "thi_truong": "Thái Lan",
+    "tuyen_tour": "Chiang Mai - Chiang Rai",
+    "keywords": "chiang mai",
+    "sort_order": 178
+  },
+  {
+    "thi_truong": "Thái Lan",
+    "tuyen_tour": "Chiang Mai - Chiang Rai",
+    "keywords": "chiang rai",
+    "sort_order": 179
+  },
+  {
+    "thi_truong": "Thái Lan",
+    "tuyen_tour": "Kanchanaburi",
+    "keywords": "kanchanaburi",
+    "sort_order": 180
+  },
+  {
+    "thi_truong": "Thái Lan",
+    "tuyen_tour": "Khaoyai",
+    "keywords": "khaoyai",
+    "sort_order": 181
+  },
+  {
+    "thi_truong": "Thái Lan",
+    "tuyen_tour": "Koh Samet",
+    "keywords": "koh samet",
+    "sort_order": 182
+  },
+  {
+    "thi_truong": "Thái Lan",
+    "tuyen_tour": "Phuket",
+    "keywords": "phuket",
+    "sort_order": 183
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Con đường tơ lụa",
+    "keywords": "tây ninh, đôn hoàng, lan châu",
+    "sort_order": 184
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Con đường tơ lụa",
+    "keywords": "đôn hoàng",
+    "sort_order": 185
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Con đường tơ lụa",
+    "keywords": "gia dục quan",
+    "sort_order": 186
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Con đường tơ lụa",
+    "keywords": "minh sa sơn",
+    "sort_order": 187
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Con đường tơ lụa",
+    "keywords": "nguyệt nha tuyền",
+    "sort_order": 188
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Cực Bắc Trung Quốc",
+    "keywords": "cực bắc trung quốc",
+    "sort_order": 189
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hoa Bắc",
+    "keywords": "bắc kinh",
+    "sort_order": 190
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hoa Bắc",
+    "keywords": "tử cấm thành",
+    "sort_order": 191
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hoa Bắc",
+    "keywords": "thiên an môn",
+    "sort_order": 192
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hoa Bắc",
+    "keywords": "vạn lý trường thành",
+    "sort_order": 193
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hoa Bắc",
+    "keywords": "tần hoàng đảo",
+    "sort_order": 194
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hoa Bắc",
+    "keywords": "wtown",
+    "sort_order": 195
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hoa Bắc",
+    "keywords": "tế nam",
+    "sort_order": 196
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hoa Bắc",
+    "keywords": "khúc phụ",
+    "sort_order": 197
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hoa Đông",
+    "keywords": "thượng hải",
+    "sort_order": 198
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hoa Đông",
+    "keywords": "ô trấn",
+    "sort_order": 199
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hoa Đông",
+    "keywords": "giang nam",
+    "sort_order": 200
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hoa Đông",
+    "keywords": "tô châu",
+    "sort_order": 201
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hoa Đông",
+    "keywords": "hàng châu",
+    "sort_order": 202
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hoa Đông",
+    "keywords": "vô tích",
+    "sort_order": 203
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hoa Đông",
+    "keywords": "nam kinh",
+    "sort_order": 204
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hà Nam - Lạc Dương",
+    "keywords": "hà nam",
+    "sort_order": 205
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hà Nam - Lạc Dương",
+    "keywords": "lạc dương",
+    "sort_order": 206
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hà Nam - Lạc Dương",
+    "keywords": "trịnh châu",
+    "sort_order": 207
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hà Nam - Lạc Dương",
+    "keywords": "khai phong",
+    "sort_order": 208
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hà Nam - Lạc Dương",
+    "keywords": "thiếu lâm tự",
+    "sort_order": 209
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hà Nam - Lạc Dương",
+    "keywords": "núi vân đài sơn",
+    "sort_order": 210
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hạ Môn - Thổ Lâu",
+    "keywords": "tuyền châu",
+    "sort_order": 211
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hạ Môn - Thổ Lâu",
+    "keywords": "thổ lâu",
+    "sort_order": 212
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hạ Môn - Thổ Lâu",
+    "keywords": "hạ môn",
+    "sort_order": 213
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hải Nam - Tam Á",
+    "keywords": "hải nam",
+    "sort_order": 214
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hải Nam - Tam Á",
+    "keywords": "tam á",
+    "sort_order": 215
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hải Nam - Tam Á",
+    "keywords": "hải khẩu",
+    "sort_order": 216
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hải Nam - Tam Á",
+    "keywords": "phố cổ kỳ lầu",
+    "sort_order": 217
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hải Nam - Tam Á",
+    "keywords": "nam sơn quan âm",
+    "sort_order": 218
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hải Nam - Tam Á",
+    "keywords": "thủy cung atlantis",
+    "sort_order": 219
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hải Nam - Tam Á",
+    "keywords": "đảo phượng hoàng",
+    "sort_order": 220
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hắc Long Giang",
+    "keywords": "cáp nhĩ tân",
+    "sort_order": 221
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hắc Long Giang",
+    "keywords": "yabuli",
+    "sort_order": 222
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hắc Long Giang",
+    "keywords": "hắc long giang",
+    "sort_order": 223
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hồ Nam - Hồ Bắc",
+    "keywords": "hồ bắc",
+    "sort_order": 224
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hồ Nam - Hồ Bắc",
+    "keywords": "cửu trại câu",
+    "sort_order": 225
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hồ Nam - Hồ Bắc",
+    "keywords": "cửu giang",
+    "sort_order": 226
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hồ Nam - Hồ Bắc",
+    "keywords": "thượng nhiêu",
+    "sort_order": 227
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hồ Nam - Hồ Bắc",
+    "keywords": "nghi xương",
+    "sort_order": 228
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hồ Nam - Hồ Bắc",
+    "keywords": "vũ hán",
+    "sort_order": 229
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hồ Nam - Hồ Bắc",
+    "keywords": "khai phong",
+    "sort_order": 230
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hồ Nam - Hồ Bắc",
+    "keywords": "lạc giương",
+    "sort_order": 231
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hồ Nam - Hồ Bắc",
+    "keywords": "tây an",
+    "sort_order": 232
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hồ Nam - Hồ Bắc",
+    "keywords": "nghi xương",
+    "sort_order": 233
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hồ Nam - Hồ Bắc",
+    "keywords": "trương gia giới",
+    "sort_order": 234
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hồ Nam - Hồ Bắc",
+    "keywords": "trường sa",
+    "sort_order": 235
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hồ Nam - Hồ Bắc",
+    "keywords": "thường đức",
+    "sort_order": 236
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hồ Nam - Hồ Bắc",
+    "keywords": "phượng hoàng cổ trấn",
+    "sort_order": 237
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hồ Nam - Hồ Bắc",
+    "keywords": "thiên môn sơn",
+    "sort_order": 238
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hồng Kông",
+    "keywords": "hồng kông",
+    "sort_order": 239
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hồng Kông",
+    "keywords": "hong kong",
+    "sort_order": 240
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Hồng Kông",
+    "keywords": "hongkong",
+    "sort_order": 241
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Liên tuyến Hoa Bắc Hoa Đông",
+    "keywords": "bắc kinh, thượng hải",
+    "sort_order": 242
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Nam Xương",
+    "keywords": "nam xương",
+    "sort_order": 243
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Phúc Kiến",
+    "keywords": "phúc kiến",
+    "sort_order": 244
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Phúc Kiến",
+    "keywords": "tuyền châu",
+    "sort_order": 245
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Phúc Kiến",
+    "keywords": "phúc châu",
+    "sort_order": 246
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Phúc Kiến",
+    "keywords": "vũ di sơn",
+    "sort_order": 247
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Phúc Kiến",
+    "keywords": "hạ môn",
+    "sort_order": 248
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Quý Dương",
+    "keywords": "quý dương",
+    "sort_order": 249
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Quảng Tây",
+    "keywords": "nam ninh",
+    "sort_order": 250
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Quảng Tây",
+    "keywords": "quế lâm",
+    "sort_order": 251
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Quảng Đông",
+    "keywords": "quảng đông",
+    "sort_order": 252
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Quảng Đông",
+    "keywords": "quảng châu",
+    "sort_order": 253
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Quảng Đông",
+    "keywords": "thẩm quyến",
+    "sort_order": 254
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Quảng Đông",
+    "keywords": "chu hải",
+    "sort_order": 255
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Trung Quốc - Triều Tiên",
+    "keywords": "triều tiên",
+    "sort_order": 256
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Trung Quốc khác",
+    "keywords": "tây song bản nạp",
+    "sort_order": 257
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Trung Quốc đường bộ",
+    "keywords": "đường bộ",
+    "sort_order": 258
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Tân Cương",
+    "keywords": "tân cương",
+    "sort_order": 259
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Tân Cương",
+    "keywords": "nam cương",
+    "sort_order": 260
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Tân Cương",
+    "keywords": "bắc cương",
+    "sort_order": 261
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Tân Cương",
+    "keywords": "urumqi",
+    "sort_order": 262
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Tân Cương",
+    "keywords": "burqin",
+    "sort_order": 263
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Tân Cương",
+    "keywords": "jiadengyu",
+    "sort_order": 264
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Tân Cương",
+    "keywords": "kuitun",
+    "sort_order": 265
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Tây Tạng",
+    "keywords": "tây tạng",
+    "sort_order": 266
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Tứ Xuyên",
+    "keywords": "tứ xuyên",
+    "sort_order": 267
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Tứ Xuyên",
+    "keywords": "đạo thành",
+    "sort_order": 268
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Tứ Xuyên",
+    "keywords": "á đinh",
+    "sort_order": 269
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Tứ Xuyên",
+    "keywords": "khang định",
+    "sort_order": 270
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Tứ Xuyên",
+    "keywords": "lôi định",
+    "sort_order": 271
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Tứ Xuyên",
+    "keywords": "nhã giang",
+    "sort_order": 272
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Tứ Xuyên",
+    "keywords": "trùng khánh",
+    "sort_order": 273
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Tứ Xuyên",
+    "keywords": "thành đô",
+    "sort_order": 274
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Vân Nam",
+    "keywords": "vân nam",
+    "sort_order": 275
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Vân Nam",
+    "keywords": "bình biên",
+    "sort_order": 276
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Vân Nam",
+    "keywords": "di lặc",
+    "sort_order": 277
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Vân Nam",
+    "keywords": "kiến thủy",
+    "sort_order": 278
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Vân Nam",
+    "keywords": "mông tự",
+    "sort_order": 279
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Vân Nam",
+    "keywords": "côn minh",
+    "sort_order": 280
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Vân Nam",
+    "keywords": "đại lý",
+    "sort_order": 281
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Vân Nam",
+    "keywords": "lệ giang",
+    "sort_order": 282
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Vân Nam",
+    "keywords": "shangrila",
+    "sort_order": 283
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Vũ Hán",
+    "keywords": "vũ hán",
+    "sort_order": 284
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Vũ Hán",
+    "keywords": "giang tây",
+    "sort_order": 285
+  },
+  {
+    "thi_truong": "Trung Quốc",
+    "tuyen_tour": "Vũ Hán",
+    "keywords": "vọng tiên cốc",
+    "sort_order": 286
+  },
+  {
+    "thi_truong": "Trung Đông",
+    "tuyen_tour": "Trung Đông",
+    "keywords": "dubai",
+    "sort_order": 287
+  },
+  {
+    "thi_truong": "Trung Đông",
+    "tuyen_tour": "Trung Đông",
+    "keywords": "saudi arabia",
+    "sort_order": 288
+  },
+  {
+    "thi_truong": "Đài Loan",
+    "tuyen_tour": "Đài Loan",
+    "keywords": "đài bắc",
+    "sort_order": 289
+  },
+  {
+    "thi_truong": "Đài Loan",
+    "tuyen_tour": "Đài Loan",
+    "keywords": "đài trung",
+    "sort_order": 290
+  },
+  {
+    "thi_truong": "Đài Loan",
+    "tuyen_tour": "Đài Loan",
+    "keywords": "cao hùng",
+    "sort_order": 291
+  },
+  {
+    "thi_truong": "Đài Loan",
+    "tuyen_tour": "Đài Loan",
+    "keywords": "đài loan",
+    "sort_order": 292
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "BRUNEI",
+    "keywords": "brunei",
+    "sort_order": 293
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Campuchia",
+    "keywords": "campuchia",
+    "sort_order": 294
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Campuchia",
+    "keywords": "siem reap",
+    "sort_order": 295
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Campuchia",
+    "keywords": "phnom penh",
+    "sort_order": 296
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Campuchia",
+    "keywords": "sihanouk ville",
+    "sort_order": 297
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Campuchia",
+    "keywords": "koh rong",
+    "sort_order": 298
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Campuchia",
+    "keywords": "bokor",
+    "sort_order": 299
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Campuchia",
+    "keywords": "kampot",
+    "sort_order": 300
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Campuchia",
+    "keywords": "putkiri",
+    "sort_order": 301
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Campuchia - Lào - Thái Lan",
+    "keywords": "cam, lào",
+    "sort_order": 302
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Campuchia - Lào - Thái Lan",
+    "keywords": "campuchia, lào",
+    "sort_order": 303
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Campuchia - Lào - Thái Lan",
+    "keywords": "campuchia, lào, thái",
+    "sort_order": 304
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Campuchia - Lào - Thái Lan",
+    "keywords": "cam, lào, thái",
+    "sort_order": 305
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "DUBAI - BRUNEI",
+    "keywords": "dubai, brunei",
+    "sort_order": 306
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "INDONESIA (Bali)",
+    "keywords": "bali",
+    "sort_order": 307
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "INDONESIA (Bali)",
+    "keywords": "indonesia",
+    "sort_order": 308
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "INDONESIA (Bali)",
+    "keywords": "nusa penida",
+    "sort_order": 309
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "INDONESIA (Bali)",
+    "keywords": "tampaksiring",
+    "sort_order": 310
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "INDONESIA (Bali)",
+    "keywords": "bromo",
+    "sort_order": 311
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "INDONESIA (Bali)",
+    "keywords": "jakarta",
+    "sort_order": 312
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Lào",
+    "keywords": "lào",
+    "sort_order": 313
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Lào",
+    "keywords": "viêng chăn",
+    "sort_order": 314
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Lào",
+    "keywords": "luang prabang",
+    "sort_order": 315
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Lào",
+    "keywords": "vang vieng",
+    "sort_order": 316
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Lào",
+    "keywords": "triệu voi",
+    "sort_order": 317
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Lào",
+    "keywords": "victoria xiengthong palace",
+    "sort_order": 318
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Lào",
+    "keywords": "quốc phật",
+    "sort_order": 319
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Philippines",
+    "keywords": "philippines",
+    "sort_order": 320
+  },
+  {
+    "thi_truong": "Đông Nam Á khác",
+    "tuyen_tour": "Philippines",
+    "keywords": "manila",
+    "sort_order": 321
+  }
+]

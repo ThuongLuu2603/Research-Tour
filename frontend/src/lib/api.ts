@@ -562,6 +562,11 @@ export const syncRouteFromSheet = async () => {
   return data;
 };
 
+export const seedRouteDefaults = async (force = false) => {
+  const { data } = await api.post(`/admin/rules/seed-route-defaults${force ? "?force=true" : ""}`);
+  return data as { imported: number; message: string };
+};
+
 export const syncRouteToSheet = async () => {
   const { data } = await api.post("/admin/rules/sync-route-to-sheet");
   return data;

@@ -9,7 +9,7 @@ import {
   listDepartureRules, createDepartureRule, deleteDepartureRule, updateDepartureRule,
   listDurationRules, createDurationRule, deleteDurationRule, updateDurationRule,
   seedMarketDefaults, seedCompanyDefaults, seedDepartureDefaults, seedDurationDefaults,
-  syncRouteFromSheet,
+  seedRouteDefaults,
   applyClassificationToTours,
   getRulesUnmatched,
   MarketRule, RouteRule, CompanyRule, DepartureRule, DurationRule, UnmatchedItem,
@@ -350,15 +350,15 @@ export default function RulesAdminPage() {
             <button onClick={() => addRoute.mutate()} disabled={!rMarket || !rRoute || !rKeywords} className="btn-primary text-sm"><Plus size={14} /> Thêm rule</button>
             <button
               type="button"
-              onClick={() => syncRouteFromSheet().then((r) => afterRuleSaved(r.message || "Đã import tuyến từ Sheet")).catch(showErr)}
+              onClick={() => seedRouteDefaults().then((r) => afterRuleSaved(r.message || "Đã nạp quy tắc tuyến")).catch(showErr)}
               className="btn-secondary text-sm"
             >
-              <Database size={14} /> Import từ Sheet
+              <Database size={14} /> Import mặc định
             </button>
           </div>
           {(routeRules?.length ?? 0) === 0 && (
             <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-              Chưa có quy tắc tuyến trong database. Bấm <strong>Import từ Sheet</strong> (tab «Điểm tuyến Tour» trên Google Sheet) hoặc thêm thủ công.
+              Chưa có quy tắc tuyến trong Supabase. Bấm <strong>Import mặc định</strong> hoặc thêm thủ công — quy tắc chỉ lưu trong database, không đồng bộ Sheet.
             </p>
           )}
           <div className="card overflow-auto max-h-[500px]">
