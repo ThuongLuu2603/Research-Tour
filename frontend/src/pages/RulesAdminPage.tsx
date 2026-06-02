@@ -251,12 +251,40 @@ export default function RulesAdminPage() {
     ),
     [durationRules, search],
   );
-  const filteredUnmatched = useMemo(
-    () => (unmatched?.items ?? []).filter((x) => matchSearch(
-      search, x.value, x.count, x.thi_truong, x.keyword, x.suggested_market, x.suggested_thi_truong, x.sample,
-    )),
-    [unmatched, search],
+  const unmatchedSplits = useMemo(() => {
+    if (tab !== "market" && tab !== "route") return new Set<string>();
+    return loadUnmatchedSplits(tab);
+  }, [tab, splitRevision]);
+
+  const routeKeywordConflicts = useMemo(
+    () => buildRouteKeywordConflicts(routeRules ?? []),
+    [routeRules],
   );
+
+  const filteredUnmatched = useMemo(() => {
+    const base = (unmatched?.items ?? []).filter((x) => matchSearch(
+      search,
+      x.value,
+      x.count,
+      x.thi_truong,
+      x.keyword,
+      x.suggested_market,
+      x.suggested_thi_truong,
+      x.sample,
+      ...(x.members ?? []).flatMap((m) => [m.title, m.count]),
+    ));
+    if (tab === "market" || tab === "route") {
+      return expandUnmatchedWithSplits(base, unmatchedSplits);
+    }
+    return base;
+  }, [unmatched, search, tab, unmatchedSplits]);
+
+  const splitUnmatchedTour = (title: string) => {
+    if (tab !== "market" && tab !== "route") return;
+    splitUnmatchedTitle(tab, title);
+    setSplitRevision((n) => n + 1);
+  };
+
   const canonicalOptions = useMemo(() => {
     if (tab === "company") return [...new Set((companyRules ?? []).map((r) => r.canonical_name))];
     if (tab === "departure") return [...new Set((departureRules ?? []).map((r) => r.canonical_name))];
