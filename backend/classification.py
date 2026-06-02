@@ -265,6 +265,38 @@ def _tour_title_hint(t) -> str:
     return re.sub(r"\s+", " ", (t.ten_tour or "").strip())[:120]
 
 
+_TITLE_KEYWORD_HINTS: tuple[str, ...] = (
+    "bangkok", "pattaya", "phuket", "chiang mai", "thái lan", "thailand",
+    "nhật bản", "tokyo", "osaka", "đài loan", "taiwan", "singapore", "malaysia",
+    "hàn quốc", "seoul", "trung quốc", "châu âu", "paris", "dubai", "mexico",
+    "canada", "cuba", "houston", "esim", "voucher",
+)
+
+
+def suggest_keyword_from_title(title: str) -> str:
+    """Gợi ý 1 keyword ngắn từ tên tour (địa danh / sản phẩm)."""
+    entry = _market_unmatched_entry(title)
+    kw = entry.get("keyword") or ""
+    if kw:
+        return kw
+    s = (title or "").lower()
+    best = ""
+    for h in _TITLE_KEYWORD_HINTS:
+        if h in s and len(h) > len(best):
+            best = h
+    return best
+
+
+def merge_keyword_csv(existing: str, add: str) -> str:
+    seen: list[str] = []
+    for blob in (existing, add):
+        for part in blob.split(","):
+            p = part.strip().lower()
+            if p and p not in seen:
+                seen.append(p)
+    return ", ".join(seen)
+
+
 # Từ quá chung — không dùng làm keyword gom nhóm (gây gán sai thị trường).
 _MARKET_HINT_STOPWORDS = frozenset({
     "tour", "tours", "du", "lich", "lịch", "chua", "chưa", "hang", "hành", "hanh", "trinh", "trình",
@@ -430,6 +462,7 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
     thoi_gian: dict[str, int] = {}
     thi_truong: dict[str, dict] = {}
     tuyen_tour: dict[str, dict] = {}
+    classify_gaps: dict[str, dict] = {}
 
     for t in tours:
         if vtr_only and not is_vietravel_tab(t):
@@ -471,6 +504,37 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
                     "bucket_key": f"route:{title}",
                 }
             _unmatched_add_member(tuyen_tour[title], title)
+
+        needs_market = title and not is_market_rule_matched(
+            t.ten_tour or "",
+            t.lich_trinh or "",
+            market_pairs=market_pairs,
+            route_rules=route_rules,
+        )
+        needs_route = title and market not in ("", "Khác") and not from_route_rule
+        if title and (needs_market or needs_route):
+            entry = _market_unmatched_entry(title)
+            skw = suggest_keyword_from_title(title)
+            sug_mk = entry.get("suggested_market") or (market if market not in ("", "Khác") else "")
+            if title not in classify_gaps:
+                classify_gaps[title] = {
+                    "value": title,
+                    "count": 0,
+                    "sample": title,
+                    "needs_market": needs_market,
+                    "needs_route": needs_route,
+                    "suggested_market": sug_mk,
+                    "suggested_route": (route if from_route_rule else sug_mk or market) or "",
+                    "market_keyword": skw,
+                    "route_keywords": skw,
+                    "resolved_market": market if market not in ("", "Khác") else "",
+                }
+            else:
+                g = classify_gaps[title]
+                g["needs_market"] = g["needs_market"] or needs_market
+                g["needs_route"] = g["needs_route"] or needs_route
+            classify_gaps[title]["count"] += 1
+
         raw_co = (t.cong_ty or "").strip()
         if raw_co and not is_company_alias_matched(raw_co):
             cong_ty[raw_co] = cong_ty.get(raw_co, 0) + 1
@@ -519,9 +583,29 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
         key=lambda x: -x["count"],
     )[:40]
 
+    classify_rows = sorted(
+        [
+            {
+                "value": k,
+                "count": v["count"],
+                "sample": v.get("sample", k),
+                "needs_market": bool(v.get("needs_market")),
+                "needs_route": bool(v.get("needs_route")),
+                "suggested_market": v.get("suggested_market") or "",
+                "suggested_route": v.get("suggested_route") or "",
+                "market_keyword": v.get("market_keyword") or "",
+                "route_keywords": v.get("route_keywords") or "",
+                "resolved_market": v.get("resolved_market") or "",
+            }
+            for k, v in classify_gaps.items()
+        ],
+        key=lambda x: -x["count"],
+    )[:50]
+
     return {
         "thi_truong": market_rows,
         "tuyen_tour": route_rows,
+        "classify": classify_rows,
         "cong_ty": _rows(cong_ty),
         "diem_kh": _rows(diem_kh),
         "thoi_gian": _rows(thoi_gian),

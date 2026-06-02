@@ -713,10 +713,26 @@ export type UnmatchedItem = {
   bucket_key?: string;
   /** Danh sách tên tour trong nhóm */
   members?: UnmatchedTourMember[];
+  needs_market?: boolean;
+  needs_route?: boolean;
+  suggested_route?: string;
+  market_keyword?: string;
+  route_keywords?: string;
+  resolved_market?: string;
+};
+
+export const assignClassification = async (body: {
+  thi_truong: string;
+  tuyen_tour?: string;
+  route_keywords: string;
+  market_keyword?: string;
+}) => {
+  const { data } = await api.post("/admin/rules/assign-classification", body);
+  return data as { message: string; market_keyword: string };
 };
 
 export const getRulesUnmatched = async (
-  scope: "market" | "route" | "company" | "departure" | "duration",
+  scope: "market" | "route" | "classify" | "company" | "departure" | "duration",
   fresh = false,
 ) => {
   const { data } = await api.get(`/admin/rules/unmatched?scope=${scope}${fresh ? "&fresh=1" : ""}`);

@@ -75,6 +75,14 @@ class RouteRuleIn(BaseModel):
     sort_order: int = 0
 
 
+class AssignClassificationIn(BaseModel):
+    thi_truong: str = Field(max_length=128)
+    tuyen_tour: str = Field(default="", max_length=256)
+    route_keywords: str = Field(max_length=512, description="Keyword tuyến (dấu phẩy = AND)")
+    market_keyword: str = Field(default="", max_length=256, description="Để trống = lấy từ keyword tuyến đầu tiên")
+    auto_apply: bool = True
+
+
 def _try_push_market(db: Session) -> str | None:
     try:
         n = push_market_rules_to_sheet(db)
@@ -733,7 +741,7 @@ def apply_duration_rules_to_tours(_: User = Depends(require_admin), db: Session 
 def list_unmatched_rules(
     scope: str = Query(
         "company",
-        pattern="^(market|route|company|departure|duration|all)$",
+        pattern="^(market|route|classify|company|departure|duration|all)$",
     ),
     fresh: bool = Query(False, description="Bỏ cache — dùng ngay sau Gán/Áp dụng"),
     _: User = Depends(require_admin),
@@ -762,6 +770,8 @@ def list_unmatched_rules(
         return {"scope": scope, "items": data["thi_truong"]}
     if scope == "route":
         return {"scope": scope, "items": data["tuyen_tour"]}
+    if scope == "classify":
+        return {"scope": scope, "items": data["classify"]}
     if scope == "company":
         return {"scope": scope, "items": data["cong_ty"]}
     if scope == "departure":
@@ -769,6 +779,65 @@ def list_unmatched_rules(
     if scope == "duration":
         return {"scope": scope, "items": data["thoi_gian"]}
     return {"scope": "all", **data}
+
+
+@router.post("/assign-classification")
+def assign_classification(
+    body: AssignClassificationIn,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Gán một lần: thị trường + tuyến + keyword (tạo/cập nhật rule + áp dụng tour)."""
+    from classification import merge_keyword_csv
+
+    mk = body.thi_truong.strip()
+    route = (body.tuyen_tour or mk).strip()
+    route_kws = merge_keyword_csv("", body.route_keywords)
+    if not mk or not route_kws:
+        raise HTTPException(400, "Cần thị trường và keyword tuyến")
+    parts = [p.strip().lower() for p in route_kws.split(",") if p.strip()]
+    market_kw = (body.market_keyword or parts[0] if parts else "").strip().lower()
+    if not market_kw:
+        raise HTTPException(400, "Cần keyword thị trường")
+
+    existing_mk = (
+        db.query(MarketKeywordRule)
+        .filter(MarketKeywordRule.keyword == market_kw, MarketKeywordRule.active == True)
+        .first()
+    )
+    if not existing_mk:
+        db.add(MarketKeywordRule(market=mk, keyword=market_kw))
+    elif existing_mk.market.strip() != mk:
+        db.add(MarketKeywordRule(market=mk, keyword=market_kw))
+
+    route_rule = (
+        db.query(RouteKeywordRule)
+        .filter(
+            RouteKeywordRule.thi_truong == mk,
+            RouteKeywordRule.tuyen_tour == route,
+            RouteKeywordRule.active == True,
+        )
+        .first()
+    )
+    if route_rule:
+        route_rule.keywords = merge_keyword_csv(route_rule.keywords, route_kws)
+    else:
+        db.add(
+            RouteKeywordRule(
+                thi_truong=mk,
+                tuyen_tour=route,
+                keywords=route_kws,
+            )
+        )
+
+    db.commit()
+    invalidate_classification_cache()
+    tours = _auto_apply_tours(db, body.auto_apply, scope="all")
+    return {
+        "message": f"Đã gán {mk} / {route} — keyword tuyến: {route_kws}",
+        "market_keyword": market_kw,
+        "tours_apply": tours,
+    }
 
 
 @router.post("/market/assign-keyword")
