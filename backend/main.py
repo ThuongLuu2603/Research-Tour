@@ -6,10 +6,10 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from api import auth, tours, analytics, scraper as scraper_api, admin, compare, rules as rules_api, intelligence as intelligence_api, workspaces, market_lab as market_lab_api
 from api.scraper import set_event_loop
@@ -101,8 +101,11 @@ app.include_router(workspaces.router)
 app.include_router(market_lab_api.router)
 
 
-@app.get("/health")
-def health():
+@app.api_route("/health", methods=["GET", "HEAD"], include_in_schema=False)
+def health(request: Request):
+    """GET/HEAD for Render health check and UptimeRobot (HEAD keeps-alive)."""
+    if request.method == "HEAD":
+        return Response(status_code=200)
     return {"status": "ok"}
 
 
