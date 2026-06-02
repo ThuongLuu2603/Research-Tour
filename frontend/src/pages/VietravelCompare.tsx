@@ -170,7 +170,7 @@ export default function VietravelCompare() {
     return filterOpts?.routes_by_market?.[thiTruong] ?? [];
   }, [thiTruong, filterOpts]);
 
-  const { data: summary, isFetched: summaryReady } = useQuery({
+  const { data: summary } = useQuery({
     queryKey: ["compare-summary", filters],
     queryFn: () => getCompareSummary(filters),
     staleTime: compareStale,
@@ -178,7 +178,7 @@ export default function VietravelCompare() {
   const { data: segments, isLoading: segmentsLoading, isError: segmentsError, refetch: refetchSegments } = useQuery({
     queryKey: ["compare-segments", segmentQueryFilters],
     queryFn: () => getCompareSegments(segmentQueryFilters),
-    enabled: needsSegments && summaryReady,
+    enabled: needsSegments,
     staleTime: compareStale,
     retry: 2,
   });

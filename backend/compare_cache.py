@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -15,7 +16,8 @@ from tour_sources import apply_market_compare_source_filter, filter_tours_for_ma
 
 logger = logging.getLogger(__name__)
 
-TTL_SECONDS = 120
+# Cache đủ lâu để tab So sánh VTR không phải tính lại mỗi lần đổi filter (Render free spin-down vẫn cold).
+TTL_SECONDS = int(os.getenv("COMPARE_CACHE_TTL", "900"))
 
 
 def _segments_to_rows(segments: list[SegmentStats]) -> list[dict]:
@@ -61,6 +63,56 @@ def _db_fingerprint(db: Session) -> tuple[int, str | None]:
 
 def _cache_key(thi_truong: list[str], tuyen_tour: str, diem_kh: str, fp: tuple[int, str | None]) -> tuple:
     return (tuple(sorted(thi_truong)), tuyen_tour.strip(), diem_kh.strip(), fp)
+
+
+def _has_filters(thi_truong: list[str], tuyen_tour: str, diem_kh: str) -> bool:
+    return bool(thi_truong or tuyen_tour.strip() or diem_kh.strip())
+
+
+def _filter_tours(
+    tours: list[Tour],
+    thi_truong: list[str],
+    tuyen_tour: str,
+    diem_kh: str,
+) -> list[Tour]:
+    out = tours
+    if thi_truong:
+        markets = {m.strip() for m in thi_truong}
+        out = [t for t in out if (t.thi_truong or "").strip() in markets]
+    if tuyen_tour.strip():
+        needle = tuyen_tour.strip().lower()
+        out = [t for t in out if needle in (t.tuyen_tour or "").lower()]
+    if diem_kh.strip():
+        needle = diem_kh.strip().lower()
+        out = [t for t in out if needle in (t.diem_kh or "").lower()]
+    return out
+
+
+def _filter_context(
+    base: CompareContext,
+    thi_truong: list[str],
+    tuyen_tour: str,
+    diem_kh: str,
+) -> CompareContext:
+    """Lọc từ cache gốc (toàn thị trường) — tránh load DB + build_segment_stats lại."""
+    segments = base.segments
+    if thi_truong:
+        markets = set(thi_truong)
+        segments = [s for s in segments if s.thi_truong in markets]
+    if tuyen_tour.strip():
+        needle = tuyen_tour.strip().lower()
+        segments = [s for s in segments if needle in (s.tuyen_tour or "").lower()]
+    if diem_kh.strip():
+        needle = diem_kh.strip().lower()
+        segments = [s for s in segments if needle in (s.diem_kh or "").lower()]
+    tours = _filter_tours(base.tours, thi_truong, tuyen_tour, diem_kh)
+    segment_rows = _segments_to_rows(segments)
+    return CompareContext(
+        tours=tours,
+        segments=segments,
+        segment_by_key={s.key: s for s in segments},
+        segment_rows=segment_rows,
+    )
 
 
 def load_tours(
@@ -113,6 +165,13 @@ def get_compare_context(
         hit = _cache.get(key)
         if hit and now - hit[0] < TTL_SECONDS:
             return hit[1]
+        if _has_filters(thi_truong, tuyen_tour, diem_kh):
+            base_key = _cache_key([], "", "", fp)
+            base_hit = _cache.get(base_key)
+            if base_hit and now - base_hit[0] < TTL_SECONDS:
+                filtered = _filter_context(base_hit[1], thi_truong, tuyen_tour, diem_kh)
+                _cache[key] = (now, filtered)
+                return filtered
         if key in _inflight:
             waiter = _inflight[key]
             is_owner = False
@@ -131,7 +190,13 @@ def get_compare_context(
         return get_compare_context(db, thi_truong, tuyen_tour, diem_kh)
 
     try:
-        ctx = _build_context(db, thi_truong, tuyen_tour, diem_kh)
+        if _has_filters(thi_truong, tuyen_tour, diem_kh):
+            base_ctx = _build_context(db, [], "", "")
+            ctx = _filter_context(base_ctx, thi_truong, tuyen_tour, diem_kh)
+            with _lock:
+                _cache[_cache_key([], "", "", fp)] = (time.time(), base_ctx)
+        else:
+            ctx = _build_context(db, thi_truong, tuyen_tour, diem_kh)
         with _lock:
             _cache[key] = (time.time(), ctx)
             if len(_cache) > 32:
