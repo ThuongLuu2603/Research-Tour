@@ -78,7 +78,10 @@ class RouteRuleIn(BaseModel):
 class AssignClassificationIn(BaseModel):
     thi_truong: str = Field(max_length=128)
     tuyen_tour: str = Field(default="", max_length=256)
-    route_keywords: str = Field(max_length=512, description="Keyword tuyến (dấu phẩy = AND)")
+    route_keywords: str = Field(
+        max_length=512,
+        description="Một dòng rule mới (OR). Trong dòng: dấu phẩy = AND.",
+    )
     market_keyword: str = Field(default="", max_length=256, description="Để trống = lấy từ keyword tuyến đầu tiên")
     auto_apply: bool = True
 
@@ -810,23 +813,24 @@ def assign_classification(
     elif existing_mk.market.strip() != mk:
         db.add(MarketKeywordRule(market=mk, keyword=market_kw))
 
-    route_rule = (
+    # Mỗi lần Gán từ tour chưa khớp = thêm một dòng rule (OR). Không gộp vào dòng cũ.
+    siblings = (
         db.query(RouteKeywordRule)
         .filter(
             RouteKeywordRule.thi_truong == mk,
             RouteKeywordRule.tuyen_tour == route,
             RouteKeywordRule.active == True,
         )
-        .first()
+        .all()
     )
-    if route_rule:
-        route_rule.keywords = merge_keyword_csv(route_rule.keywords, route_kws)
-    else:
+    if not any(merge_keyword_csv(r.keywords, "") == route_kws for r in siblings):
+        next_order = max((r.sort_order for r in siblings), default=-1) + 1
         db.add(
             RouteKeywordRule(
                 thi_truong=mk,
                 tuyen_tour=route,
                 keywords=route_kws,
+                sort_order=next_order,
             )
         )
 

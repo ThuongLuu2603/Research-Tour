@@ -115,7 +115,7 @@ export function ClassificationRulesTab({
       <div className="card p-4 space-y-3 bg-primary-50/40 border-primary-100">
         <p className="text-sm font-medium text-primary-900">
           Gán một lần — thị trường + tuyến + keyword
-          <InfoTip text="Một nút Gán tạo/cập nhật cả rule thị trường và rule tuyến, rồi áp dụng lên tour. Keyword tuyến cách nhau dấu phẩy = AND (đủ tất cả trong tên tour)." />
+          <InfoTip text="Gán / Thêm = tạo thêm một dòng điều kiện tuyến (OR với các dòng khác cùng tên). Trong một dòng, dấu phẩy = tour phải có đủ các từ (AND). Kéo keyword lên bảng quy tắc phía trên = bổ sung từ vào đúng dòng đó." />
         </p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
           <input className="input text-sm" placeholder="Thị trường" value={qMarket} onChange={(e) => setQMarket(e.target.value)} list="classify-market-list" />
@@ -158,7 +158,7 @@ export function ClassificationRulesTab({
                   <thead><tr className="text-gray-500"><th className="text-left py-1">Tuyến</th><th className="text-left">Keywords</th><th /></tr></thead>
                   <tbody>
                     {rRules.map((r) => {
-                      const dropKey = `route-${r.thi_truong}-${r.tuyen_tour}`;
+                      const dropKey = `route-${r.id}`;
                       const { dropClassName, ...drop } = dropHandlers(dropKey, dropTarget, setDropTarget, (raw) =>
                         appendKeywordToRouteRule(r, raw),
                       );
@@ -185,7 +185,12 @@ export function ClassificationRulesTab({
               <th className="px-2 py-2 text-left w-[28%]">Tour / trạng thái</th>
               <th className="px-2 py-2 text-left">Thị trường</th>
               <th className="px-2 py-2 text-left">Tuyến</th>
-              <th className="px-2 py-2 text-left">Keyword tuyến (AND)</th>
+              <th className="px-2 py-2 text-left">
+                <span className="inline-flex items-center gap-1">
+                  Điều kiện tuyến (dòng mới)
+                  <InfoTip text="Mỗi tour vàng: Gán = thêm một dòng rule (OR). Trong ô: dấu phẩy = AND trong cùng dòng." />
+                </span>
+              </th>
               <th className="px-2 py-2 w-24" />
             </tr>
           </thead>
@@ -273,7 +278,7 @@ export function ClassificationRulesTab({
         <datalist id="classify-market-list">{marketOptions.map((m) => <option key={m} value={m} />)}</datalist>
         <p className="text-xs text-gray-400 p-3">
           {gapItems.length} tour cần xử lý
-          {gapItems.length > 0 && " — điền form rồi một nút Gán cập nhật cả thị trường lẫn tuyến"}
+          {gapItems.length > 0 && " — Gán thêm một dòng điều kiện (OR), không gộp vào dòng rule cũ"}
         </p>
       </div>
     </div>
