@@ -77,6 +77,25 @@ function dragAliasProps(value: string) {
   };
 }
 
+/** Khi kéo tên tour dài lên rule tuyến — lấy keyword ngắn (bangkok…), không thêm cả câu title. */
+const ROUTE_DROP_KEYWORDS = [
+  "bangkok", "pattaya", "phuket", "chiang mai", "thái lan", "thailand",
+  "nhật bản", "tokyo", "osaka", "đài loan", "singapore", "malaysia",
+  "hàn quốc", "seoul", "trung quốc", "châu âu", "paris", "dubai",
+  "nong nooch", "coral", "safari", "wat arun", "baiyoke",
+];
+
+function keywordForRouteDrop(dragged: string): string {
+  const low = dragged.toLowerCase();
+  let best = "";
+  for (const h of ROUTE_DROP_KEYWORDS) {
+    if (low.includes(h) && h.length > best.length) best = h;
+  }
+  if (best) return best;
+  if (dragged.length <= 48) return dragged.trim();
+  return "";
+}
+
 export default function RulesAdminPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
@@ -225,7 +244,9 @@ export default function RulesAdminPage() {
     [durationRules, search],
   );
   const filteredUnmatched = useMemo(
-    () => (unmatched?.items ?? []).filter((x) => matchSearch(search, x.value, x.count, x.thi_truong)),
+    () => (unmatched?.items ?? []).filter((x) => matchSearch(
+      search, x.value, x.count, x.thi_truong, x.keyword, x.suggested_market, x.suggested_thi_truong, x.sample,
+    )),
     [unmatched, search],
   );
   const canonicalOptions = useMemo(() => {
@@ -430,7 +451,14 @@ export default function RulesAdminPage() {
                 )}
                 {filteredRoute.map((r: RouteRule) => {
                   const dropKey = `route-${r.thi_truong}-${r.tuyen_tour}`;
-                  const { dropClassName, ...drop } = dropHandlers(dropKey, dropTarget, setDropTarget, (kw) => assignRouteKeyword(r.thi_truong, r.tuyen_tour, kw));
+                  const { dropClassName, ...drop } = dropHandlers(dropKey, dropTarget, setDropTarget, (raw) => {
+                    const kw = keywordForRouteDrop(raw) || raw.trim().slice(0, 48);
+                    if (!kw) {
+                      setSyncMsg("Tên tour quá dài — nhập keyword ngắn (vd: bangkok) rồi Gán.");
+                      return;
+                    }
+                    return assignRouteKeyword(r.thi_truong, r.tuyen_tour, kw);
+                  });
                   return (
                   <tr key={r.id} className={cn("border-t", editingId === r.id && "bg-blue-50")}>
                     <td className="px-3 py-2">
@@ -611,6 +639,10 @@ export default function RulesAdminPage() {
   );
 }
 
+function marketUnmatchedKey(item: UnmatchedItem) {
+  return item.sample || item.value;
+}
+
 function UnmatchedMarketRows({
   items,
   onAssign,
@@ -618,7 +650,8 @@ function UnmatchedMarketRows({
   items: UnmatchedItem[];
   onAssign: (market: string, keyword: string) => void | Promise<void>;
 }) {
-  const [pending, setPending] = useState<Record<string, string>>({});
+  const [pendingMarket, setPendingMarket] = useState<Record<string, string>>({});
+  const [pendingKeyword, setPendingKeyword] = useState<Record<string, string>>({});
   if (!items.length) return null;
   const totalTours = items.reduce((s, i) => s + i.count, 0);
   return (
@@ -626,55 +659,78 @@ function UnmatchedMarketRows({
       <tr className="bg-amber-100 border-t-2 border-amber-400">
         <td colSpan={3} className="px-3 py-2 text-xs font-semibold text-amber-900">
           <span className="inline-flex items-center gap-1">
-            <GripVertical size={12} /> Chưa khớp thị trường ({items.length} nhóm · {totalTours} tour) — nhập Thị trường + keyword gợi ý, bấm Gán
-            <InfoTip text="Gom theo keyword gợi ý (vd esim). Sau Gán, tour được cập nhật trong DB (chạy nền)." />
+            <GripVertical size={12} /> Chưa khớp thị trường ({items.length} dòng · {totalTours} tour) — nhập Thị trường + keyword cụ thể (địa danh), rồi Gán
+            <InfoTip text="Chỉ gom nhóm khi có địa danh/esim/voucher. Tour không có từ đặc thù hiển thị từng tên — tránh gán theo «tour», «lịch»… Keyword phải khớp đúng thị trường bạn chọn." />
           </span>
         </td>
       </tr>
-      {items.map((item) => (
-        <tr key={item.value} className="bg-amber-50/70 border-t border-amber-200">
+      {items.map((item) => {
+        const rk = marketUnmatchedKey(item);
+        const kw = (pendingKeyword[rk] ?? item.keyword ?? "").trim();
+        const market = (pendingMarket[rk] ?? item.suggested_market ?? "").trim();
+        const dragKw = kw || item.keyword || "";
+        return (
+        <tr key={rk} className="bg-amber-50/70 border-t border-amber-200">
           <td className="px-3 py-2">
             <input
               className="input text-xs py-1 w-full border-amber-300 bg-white"
-              placeholder="Thị trường (vd: Esim)..."
+              placeholder="Thị trường (vd: Thái Lan)..."
               list="market-suggestions"
-              value={pending[item.value] ?? ""}
-              onChange={(e) => setPending({ ...pending, [item.value]: e.target.value })}
+              value={pendingMarket[rk] ?? item.suggested_market ?? ""}
+              onChange={(e) => setPendingMarket({ ...pendingMarket, [rk]: e.target.value })}
             />
           </td>
-          <td className="px-3 py-2 font-mono text-xs text-amber-950">
-            <span className="font-semibold text-amber-900">{item.value}</span>
-            <span className="text-gray-500 ml-1">({item.count} tour)</span>
-            {item.sample && item.sample !== item.value && (
+          <td className="px-3 py-2 text-xs text-amber-950">
+            {item.grouped !== false && item.keyword ? (
+              <span className="font-mono">
+                <span className="font-semibold text-amber-900">{item.keyword}</span>
+                <span className="text-gray-500 ml-1">({item.count} tour)</span>
+              </span>
+            ) : (
+              <span className="font-medium text-amber-900 block truncate max-w-md" title={item.sample}>
+                {item.sample || item.value}
+                {item.count > 1 && <span className="text-gray-500 font-normal ml-1">({item.count} tour cùng tên)</span>}
+              </span>
+            )}
+            {item.sample && item.grouped !== false && item.keyword && item.sample !== item.keyword && (
               <span className="block text-[10px] text-gray-500 truncate max-w-md mt-0.5" title={item.sample}>
                 VD: {item.sample}
               </span>
             )}
-            <span
-              {...dragAliasProps(item.value)}
-              title="Kéo keyword lên dòng Thị trường phía trên"
-              className="inline-flex items-center gap-0.5 text-[10px] text-amber-700 mt-1 cursor-grab"
-            >
-              <GripVertical size={10} /> kéo «{item.value}»
-            </span>
+            <input
+              className="input text-xs py-1 w-full mt-1 font-mono border-amber-300 bg-white"
+              placeholder={item.keyword ? "Keyword (sửa nếu cần)" : "Keyword: bangkok, esim…"}
+              value={pendingKeyword[rk] ?? item.keyword ?? ""}
+              onChange={(e) => setPendingKeyword({ ...pendingKeyword, [rk]: e.target.value })}
+            />
+            {dragKw && (
+              <span
+                {...dragAliasProps(dragKw)}
+                title="Kéo keyword lên dòng Thị trường phía trên"
+                className="inline-flex items-center gap-0.5 text-[10px] text-amber-700 mt-1 cursor-grab"
+              >
+                <GripVertical size={10} /> kéo «{dragKw}»
+              </span>
+            )}
           </td>
           <td className="px-3 py-2">
             <button
               type="button"
               className="btn-primary text-[10px] py-1 px-2"
-              disabled={!(pending[item.value] ?? "").trim()}
+              disabled={!market || !kw}
               onClick={async () => {
-                const market = (pending[item.value] ?? "").trim();
-                if (!market) return;
-                await onAssign(market, item.value);
-                setPending((p) => { const n = { ...p }; delete n[item.value]; return n; });
+                if (!market || !kw) return;
+                await onAssign(market, kw);
+                setPendingMarket((p) => { const n = { ...p }; delete n[rk]; return n; });
+                setPendingKeyword((p) => { const n = { ...p }; delete n[rk]; return n; });
               }}
             >
               Gán
             </button>
           </td>
         </tr>
-      ))}
+      );
+      })}
     </>
   );
 }
@@ -696,7 +752,7 @@ function UnmatchedRouteRows({
         <td colSpan={4} className="px-3 py-2 text-xs font-semibold text-amber-900">
           <span className="inline-flex items-center gap-1">
             <GripVertical size={12} /> Chưa khớp tuyến ({items.length}) — kéo keyword lên cột Tuyến, hoặc nhập tuyến + keyword rồi Gán
-            <InfoTip text="Đã có thị trường nhưng tuyến vẫn = tên thị trường (chưa match rule tuyến)." />
+            <InfoTip text="Nếu thị trường hiển thị sai (vd Du thuyền nhưng tour là Thái Lan): kéo keyword ngắn (bangkok) lên rule Thái Lan, rồi bấm Áp dụng — hệ thống sửa cả thị trường + tuyến theo rule khớp tên tour." />
           </span>
         </td>
       </tr>
@@ -707,14 +763,19 @@ function UnmatchedRouteRows({
               className="input text-xs py-1 w-full border-amber-300 bg-white"
               placeholder="Thị trường"
               list="route-market-suggestions"
-              value={pendingMarket[item.value] ?? item.thi_truong ?? ""}
+              value={pendingMarket[item.value] ?? item.suggested_thi_truong ?? item.thi_truong ?? ""}
               onChange={(e) => setPendingMarket({ ...pendingMarket, [item.value]: e.target.value })}
             />
+            {item.suggested_thi_truong && item.suggested_thi_truong !== item.thi_truong && (
+              <span className="text-[10px] text-amber-800 block mt-0.5">
+                Đang lưu: {item.thi_truong} → gợi ý: {item.suggested_thi_truong}
+              </span>
+            )}
           </td>
           <td className="px-3 py-2">
             <input
               className="input text-xs py-1 w-full border-amber-300 bg-white"
-              placeholder="Tuyến tour..."
+              placeholder="Tuyến tour (vd: Bangkok - Pattaya)..."
               value={pendingRoute[item.value] ?? ""}
               onChange={(e) => setPendingRoute({ ...pendingRoute, [item.value]: e.target.value })}
             />
@@ -722,11 +783,15 @@ function UnmatchedRouteRows({
           <td className="px-3 py-2 font-mono text-xs text-amber-950 space-y-1">
             <input
               className="input text-xs py-1 w-full border-amber-200 bg-white font-mono"
-              placeholder="keyword..."
-              value={keywords[item.value] ?? ""}
+              placeholder="keyword (vd: bangkok)..."
+              value={keywords[item.value] ?? keywordForRouteDrop(item.value)}
               onChange={(e) => setKeywords({ ...keywords, [item.value]: e.target.value })}
             />
-            <span {...dragAliasProps(item.value)} title={`${item.count} tour`} className="block truncate max-w-xs">
+            <span
+              {...dragAliasProps(keywordForRouteDrop(item.value) || item.value)}
+              title={`${item.count} tour — kéo keyword ngắn lên cột Tuyến`}
+              className="block truncate max-w-xs"
+            >
               <GripVertical size={10} className="text-amber-600 shrink-0 inline" />
               {item.value}
               <span className="text-gray-500 ml-1">({item.count})</span>
@@ -737,12 +802,12 @@ function UnmatchedRouteRows({
               type="button"
               className="btn-primary text-[10px] py-1 px-2"
               disabled={
-                !(pendingMarket[item.value] ?? item.thi_truong ?? "").trim()
+                !(pendingMarket[item.value] ?? item.suggested_thi_truong ?? item.thi_truong ?? "").trim()
                 || !(pendingRoute[item.value] ?? "").trim()
-                || !((keywords[item.value] ?? "").trim())
+                || !((keywords[item.value] ?? keywordForRouteDrop(item.value)).trim())
               }
               onClick={async () => {
-                const mk = (pendingMarket[item.value] ?? item.thi_truong ?? "").trim();
+                const mk = (pendingMarket[item.value] ?? item.suggested_thi_truong ?? item.thi_truong ?? "").trim();
                 const route = (pendingRoute[item.value] ?? "").trim();
                 const kw = (keywords[item.value] ?? "").trim();
                 if (!mk || !route || !kw) return;

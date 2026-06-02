@@ -263,18 +263,114 @@ def _tour_title_hint(t) -> str:
     return re.sub(r"\s+", " ", (t.ten_tour or "").strip())[:120]
 
 
-def _market_keyword_hint(title: str) -> str:
-    """Gợi ý keyword để gom nhóm tour chưa khớp thị trường."""
+# Từ quá chung — không dùng làm keyword gom nhóm (gây gán sai thị trường).
+_MARKET_HINT_STOPWORDS = frozenset({
+    "tour", "tours", "du", "lich", "lịch", "chua", "chưa", "hang", "hành", "hanh", "trinh", "trình",
+    "kham", "khám", "pha", "phá", "trai", "trải", "nghiem", "nghiệm", "triệu", "triệu", "dong", "đồng",
+    "ngay", "ngày", "dem", "đêm", "khoi", "khởi", "tai", "tại", "tu", "từ", "voi", "với", "theo", "cua", "của",
+    "va", "và", "mien", "miền", "trung", "bac", "bắc", "nam", "viet", "việt", "nam", "kham", "phá",
+    "trải", "nghiệm", "chỉ", "chi", "có", "co", "gia", "giá", "tạm", "tam", "chưa", "co", "có",
+    "hành", "trình", "khám", "phá", "trải", "nghiệm", "combo", "package", "combo",
+})
+
+_PRODUCT_MARKET_HINTS: tuple[tuple[str, str, str], ...] = (
+    ("esim", "esim", "Esim"),
+    ("e-sim", "esim", "Esim"),
+    ("voucher", "voucher", "Voucher"),
+    ("cruise", "cruise", "Cruise"),
+)
+
+# Địa danh → gợi ý thị trường (keyword nên thêm vào rule).
+_PLACE_MARKET_HINTS: tuple[tuple[str, str, str], ...] = (
+    ("thái lan", "thái lan", "Thái Lan"),
+    ("thailand", "thailand", "Thái Lan"),
+    ("bangkok", "bangkok", "Thái Lan"),
+    ("pattaya", "pattaya", "Thái Lan"),
+    ("phuket", "phuket", "Thái Lan"),
+    ("nhật bản", "nhật bản", "Nhật Bản"),
+    ("nhật ban", "nhật bản", "Nhật Bản"),
+    ("japan", "japan", "Nhật Bản"),
+    ("tokyo", "tokyo", "Nhật Bản"),
+    ("osaka", "osaka", "Nhật Bản"),
+    ("đài loan", "đài loan", "Đài Loan"),
+    ("dai loan", "đài loan", "Đài Loan"),
+    ("taiwan", "taiwan", "Đài Loan"),
+    ("singapore", "singapore", "Singapore - Malaysia"),
+    ("malaysia", "malaysia", "Singapore - Malaysia"),
+    ("hàn quốc", "hàn quốc", "Hàn Quốc"),
+    ("han quoc", "hàn quốc", "Hàn Quốc"),
+    ("korea", "korea", "Hàn Quốc"),
+    ("seoul", "seoul", "Hàn Quốc"),
+    ("trung quốc", "trung quốc", "Trung Quốc"),
+    ("china", "china", "Trung Quốc"),
+    ("bắc kinh", "bắc kinh", "Trung Quốc"),
+    ("thượng hải", "thượng hải", "Trung Quốc"),
+    ("châu âu", "châu âu", "Châu Âu"),
+    ("chau au", "châu âu", "Châu Âu"),
+    ("europe", "europe", "Châu Âu"),
+    ("paris", "paris", "Châu Âu"),
+    ("úc", "úc", "Úc"),
+    ("australia", "australia", "Úc"),
+    ("new zealand", "new zealand", "Úc"),
+    ("mỹ", "mỹ", "Mỹ"),
+    ("my", "mỹ", "Mỹ"),
+    ("usa", "usa", "Mỹ"),
+    ("dubai", "dubai", "Trung Đông"),
+    ("turkey", "turkey", "Thổ Nhĩ Kỳ"),
+    ("thổ nhĩ kỳ", "thổ nhĩ kỳ", "Thổ Nhĩ Kỳ"),
+    ("ai cập", "ai cập", "Ai Cập"),
+    ("campuchia", "campuchia", "Campuchia"),
+    ("cambodia", "cambodia", "Campuchia"),
+    ("lào", "lào", "Lào"),
+    ("indonesia", "indonesia", "Indonesia"),
+    ("bali", "bali", "Indonesia"),
+)
+
+
+def _market_unmatched_entry(title: str) -> dict:
+    """
+    Phân tích tour chưa khớp thị trường.
+    Chỉ gom nhóm khi có keyword đặc thù (địa danh / esim / voucher…).
+    Còn lại: mỗi tên tour là một dòng — tránh gom theo «tour», «lịch»…
+    """
     s = (title or "").lower()
-    if "esim" in s or "e-sim" in s:
-        return "esim"
-    for token in ("cruise", "visa", "combo", "mice"):
-        if token in s:
-            return token
-    words = re.findall(r"[a-zà-ỹ0-9]{4,}", s, flags=re.IGNORECASE)
-    if words:
-        return words[0].lower()
-    return s[:48].strip() or "khác"
+    for needle, keyword, market in _PRODUCT_MARKET_HINTS:
+        if needle in s:
+            return {
+                "bucket_key": f"kw:{keyword}",
+                "keyword": keyword,
+                "suggested_market": market,
+                "grouped": True,
+            }
+    for needle, keyword, market in sorted(_PLACE_MARKET_HINTS, key=lambda x: -len(x[0])):
+        if needle in s:
+            return {
+                "bucket_key": f"kw:{keyword}",
+                "keyword": keyword,
+                "suggested_market": market,
+                "grouped": True,
+            }
+    tokens = re.findall(r"[a-zA-ZÀ-ỹ0-9]{3,}", title or "")
+    specific = [
+        t.lower()
+        for t in tokens
+        if len(t) >= 4 and t.lower() not in _MARKET_HINT_STOPWORDS
+    ]
+    if specific:
+        kw = max(specific, key=len)
+        return {
+            "bucket_key": f"kw:{kw}",
+            "keyword": kw,
+            "suggested_market": "",
+            "grouped": True,
+        }
+    norm = re.sub(r"\s+", " ", (title or "").strip())[:100]
+    return {
+        "bucket_key": f"t:{norm}",
+        "keyword": "",
+        "suggested_market": "",
+        "grouped": False,
+    }
 
 
 def is_market_rule_matched(ten_tour: str, lich_trinh: str = "") -> bool:
@@ -282,10 +378,9 @@ def is_market_rule_matched(ten_tour: str, lich_trinh: str = "") -> bool:
 
 
 def is_route_rule_matched(thi_truong: str, ten_tour: str, lich_trinh: str = "") -> bool:
-    market = (thi_truong or "").strip() or resolve_thi_truong(ten_tour or "", lich_trinh or "")
+    market, route = resolve_market_and_route(ten_tour or "", lich_trinh or "")
     if not market or market == "Khác":
         return True
-    route = resolve_tuyen_tour(market, ten_tour or "", lich_trinh or "")
     generic = {market.casefold(), "khác", "khac", ""}
     return route.strip().casefold() not in generic
 
@@ -308,15 +403,30 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
             continue
         title = _tour_title_hint(t)
         if title and not is_market_rule_matched(t.ten_tour or "", t.lich_trinh or ""):
-            hint = _market_keyword_hint(title)
-            bucket = thi_truong.setdefault(hint, {"count": 0, "sample": title})
+            entry = _market_unmatched_entry(title)
+            key = entry["bucket_key"]
+            bucket = thi_truong.setdefault(
+                key,
+                {
+                    "count": 0,
+                    "sample": title,
+                    "keyword": entry.get("keyword") or "",
+                    "suggested_market": entry.get("suggested_market") or "",
+                    "grouped": entry.get("grouped", False),
+                },
+            )
             bucket["count"] += 1
-        market = resolve_thi_truong(t.ten_tour or "", t.lich_trinh or "")
-        if title and market not in ("", "Khác") and not is_route_rule_matched(
-            market, t.ten_tour or "", t.lich_trinh or ""
-        ):
+        market, route = resolve_market_and_route(t.ten_tour or "", t.lich_trinh or "")
+        generic = {market.casefold(), "khác", "khac", ""}
+        if title and market not in ("", "Khác") and route.strip().casefold() in generic:
+            hint = _market_unmatched_entry(title)
             if title not in tuyen_tour:
-                tuyen_tour[title] = {"count": 0, "thi_truong": market, "sample": title}
+                tuyen_tour[title] = {
+                    "count": 0,
+                    "thi_truong": market,
+                    "sample": title,
+                    "suggested_thi_truong": hint.get("suggested_market") or "",
+                }
             tuyen_tour[title]["count"] += 1
         raw_co = (t.cong_ty or "").strip()
         if raw_co and not is_company_alias_matched(raw_co):
@@ -335,14 +445,27 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
 
     market_rows = sorted(
         [
-            {"value": k, "count": v["count"], "sample": v.get("sample", "")}
+            {
+                "value": (v.get("keyword") or v.get("sample", ""))[:80],
+                "count": v["count"],
+                "sample": v.get("sample", ""),
+                "keyword": v.get("keyword") or "",
+                "suggested_market": v.get("suggested_market") or "",
+                "grouped": bool(v.get("grouped")),
+            }
             for k, v in thi_truong.items()
         ],
         key=lambda x: -x["count"],
-    )[:40]
+    )[:50]
     route_rows = sorted(
         [
-            {"value": k, "count": v["count"], "thi_truong": v["thi_truong"], "sample": v.get("sample", k)}
+            {
+                "value": k,
+                "count": v["count"],
+                "thi_truong": v["thi_truong"],
+                "sample": v.get("sample", k),
+                "suggested_thi_truong": v.get("suggested_thi_truong") or "",
+            }
             for k, v in tuyen_tour.items()
         ],
         key=lambda x: -x["count"],
@@ -597,8 +720,7 @@ def apply_classification_rules_to_tours(db) -> dict:
     market_n = route_n = link_n = 0
     for batch in _iter_canonical_tour_batches(db):
         for t in batch:
-            mk = resolve_thi_truong(t.ten_tour or "", t.lich_trinh or "")
-            rt = resolve_tuyen_tour(mk, t.ten_tour or "", t.lich_trinh or "")
+            mk, rt = resolve_market_and_route(t.ten_tour or "", t.lich_trinh or "")
             if mk and mk != (t.thi_truong or ""):
                 t.thi_truong = mk[:128]
                 market_n += 1
@@ -653,16 +775,22 @@ def _route_rules_from_db() -> tuple[tuple[str, str, tuple[str, ...]], ...]:
         db.close()
 
 
+def resolve_market_and_route(ten_tour: str, lich_trinh: str = "") -> tuple[str, str]:
+    """Ưu tiên quy tắc tuyến theo tên tour (không phụ thuộc thị trường đang lưu sai)."""
+    combined = f"{ten_tour or ''} {lich_trinh or ''}".lower().strip()
+    if not combined:
+        return "Khác", "Khác"
+    for mkt, route, kws in _route_rules_from_db():
+        if all(kw in combined for kw in kws):
+            return mkt, route
+    mk = resolve_thi_truong(ten_tour, lich_trinh)
+    return mk, mk
+
+
 def resolve_tuyen_tour(thi_truong: str, ten_tour: str, lich_trinh: str = "") -> str:
-    market = (thi_truong or "").strip()
-    combined = f"{ten_tour or ''} {lich_trinh or ''}".lower()
-
-    rules = _route_rules_from_db()
-
-    for mkt, route, kws in rules:
-        if mkt == market and all(kw in combined for kw in kws):
-            return route
-    return market or "Khác"
+    """Trả về tuyến; tham số thi_truong giữ tương thích API cũ (không còn lọc theo market)."""
+    _mk, route = resolve_market_and_route(ten_tour, lich_trinh)
+    return route
 
 
 def seed_route_rules_from_bundle(db=None, *, force: bool = False) -> int:

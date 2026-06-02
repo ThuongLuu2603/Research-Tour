@@ -694,7 +694,20 @@ export const applyDurationRulesToTours = async () => {
   return data;
 };
 
-export type UnmatchedItem = { value: string; count: number; thi_truong?: string; sample?: string };
+export type UnmatchedItem = {
+  value: string;
+  count: number;
+  thi_truong?: string;
+  sample?: string;
+  /** Keyword đề xuất (địa danh / esim…); rỗng = cần tự nhập */
+  keyword?: string;
+  /** Gợi ý tên thị trường từ địa danh trong tên tour */
+  suggested_market?: string;
+  /** true = gom nhiều tour theo keyword; false = mỗi dòng là một tên tour */
+  grouped?: boolean;
+  /** Gợi ý thị trường đúng khi cột hiện tại sai (tab tuyến tour) */
+  suggested_thi_truong?: string;
+};
 
 export const getRulesUnmatched = async (
   scope: "market" | "route" | "company" | "departure" | "duration",
