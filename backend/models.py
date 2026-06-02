@@ -284,3 +284,12 @@ class TourOverride(Base):
     workspace: Mapped[Workspace] = relationship("Workspace", back_populates="overrides")
     tour: Mapped[Tour] = relationship("Tour", back_populates="overrides")
     editor: Mapped[User] = relationship("User", foreign_keys=[updated_by])
+
+
+class AppKv(Base):
+    """Key-value nhỏ (job status, v.v.) — dùng chung mọi worker."""
+    __tablename__ = "app_kv"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value_json: Mapped[str] = mapped_column(Text, default="{}")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

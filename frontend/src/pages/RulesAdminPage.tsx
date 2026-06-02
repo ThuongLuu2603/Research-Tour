@@ -12,6 +12,7 @@ import {
   seedRouteDefaults,
   applyClassificationToTours,
   getApplyClassificationStatus,
+  assignMarketKeyword as apiAssignMarketKeyword,
   getRulesUnmatched,
   MarketRule, RouteRule, CompanyRule, DepartureRule, DurationRule, UnmatchedItem,
 } from "@/lib/api";
@@ -105,10 +106,12 @@ export default function RulesAdminPage() {
   const { data: companyRules } = useQuery({ queryKey: ["company-rules"], queryFn: listCompanyRules, enabled: isAdmin });
   const { data: departureRules } = useQuery({ queryKey: ["departure-rules"], queryFn: listDepartureRules, enabled: isAdmin });
   const { data: durationRules } = useQuery({ queryKey: ["duration-rules"], queryFn: listDurationRules, enabled: isAdmin });
-  const { data: unmatched } = useQuery({
-    queryKey: ["rules-unmatched", tab],
-    queryFn: () => getRulesUnmatched(tab),
-    enabled: isAdmin,
+  const unmatchedScope = tab === "market" || tab === "route" || tab === "company" || tab === "departure" || tab === "duration" ? tab : null;
+  const { data: unmatched, isLoading: unmatchedLoading } = useQuery({
+    queryKey: ["rules-unmatched", unmatchedScope],
+    queryFn: () => getRulesUnmatched(unmatchedScope!),
+    enabled: isAdmin && !!unmatchedScope,
+    staleTime: 3 * 60_000,
   });
 
   const invalidate = () => {
@@ -140,8 +143,8 @@ export default function RulesAdminPage() {
   };
   const assignMarketKeyword = async (market: string, keyword: string) => {
     const kw = keyword.trim().toLowerCase();
-    if (!kw) return;
-    await createMarketRule({ market: market.trim(), keyword: kw });
+    if (!kw || !market.trim()) return;
+    await apiAssignMarketKeyword(market.trim(), kw);
     afterRuleSaved(`Đã thêm keyword «${kw}» → ${market}`);
   };
   const assignRouteKeyword = async (thiTruong: string, tuyenTour: string, keyword: string) => {
@@ -162,6 +165,10 @@ export default function RulesAdminPage() {
           return;
         }
         setApplying(false);
+        if (st.error) {
+          setSyncMsg(st.error);
+          return;
+        }
         if (st.message) {
           setSyncMsg(st.message);
           invalidate();
@@ -381,7 +388,9 @@ export default function RulesAdminPage() {
               </tbody>
             </table>
             <datalist id="market-suggestions">{marketOptions.map((m) => <option key={m} value={m} />)}</datalist>
-            <p className="text-xs text-gray-400 p-3">{filteredMarket.length} rules · {filteredUnmatched.length} tour chưa khớp</p>
+            <p className="text-xs text-gray-400 p-3">
+              {filteredMarket.length} rules · {unmatchedLoading ? "đang quét tour chưa khớp…" : `${filteredUnmatched.length} nhóm chưa khớp`}
+            </p>
           </div>
         </div>
       )}
@@ -610,15 +619,15 @@ function UnmatchedMarketRows({
   onAssign: (market: string, keyword: string) => void | Promise<void>;
 }) {
   const [pending, setPending] = useState<Record<string, string>>({});
-  const [keywords, setKeywords] = useState<Record<string, string>>({});
   if (!items.length) return null;
+  const totalTours = items.reduce((s, i) => s + i.count, 0);
   return (
     <>
       <tr className="bg-amber-100 border-t-2 border-amber-400">
         <td colSpan={3} className="px-3 py-2 text-xs font-semibold text-amber-900">
           <span className="inline-flex items-center gap-1">
-            <GripVertical size={12} /> Chưa khớp thị trường ({items.length}) — kéo tên tour lên dòng Thị trường, hoặc nhập keyword rồi Gán
-            <InfoTip text="Tour phân loại «Khác» vì chưa có keyword trong tên/lịch trình." />
+            <GripVertical size={12} /> Chưa khớp thị trường ({items.length} nhóm · {totalTours} tour) — nhập Thị trường + keyword gợi ý, bấm Gán
+            <InfoTip text="Gom theo keyword gợi ý (vd esim). Sau Gán, tour được cập nhật trong DB (chạy nền)." />
           </span>
         </td>
       </tr>
@@ -627,37 +636,38 @@ function UnmatchedMarketRows({
           <td className="px-3 py-2">
             <input
               className="input text-xs py-1 w-full border-amber-300 bg-white"
-              placeholder="Thị trường..."
+              placeholder="Thị trường (vd: Esim)..."
               list="market-suggestions"
               value={pending[item.value] ?? ""}
               onChange={(e) => setPending({ ...pending, [item.value]: e.target.value })}
             />
           </td>
-          <td className="px-3 py-2 font-mono text-xs text-amber-950 space-y-1">
-            <input
-              className="input text-xs py-1 w-full border-amber-200 bg-white font-mono"
-              placeholder="keyword (vd: bangkok)..."
-              value={keywords[item.value] ?? ""}
-              onChange={(e) => setKeywords({ ...keywords, [item.value]: e.target.value })}
-            />
-            <span {...dragAliasProps(item.value)} title={`${item.count} tour · kéo lên Thị trường phía trên`} className="block truncate max-w-md">
-              <GripVertical size={10} className="text-amber-600 shrink-0 inline" />
-              {item.value}
-              <span className="text-gray-500 ml-1">({item.count})</span>
+          <td className="px-3 py-2 font-mono text-xs text-amber-950">
+            <span className="font-semibold text-amber-900">{item.value}</span>
+            <span className="text-gray-500 ml-1">({item.count} tour)</span>
+            {item.sample && item.sample !== item.value && (
+              <span className="block text-[10px] text-gray-500 truncate max-w-md mt-0.5" title={item.sample}>
+                VD: {item.sample}
+              </span>
+            )}
+            <span
+              {...dragAliasProps(item.value)}
+              title="Kéo keyword lên dòng Thị trường phía trên"
+              className="inline-flex items-center gap-0.5 text-[10px] text-amber-700 mt-1 cursor-grab"
+            >
+              <GripVertical size={10} /> kéo «{item.value}»
             </span>
           </td>
           <td className="px-3 py-2">
             <button
               type="button"
               className="btn-primary text-[10px] py-1 px-2"
-              disabled={!(pending[item.value] ?? "").trim() || !((keywords[item.value] ?? "").trim() || item.value)}
+              disabled={!(pending[item.value] ?? "").trim()}
               onClick={async () => {
                 const market = (pending[item.value] ?? "").trim();
-                const kw = (keywords[item.value] ?? "").trim() || item.value;
                 if (!market) return;
-                await onAssign(market, kw);
+                await onAssign(market, item.value);
                 setPending((p) => { const n = { ...p }; delete n[item.value]; return n; });
-                setKeywords((k) => { const n = { ...k }; delete n[item.value]; return n; });
               }}
             >
               Gán

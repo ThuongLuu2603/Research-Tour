@@ -61,6 +61,11 @@ def invalidate_classification_cache() -> None:
     _company_alias_pairs.cache_clear()
     _departure_alias_pairs.cache_clear()
     _duration_alias_pairs.cache_clear()
+    try:
+        from rules_job_store import invalidate_unmatched_cache
+        invalidate_unmatched_cache()
+    except Exception:
+        pass
 
 
 DEFAULT_DURATION_ALIASES: list[tuple[float, list[str]]] = [
@@ -245,6 +250,20 @@ def _tour_title_hint(t) -> str:
     return re.sub(r"\s+", " ", (t.ten_tour or "").strip())[:120]
 
 
+def _market_keyword_hint(title: str) -> str:
+    """Gợi ý keyword để gom nhóm tour chưa khớp thị trường."""
+    s = (title or "").lower()
+    if "esim" in s or "e-sim" in s:
+        return "esim"
+    for token in ("cruise", "visa", "combo", "mice"):
+        if token in s:
+            return token
+    words = re.findall(r"[a-zà-ỹ0-9]{4,}", s, flags=re.IGNORECASE)
+    if words:
+        return words[0].lower()
+    return s[:48].strip() or "khác"
+
+
 def is_market_rule_matched(ten_tour: str, lich_trinh: str = "") -> bool:
     return resolve_thi_truong(ten_tour or "", lich_trinh or "") != "Khác"
 
@@ -266,7 +285,7 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
     cong_ty: dict[str, int] = {}
     diem_kh: dict[str, int] = {}
     thoi_gian: dict[str, int] = {}
-    thi_truong: dict[str, int] = {}
+    thi_truong: dict[str, dict] = {}
     tuyen_tour: dict[str, dict] = {}
 
     for t in tours:
@@ -276,13 +295,15 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
             continue
         title = _tour_title_hint(t)
         if title and not is_market_rule_matched(t.ten_tour or "", t.lich_trinh or ""):
-            thi_truong[title] = thi_truong.get(title, 0) + 1
+            hint = _market_keyword_hint(title)
+            bucket = thi_truong.setdefault(hint, {"count": 0, "sample": title})
+            bucket["count"] += 1
         market = resolve_thi_truong(t.ten_tour or "", t.lich_trinh or "")
         if title and market not in ("", "Khác") and not is_route_rule_matched(
             market, t.ten_tour or "", t.lich_trinh or ""
         ):
             if title not in tuyen_tour:
-                tuyen_tour[title] = {"count": 0, "thi_truong": market}
+                tuyen_tour[title] = {"count": 0, "thi_truong": market, "sample": title}
             tuyen_tour[title]["count"] += 1
         raw_co = (t.cong_ty or "").strip()
         if raw_co and not is_company_alias_matched(raw_co):
@@ -299,16 +320,23 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
     def _rows(d: dict[str, int]) -> list[dict]:
         return sorted([{"value": k, "count": v} for k, v in d.items()], key=lambda x: -x["count"])[:40]
 
+    market_rows = sorted(
+        [
+            {"value": k, "count": v["count"], "sample": v.get("sample", "")}
+            for k, v in thi_truong.items()
+        ],
+        key=lambda x: -x["count"],
+    )[:40]
     route_rows = sorted(
         [
-            {"value": k, "count": v["count"], "thi_truong": v["thi_truong"]}
+            {"value": k, "count": v["count"], "thi_truong": v["thi_truong"], "sample": v.get("sample", k)}
             for k, v in tuyen_tour.items()
         ],
         key=lambda x: -x["count"],
     )[:40]
 
     return {
-        "thi_truong": _rows(thi_truong),
+        "thi_truong": market_rows,
         "tuyen_tour": route_rows,
         "cong_ty": _rows(cong_ty),
         "diem_kh": _rows(diem_kh),
@@ -530,20 +558,23 @@ def apply_departure_aliases_to_tours(db) -> int:
     return count
 
 
-def apply_all_rules_to_tours(db) -> dict:
+def apply_all_rules_to_tours(db, *, recompute_phan_khuc: bool = False) -> dict:
     """Áp dụng toàn bộ quy tắc DB lên tour (Main + Vietravel)."""
     invalidate_classification_cache()
     result = apply_classification_rules_to_tours(db)
     result["company_updated"] = apply_company_aliases_to_tours(db)
     result["departure_updated"] = apply_departure_aliases_to_tours(db)
     result["duration_updated"] = apply_duration_aliases_to_tours(db)
-    try:
-        from pricing_segments import recompute_all_phan_khuc
+    if recompute_phan_khuc:
+        try:
+            from pricing_segments import recompute_all_phan_khuc
 
-        result["phan_khuc"] = recompute_all_phan_khuc(db)
-    except Exception as e:
-        logger.warning("recompute phan_khuc after rules apply failed: %s", e)
-        result["phan_khuc"] = {"error": str(e)}
+            result["phan_khuc"] = recompute_all_phan_khuc(db)
+        except Exception as e:
+            logger.warning("recompute phan_khuc after rules apply failed: %s", e)
+            result["phan_khuc"] = {"error": str(e)}
+    else:
+        result["phan_khuc"] = {"skipped": True}
     result["message"] = (
         f"Thị trường {result.get('market_updated', 0)}, tuyến {result.get('route_updated', 0)}, "
         f"công ty {result.get('company_updated', 0)}, điểm KH {result.get('departure_updated', 0)}, "

@@ -124,48 +124,55 @@ def _auto_apply_tours(db: Session, enabled: bool, scope: str = "all") -> dict | 
     return {"started": True, "message": "Đang áp dụng quy tắc lên tour (chạy nền)…"}
 
 
-_apply_all_lock = threading.Lock()
-_apply_all_running = False
-_apply_all_last: dict | None = None
-
-
-def _start_apply_all_rules_background() -> dict:
-    """Full apply — chạy nền để tránh 503 timeout trên Render."""
+def _start_apply_all_rules_background(*, recompute_phan_khuc: bool = False) -> dict:
+    """Full apply — chạy nền, trạng thái lưu Supabase (app_kv)."""
     import logging
+    from datetime import datetime, timezone
 
-    global _apply_all_running, _apply_all_last
+    from rules_job_store import get_apply_status, set_apply_status
+
     log = logging.getLogger(__name__)
+    st = get_apply_status()
+    if st.get("running"):
+        return {
+            "started": False,
+            "running": True,
+            "message": "Đang áp dụng quy tắc lên tour (job trước chưa xong)…",
+        }
 
-    with _apply_all_lock:
-        if _apply_all_running:
-            return {
-                "started": False,
-                "running": True,
-                "message": "Đang áp dụng quy tắc lên tour (job trước chưa xong)…",
-            }
-        _apply_all_running = True
+    set_apply_status({
+        "running": True,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "message": "Đang áp dụng quy tắc…",
+    })
 
     def _work() -> None:
-        global _apply_all_running, _apply_all_last
         from database import SessionLocal
 
         session = SessionLocal()
         try:
-            _apply_all_last = apply_all_rules_to_tours(session)
-            log.info("apply_all_rules_to_tours finished: %s", _apply_all_last.get("message"))
+            result = apply_all_rules_to_tours(session, recompute_phan_khuc=recompute_phan_khuc)
+            log.info("apply_all_rules_to_tours finished: %s", result.get("message"))
+            set_apply_status({
+                "running": False,
+                "last_result": result,
+                "message": result.get("message", "Đã áp dụng quy tắc lên tour"),
+            })
         except Exception:
             log.exception("apply_all_rules_to_tours failed")
-            _apply_all_last = {"error": "Áp dụng quy tắc thất bại — xem log server"}
+            set_apply_status({
+                "running": False,
+                "error": "Áp dụng quy tắc thất bại — xem log server",
+                "message": "Áp dụng thất bại",
+            })
         finally:
             session.close()
-            with _apply_all_lock:
-                _apply_all_running = False
 
     threading.Thread(target=_work, daemon=True, name="apply-rules-all").start()
     return {
         "started": True,
         "running": True,
-        "message": "Đã bắt đầu áp dụng quy tắc lên tour (chạy nền, 2–5 phút). Refresh Research Grid sau khi xong.",
+        "message": "Đã bắt đầu áp dụng quy tắc lên tour (chạy nền, ~1–3 phút). Refresh trang sau khi xong.",
     }
 
 
@@ -602,21 +609,27 @@ def apply_departure_rules_to_tours(_: User = Depends(require_admin), db: Session
 
 
 @router.post("/apply-classification-to-tours")
-def apply_classification_endpoint(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+def apply_classification_endpoint(
+    recompute_phan_khuc: bool = Query(False, description="Tính lại phân khúc (chậm, ~toàn DB)"),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Áp dụng toàn bộ quy tắc — async (tránh HTTP 503 khi ~8k tour)."""
-    return _start_apply_all_rules_background()
+    return _start_apply_all_rules_background(recompute_phan_khuc=recompute_phan_khuc)
 
 
 @router.get("/apply-classification-status")
 def apply_classification_status(_: User = Depends(require_admin)):
-    with _apply_all_lock:
-        running = _apply_all_running
-        last = _apply_all_last
-    out: dict = {"running": running}
-    if last:
-        out["last_result"] = last
-        if not running and "message" in last:
-            out["message"] = last["message"]
+    from rules_job_store import get_apply_status
+
+    st = get_apply_status()
+    out: dict = {"running": bool(st.get("running"))}
+    if st.get("message"):
+        out["message"] = st["message"]
+    if st.get("last_result"):
+        out["last_result"] = st["last_result"]
+    if st.get("error"):
+        out["error"] = st["error"]
     return out
 
 
@@ -721,13 +734,21 @@ def list_unmatched_rules(
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """Tour chưa khớp quy tắc — kéo thả / gán keyword (toàn bộ tour Main+Vietravel trong DB)."""
+    """Tour chưa khớp quy tắc — gom theo keyword gợi ý (cache 3 phút)."""
     from classification import collect_unmatched_values
     from data_sources import DB_CANONICAL_NGUON
     from models import Tour
+    from rules_job_store import get_unmatched_cached
 
-    tours = db.query(Tour).filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON))).all()
-    data = collect_unmatched_values(tours, vtr_only=False)
+    def _load() -> dict:
+        tours = (
+            db.query(Tour)
+            .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
+            .yield_per(800)
+        )
+        return collect_unmatched_values(tours, vtr_only=False)
+
+    data = get_unmatched_cached(db, "all", _load)
     if scope == "market":
         return {"scope": scope, "items": data["thi_truong"]}
     if scope == "route":
@@ -739,3 +760,25 @@ def list_unmatched_rules(
     if scope == "duration":
         return {"scope": scope, "items": data["thoi_gian"]}
     return {"scope": "all", **data}
+
+
+@router.post("/market/assign-keyword")
+def assign_market_keyword(
+    market: str = Query(..., min_length=1),
+    keyword: str = Query(..., min_length=1),
+    auto_apply: bool = Query(True),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Thêm 1 keyword thị trường + áp dụng lên tour (gom nhanh VD esim → Esim)."""
+    rule = MarketKeywordRule(market=market.strip(), keyword=keyword.strip().lower())
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    invalidate_classification_cache()
+    tours = _auto_apply_tours(db, auto_apply, scope="market")
+    return {
+        "rule": rule,
+        "message": f"Đã thêm keyword «{keyword}» → {market}",
+        "tours_apply": tours,
+    }

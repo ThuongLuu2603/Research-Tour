@@ -694,7 +694,7 @@ export const applyDurationRulesToTours = async () => {
   return data;
 };
 
-export type UnmatchedItem = { value: string; count: number; thi_truong?: string };
+export type UnmatchedItem = { value: string; count: number; thi_truong?: string; sample?: string };
 
 export const getRulesUnmatched = async (
   scope: "market" | "route" | "company" | "departure" | "duration",
@@ -924,7 +924,13 @@ export const applyClassificationToTours = async () => {
 
 export const getApplyClassificationStatus = async () => {
   const { data } = await api.get("/admin/rules/apply-classification-status");
-  return data as { running: boolean; message?: string; last_result?: Record<string, unknown> };
+  return data as { running: boolean; message?: string; error?: string; last_result?: Record<string, unknown> };
+};
+
+export const assignMarketKeyword = async (market: string, keyword: string) => {
+  const params = new URLSearchParams({ market, keyword });
+  const { data } = await api.post(`/admin/rules/market/assign-keyword?${params}`);
+  return data as { message: string };
 };
 
 export const reportHtmlUrl = () =>
