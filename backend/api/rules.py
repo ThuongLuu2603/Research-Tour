@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -120,6 +122,51 @@ def _auto_apply_tours(db: Session, enabled: bool, scope: str = "all") -> dict | 
 
     threading.Thread(target=_work, daemon=True, name=f"apply-rules-{scope}").start()
     return {"started": True, "message": "Đang áp dụng quy tắc lên tour (chạy nền)…"}
+
+
+_apply_all_lock = threading.Lock()
+_apply_all_running = False
+_apply_all_last: dict | None = None
+
+
+def _start_apply_all_rules_background() -> dict:
+    """Full apply — chạy nền để tránh 503 timeout trên Render."""
+    import logging
+
+    global _apply_all_running, _apply_all_last
+    log = logging.getLogger(__name__)
+
+    with _apply_all_lock:
+        if _apply_all_running:
+            return {
+                "started": False,
+                "running": True,
+                "message": "Đang áp dụng quy tắc lên tour (job trước chưa xong)…",
+            }
+        _apply_all_running = True
+
+    def _work() -> None:
+        global _apply_all_running, _apply_all_last
+        from database import SessionLocal
+
+        session = SessionLocal()
+        try:
+            _apply_all_last = apply_all_rules_to_tours(session)
+            log.info("apply_all_rules_to_tours finished: %s", _apply_all_last.get("message"))
+        except Exception:
+            log.exception("apply_all_rules_to_tours failed")
+            _apply_all_last = {"error": "Áp dụng quy tắc thất bại — xem log server"}
+        finally:
+            session.close()
+            with _apply_all_lock:
+                _apply_all_running = False
+
+    threading.Thread(target=_work, daemon=True, name="apply-rules-all").start()
+    return {
+        "started": True,
+        "running": True,
+        "message": "Đã bắt đầu áp dụng quy tắc lên tour (chạy nền, 2–5 phút). Refresh Research Grid sau khi xong.",
+    }
 
 
 # ── Market rules ──────────────────────────────────────────────────────────────
@@ -556,7 +603,21 @@ def apply_departure_rules_to_tours(_: User = Depends(require_admin), db: Session
 
 @router.post("/apply-classification-to-tours")
 def apply_classification_endpoint(_: User = Depends(require_admin), db: Session = Depends(get_db)):
-    return apply_all_rules_to_tours(db)
+    """Áp dụng toàn bộ quy tắc — async (tránh HTTP 503 khi ~8k tour)."""
+    return _start_apply_all_rules_background()
+
+
+@router.get("/apply-classification-status")
+def apply_classification_status(_: User = Depends(require_admin)):
+    with _apply_all_lock:
+        running = _apply_all_running
+        last = _apply_all_last
+    out: dict = {"running": running}
+    if last:
+        out["last_result"] = last
+        if not running and "message" in last:
+            out["message"] = last["message"]
+    return out
 
 
 # ── Duration alias rules (Thời gian) ─────────────────────────────────────────

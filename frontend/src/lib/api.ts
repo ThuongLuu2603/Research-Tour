@@ -918,10 +918,13 @@ export const copyWorkspaceOverrides = async (workspaceId: number, sourceWorkspac
 };
 
 export const applyClassificationToTours = async () => {
-  const { data } = await api.post("/admin/rules/apply-classification-to-tours", null, {
-    timeout: 300_000,
-  });
-  return data;
+  const { data } = await api.post("/admin/rules/apply-classification-to-tours");
+  return data as { started?: boolean; running?: boolean; message?: string };
+};
+
+export const getApplyClassificationStatus = async () => {
+  const { data } = await api.get("/admin/rules/apply-classification-status");
+  return data as { running: boolean; message?: string; last_result?: Record<string, unknown> };
 };
 
 export const reportHtmlUrl = () =>

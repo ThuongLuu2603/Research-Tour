@@ -11,6 +11,7 @@ import {
   seedMarketDefaults, seedCompanyDefaults, seedDepartureDefaults, seedDurationDefaults,
   seedRouteDefaults,
   applyClassificationToTours,
+  getApplyClassificationStatus,
   getRulesUnmatched,
   MarketRule, RouteRule, CompanyRule, DepartureRule, DurationRule, UnmatchedItem,
 } from "@/lib/api";
@@ -153,13 +154,34 @@ export default function RulesAdminPage() {
   const showErr = (e: unknown) =>
     setSyncMsg(String((e as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail || (e as Error)?.message || e));
 
+  const pollApplyStatus = (attempt = 0) => {
+    getApplyClassificationStatus()
+      .then((st) => {
+        if (st.running) {
+          if (attempt < 120) window.setTimeout(() => pollApplyStatus(attempt + 1), 3000);
+          return;
+        }
+        setApplying(false);
+        if (st.message) {
+          setSyncMsg(st.message);
+          invalidate();
+        } else if (st.last_result && typeof (st.last_result as { message?: string }).message === "string") {
+          setSyncMsg((st.last_result as { message: string }).message);
+          invalidate();
+        }
+      })
+      .catch(() => setApplying(false));
+  };
+
   const onApplyTours = () => {
     setApplying(true);
-    setSyncMsg("Đang áp dụng quy tắc lên tour (có thể mất vài phút)…");
+    setSyncMsg("Đang khởi chạy áp dụng quy tắc lên tour…");
     applyClassificationToTours()
-      .then((r) => { setSyncMsg(r.message || "Đã áp dụng quy tắc lên tour"); invalidate(); })
-      .catch(showErr)
-      .finally(() => setApplying(false));
+      .then((r) => {
+        setSyncMsg(r.message || "Đang áp dụng quy tắc (chạy nền)…");
+        pollApplyStatus();
+      })
+      .catch((e) => { showErr(e); setApplying(false); });
   };
 
   const afterRuleSaved = (label: string) => {
