@@ -734,7 +734,7 @@ def list_unmatched_rules(
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """Tour chưa khớp quy tắc — thị trường: địa danh/esim hoặc từng tên tour (cache 3 phút)."""
+    """Tour chưa khớp quy tắc — thị trường/tuyến: mỗi dòng một tên tour (cache 3 phút)."""
     from classification import collect_unmatched_values
     from data_sources import DB_CANONICAL_NGUON
     from models import Tour

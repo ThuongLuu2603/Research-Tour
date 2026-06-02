@@ -418,19 +418,16 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
         title = _tour_title_hint(t)
         if title and not is_market_rule_matched(t.ten_tour or "", t.lich_trinh or ""):
             entry = _market_unmatched_entry(title)
-            key = entry["bucket_key"]
-            bucket = thi_truong.setdefault(
-                key,
-                {
+            if title not in thi_truong:
+                thi_truong[title] = {
                     "count": 0,
                     "sample": title,
                     "keyword": entry.get("keyword") or "",
                     "suggested_market": entry.get("suggested_market") or "",
-                    "grouped": entry.get("grouped", False),
-                    "bucket_key": key,
-                },
-            )
-            _unmatched_add_member(bucket, title)
+                    "grouped": False,
+                    "bucket_key": f"market:{title}",
+                }
+            _unmatched_add_member(thi_truong[title], title)
         market, route = resolve_market_and_route(t.ten_tour or "", t.lich_trinh or "")
         generic = {market.casefold(), "khác", "khac", ""}
         if title and market not in ("", "Khác") and route.strip().casefold() in generic:
@@ -462,19 +459,19 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
     market_rows = sorted(
         [
             {
-                "value": (v.get("keyword") or v.get("sample", ""))[:80],
+                "value": k,
                 "count": v["count"],
-                "sample": v.get("sample", ""),
+                "sample": v.get("sample", k),
                 "keyword": v.get("keyword") or "",
                 "suggested_market": v.get("suggested_market") or "",
-                "grouped": bool(v.get("grouped")),
-                "bucket_key": v.get("bucket_key") or k,
+                "grouped": False,
+                "bucket_key": v.get("bucket_key") or f"market:{k}",
                 "members": _unmatched_members_list(v),
             }
             for k, v in thi_truong.items()
         ],
         key=lambda x: -x["count"],
-    )[:50]
+    )[:40]
     route_rows = sorted(
         [
             {
@@ -777,7 +774,7 @@ def resolve_thi_truong(ten_tour: str, lich_trinh: str = "") -> str:
 
 @lru_cache(maxsize=1)
 def _route_rules_from_db() -> tuple[tuple[str, str, tuple[str, ...]], ...]:
-    """(thi_truong, tuyen_tour, keyword_tuple) ordered by sort_order."""
+    """(thi_truong, tuyen_tour, keyword_tuple) — mỗi tuple là AND (vd canada,cuba,mexico = cả 3 trong tên tour)."""
     db = SessionLocal()
     try:
         rules = (

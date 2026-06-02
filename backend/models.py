@@ -106,7 +106,7 @@ class RouteKeywordRule(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     thi_truong: Mapped[str] = mapped_column(String(128), index=True)
     tuyen_tour: Mapped[str] = mapped_column(String(256), index=True)
-    keywords: Mapped[str] = mapped_column(String(512))  # e.g. "bangkok,pattaya"
+    keywords: Mapped[str] = mapped_column(String(512))  # comma = AND, e.g. "canada,cuba,mexico"
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

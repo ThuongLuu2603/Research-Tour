@@ -1,5 +1,19 @@
 import type { RouteRule, UnmatchedItem, UnmatchedTourMember } from "@/lib/api";
 
+/** Một dòng rule: mọi từ sau dấu phẩy phải cùng có trong tên tour (AND). */
+export function parseRouteKeywordList(keywords: string): string[] {
+  return keywords
+    .split(",")
+    .map((k) => k.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+export function mergeRouteKeywordLists(existing: string, add: string): string {
+  const set = new Set(parseRouteKeywordList(existing));
+  for (const p of parseRouteKeywordList(add)) set.add(p);
+  return [...set].join(", ");
+}
+
 const SPLIT_STORAGE_KEY = "ota-rules-unmatched-splits";
 
 type SplitScope = "market" | "route";
@@ -111,5 +125,8 @@ export function conflictHintForKeyword(
   if (!key) return null;
   const routes = conflicts.get(key);
   if (!routes || routes.length < 2) return null;
-  return `Keyword «${key}» cũng có ở: ${routes.map((r) => `${r.thi_truong} / ${r.tuyen_tour}`).join("; ")}`;
+  return (
+    `Từ «${key}» còn trong rule khác (${routes.map((r) => `${r.thi_truong}/${r.tuyen_tour}`).join("; ")}). `
+    + "Mỗi dòng vẫn cần đủ tất cả từ sau dấu phẩy mới khớp."
+  );
 }
