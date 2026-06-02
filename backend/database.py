@@ -84,8 +84,13 @@ def run_deferred_db_maintenance() -> None:
         import logging
         logging.getLogger(__name__).warning("Purge sheet-only tours failed: %s", e)
     try:
-        from classification import seed_market_rules_from_hardcode
+        from classification import ensure_route_rules_imported, seed_market_rules_from_hardcode
         seed_market_rules_from_hardcode()
+        db = SessionLocal()
+        try:
+            ensure_route_rules_imported(db)
+        finally:
+            db.close()
     except Exception:
         pass
 

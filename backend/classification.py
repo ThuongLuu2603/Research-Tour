@@ -64,14 +64,17 @@ def invalidate_classification_cache() -> None:
 
 
 DEFAULT_DURATION_ALIASES: list[tuple[float, list[str]]] = [
-    (3.0, ["3n2d", "3n/2d", "3 ngày 2 đêm", "3 ngày 2 dem", "3n 2d"]),
-    (4.0, ["4n3d", "4n/3d", "4 ngày 3 đêm", "4 ngày 3 dem", "4n 3d"]),
-    (5.0, ["5n4d", "5n/4d", "5 ngày 4 đêm", "5 ngày 4 dem", "5n 4d", "5n4đ"]),
-    (6.0, ["6n5d", "6n/5d", "6 ngày 5 đêm", "6 ngày 5 dem"]),
-    (7.0, ["7n6d", "7n/6d", "7 ngày 6 đêm", "7 ngày 6 dem"]),
-    (8.0, ["8n7d", "8n/7d", "8 ngày 7 đêm"]),
-    (9.0, ["9n8d", "9 ngày 8 đêm"]),
-    (10.0, ["10n9d", "10 ngày 9 đêm"]),
+    (0.5, ["0.5n", "0,5n", "nửa ngày", "1 buổi", "buổi"]),
+    (1.0, ["1n", "1 ngày", "1n0d"]),
+    (3.0, ["3n2d", "3n2đ", "3n/2d", "3 ngày 2 đêm", "3 ngày 2 dem", "3n 2d"]),
+    (4.0, ["4n3d", "4n3đ", "4n/3d", "4 ngày 3 đêm", "4 ngày 3 dem", "4n 3d"]),
+    (5.0, ["5n4d", "5n4đ", "5n/4d", "5 ngày 4 đêm", "5 ngày 4 dem", "5n 4d"]),
+    (5.5, ["5n5d", "5n5đ", "5 ngày 5 đêm", "5n 5d"]),
+    (6.0, ["6n5d", "6n5đ", "6n/5d", "6 ngày 5 đêm", "6 ngày 5 dem"]),
+    (7.0, ["7n6d", "7n6đ", "7n/6d", "7 ngày 6 đêm", "7 ngày 6 dem"]),
+    (8.0, ["8n7d", "8n7đ", "8n/7d", "8 ngày 7 đêm"]),
+    (9.0, ["9n8d", "9n8đ", "9 ngày 8 đêm"]),
+    (10.0, ["10n9d", "10n9đ", "10 ngày 9 đêm"]),
 ]
 
 
@@ -212,7 +215,9 @@ def is_duration_alias_matched(thoi_gian: str, so_ngay: float | None) -> bool:
 
 
 def resolve_duration_days(thoi_gian: str, so_ngay: float | None) -> tuple[float | None, bool]:
-    """Trả về (số ngày, đã khớp alias/so_ngay chuẩn)."""
+    """Trả về (số ngày chuẩn, đã khớp alias/so_ngay). NĐ: 5N4Đ→5, 5N5Đ→5.5, 0.5N→0.5."""
+    from duration_format import parse_duration_nd
+
     if so_ngay and 0 < so_ngay <= 45:
         return round(float(so_ngay), 1), True
     text = re.sub(r"\s+", " ", (thoi_gian or "").strip().lower())
@@ -220,17 +225,16 @@ def resolve_duration_days(thoi_gian: str, so_ngay: float | None) -> tuple[float 
         for alias, days in _duration_alias_pairs():
             if alias == text or alias in text:
                 return days, True
+        parsed = parse_duration_nd(text.replace(" ", ""))
+        if parsed is not None:
+            return parsed, False
     if not thoi_gian:
         return None, False
     s = thoi_gian.strip().lower()
-    m = re.search(r"(\d+)\s*n\s*(\d+)\s*[dđ]", s)
-    if m:
-        return float(m.group(1)), False
+    parsed = parse_duration_nd(s)
+    if parsed is not None:
+        return parsed, False
     m = re.search(r"(\d+)\s*ngày", s)
-    if m:
-        d = float(m.group(1))
-        return (d, False) if 0 < d <= 45 else (None, False)
-    m = re.search(r"(\d+)\s*n\b", s)
     if m:
         d = float(m.group(1))
         return (d, False) if 0 < d <= 45 else (None, False)
@@ -600,6 +604,28 @@ def resolve_tuyen_tour(thi_truong: str, ten_tour: str, lich_trinh: str = "") -> 
         if mkt == market and all(kw in combined for kw in kws):
             return route
     return market or "Khác"
+
+
+def ensure_route_rules_imported(db=None) -> int:
+    """Import rule tuyến từ Google Sheet nếu bảng DB đang trống."""
+    own_session = db is None
+    if own_session:
+        db = SessionLocal()
+    try:
+        if db.query(RouteKeywordRule).count() > 0:
+            return 0
+        from sheets_rules_sync import import_route_rules_to_db
+
+        count = import_route_rules_to_db(db)
+        invalidate_classification_cache()
+        logger.info("Imported %s route keyword rules from Sheet", count)
+        return count
+    except Exception as e:
+        logger.warning("Route rules import from Sheet failed: %s", e)
+        return 0
+    finally:
+        if own_session:
+            db.close()
 
 
 def seed_market_rules_from_hardcode() -> int:

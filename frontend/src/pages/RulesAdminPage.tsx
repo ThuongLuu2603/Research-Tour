@@ -9,6 +9,7 @@ import {
   listDepartureRules, createDepartureRule, deleteDepartureRule, updateDepartureRule,
   listDurationRules, createDurationRule, deleteDurationRule, updateDurationRule,
   seedMarketDefaults, seedCompanyDefaults, seedDepartureDefaults, seedDurationDefaults,
+  syncRouteFromSheet,
   applyClassificationToTours,
   getRulesUnmatched,
   MarketRule, RouteRule, CompanyRule, DepartureRule, DurationRule, UnmatchedItem,
@@ -16,6 +17,7 @@ import {
 import { COL } from "@/lib/glossary";
 import { InfoTip } from "@/components/InfoTip";
 import { cn } from "@/lib/utils";
+import { formatDurationLabel, parseDurationInput } from "@/lib/durationFormat";
 import { Plus, Trash2, RefreshCw, Database, Search, Pencil, Check, X, GripVertical } from "lucide-react";
 
 type Tab = "market" | "route" | "company" | "departure" | "duration";
@@ -180,7 +182,9 @@ export default function RulesAdminPage() {
     [departureRules, search],
   );
   const filteredDuration = useMemo(
-    () => (durationRules ?? []).filter((r) => matchSearch(search, r.canonical_days, r.alias, `${r.canonical_days}N`)),
+    () => (durationRules ?? []).filter((r) =>
+      matchSearch(search, r.canonical_days, r.alias, formatDurationLabel(r.canonical_days)),
+    ),
     [durationRules, search],
   );
   const filteredUnmatched = useMemo(
@@ -209,9 +213,10 @@ export default function RulesAdminPage() {
     mutationFn: () => createDepartureRule({ canonical_name: dCanonical, alias: dAlias }),
     onSuccess: () => { setDAlias(""); afterRuleSaved("Đã thêm alias điểm khởi hành"); },
   });
+  const parsedDurDays = parseDurationInput(durDays);
   const addDuration = useMutation({
-    mutationFn: () => createDurationRule({ canonical_days: parseFloat(durDays), alias: durAlias }),
-    onSuccess: () => { setDurAlias(""); afterRuleSaved("Đã thêm alias thời gian"); },
+    mutationFn: () => createDurationRule({ canonical_days: parsedDurDays!, alias: durAlias }),
+    onSuccess: () => { setDurDays(""); setDurAlias(""); afterRuleSaved("Đã thêm alias thời gian"); },
   });
 
   if (!isAdmin) return <Navigate to="/" replace />;
@@ -343,13 +348,28 @@ export default function RulesAdminPage() {
               <input className="input text-sm" placeholder="Keywords (dấu phẩy, AND)" value={rKeywords} onChange={(e) => setRKeywords(e.target.value)} />
             </div>
             <button onClick={() => addRoute.mutate()} disabled={!rMarket || !rRoute || !rKeywords} className="btn-primary text-sm"><Plus size={14} /> Thêm rule</button>
+            <button
+              type="button"
+              onClick={() => syncRouteFromSheet().then((r) => afterRuleSaved(r.message || "Đã import tuyến từ Sheet")).catch(showErr)}
+              className="btn-secondary text-sm"
+            >
+              <Database size={14} /> Import từ Sheet
+            </button>
           </div>
+          {(routeRules?.length ?? 0) === 0 && (
+            <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              Chưa có quy tắc tuyến trong database. Bấm <strong>Import từ Sheet</strong> (tab «Điểm tuyến Tour» trên Google Sheet) hoặc thêm thủ công.
+            </p>
+          )}
           <div className="card overflow-auto max-h-[500px]">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 sticky top-0"><tr>
                 <th className="px-3 py-2 text-left">Thị trường</th><th className="px-3 py-2 text-left">Tuyến</th><th className="px-3 py-2 text-left">Keywords</th><th className="w-20"></th>
               </tr></thead>
               <tbody>
+                {filteredRoute.length === 0 && (
+                  <tr><td colSpan={4} className="px-3 py-8 text-center text-gray-400 text-sm">Không có dòng nào</td></tr>
+                )}
                 {filteredRoute.map((r: RouteRule) => (
                   <tr key={r.id} className={cn("border-t", editingId === r.id && "bg-blue-50")}>
                     <td className="px-3 py-2">
@@ -438,22 +458,26 @@ export default function RulesAdminPage() {
       {tab === "duration" && (
         <div className="space-y-4">
           <div className="card p-4 flex flex-wrap gap-2 items-end">
-            <div><label className="text-xs text-gray-500">Số ngày chuẩn</label>
-              <input className="input text-sm w-24" type="number" min={1} max={45} value={durDays} onChange={(e) => setDurDays(e.target.value)} placeholder="5" /></div>
+            <div><label className="text-xs text-gray-500">Chuẩn (NĐ)</label>
+              <input className="input text-sm w-28" value={durDays} onChange={(e) => setDurDays(e.target.value)} placeholder="5N4Đ" />
+              {parsedDurDays != null && durDays.trim() && (
+                <span className="text-[10px] text-gray-500 block mt-0.5">= {parsedDurDays} ngày</span>
+              )}
+            </div>
             <div className="flex-1 min-w-[200px]"><label className="text-xs text-gray-500">Alias (text gốc)</label>
               <input className="input text-sm" value={durAlias} onChange={(e) => setDurAlias(e.target.value)} placeholder="5n4d, 5 ngày 4 đêm..."
                 onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); setDurAlias(e.dataTransfer.getData("text/plain")); }} /></div>
-            <button onClick={() => addDuration.mutate()} disabled={!durDays || !durAlias || Number.isNaN(parseFloat(durDays))} className="btn-primary text-sm"><Plus size={14} /> Thêm</button>
+            <button onClick={() => addDuration.mutate()} disabled={parsedDurDays == null || !durAlias} className="btn-primary text-sm"><Plus size={14} /> Thêm</button>
             <button onClick={() => seedDurationDefaults().then(() => afterRuleSaved("Đã import alias mặc định"))} className="btn-secondary text-sm"><Database size={14} /> Alias mặc định</button>
           </div>
           <p className="text-xs text-gray-500 inline-flex items-center gap-1">
-            Key matching {COL.thoiGian} — lưu trong bảng <code className="text-[10px] bg-gray-100 px-1 rounded">duration_alias_rules</code>.
-            <InfoTip text="Alias khớp không phân biệt hoa thường. VD alias '5n4d' → 5 ngày. Dùng khi gom nhóm so sánh VTR." />
+            Key matching {COL.thoiGian} — chuẩn dạng <strong>NĐ</strong>: 5N4Đ→5, 5N5Đ→5.5, 1N→1, 0.5N→0.5 (1 buổi).
+            <InfoTip text="Alias khớp không phân biệt hoa thường. Giá trị số lưu trong DB; nhãn NĐ chỉ để hiển thị." />
           </p>
           <div className="card overflow-auto max-h-[500px]">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 sticky top-0"><tr>
-                <th className="px-3 py-2 text-left">Số ngày chuẩn <span className="text-[10px] font-normal text-gray-400">(thả alias vào đây)</span></th><th className="px-3 py-2 text-left">Alias</th><th className="w-24"></th>
+                <th className="px-3 py-2 text-left">Chuẩn (NĐ) <span className="text-[10px] font-normal text-gray-400">(thả alias vào đây)</span></th><th className="px-3 py-2 text-left">Alias</th><th className="w-24"></th>
               </tr></thead>
               <tbody>
                 {filteredDuration.map((r: DurationRule) => {
@@ -463,10 +487,11 @@ export default function RulesAdminPage() {
                   <tr key={r.id} className={cn("border-t", editingId === r.id && "bg-blue-50")}>
                     <td className={cn("px-3 py-2 font-medium", dropClassName)} {...drop}>
                       {editingId === r.id ? (
-                        <input className="input text-sm py-1 w-20" type="number" value={editDraft.canonical_days ?? ""} onChange={(e) => setEditDraft({ ...editDraft, canonical_days: e.target.value })} />
+                        <input className="input text-sm py-1 w-24" value={editDraft.canonical_label ?? formatDurationLabel(r.canonical_days)} onChange={(e) => setEditDraft({ ...editDraft, canonical_label: e.target.value })} />
                       ) : (
-                        <span className="flex items-center gap-1">{r.canonical_days}N
-                          <button type="button" className="text-gray-400 hover:text-primary-600" onClick={() => startEdit(r.id, { canonical_days: String(r.canonical_days), alias: r.alias })}><Pencil size={12} /></button>
+                        <span className="flex items-center gap-1">{formatDurationLabel(r.canonical_days)}
+                          <span className="text-[10px] text-gray-400">({r.canonical_days})</span>
+                          <button type="button" className="text-gray-400 hover:text-primary-600" onClick={() => startEdit(r.id, { canonical_label: formatDurationLabel(r.canonical_days), alias: r.alias })}><Pencil size={12} /></button>
                         </span>
                       )}
                     </td>
@@ -478,7 +503,11 @@ export default function RulesAdminPage() {
                     <td className="px-3 py-2">
                       {editingId === r.id ? (
                         <span className="flex gap-1">
-                          <button type="button" className="text-green-600" onClick={() => updateDurationRule(r.id, { canonical_days: parseFloat(editDraft.canonical_days), alias: editDraft.alias }).then(() => { invalidate(); cancelEdit(); setSyncMsg("Đã cập nhật alias thời gian"); })}><Check size={14} /></button>
+                          <button type="button" className="text-green-600" onClick={() => {
+                            const days = parseDurationInput(editDraft.canonical_label ?? "");
+                            if (days == null) { setSyncMsg("Chuẩn NĐ không hợp lệ (VD: 5N4Đ, 0.5N)"); return; }
+                            updateDurationRule(r.id, { canonical_days: days, alias: editDraft.alias }).then(() => { afterRuleSaved("Đã cập nhật alias thời gian"); cancelEdit(); }).catch(showErr);
+                          }}><Check size={14} /></button>
                           <button type="button" className="text-gray-400" onClick={cancelEdit}><X size={14} /></button>
                         </span>
                       ) : (

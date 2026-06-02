@@ -283,6 +283,21 @@ def seed_market_defaults(
     }
 
 
+@router.post("/seed-route-from-sheet")
+def seed_route_from_sheet(
+    auto_apply: bool = Query(True),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Import tuyến tour từ Sheet (xóa rule cũ trong DB, thay bằng Sheet)."""
+    try:
+        count = import_route_rules_to_db(db)
+        tours = _auto_apply_tours(db, auto_apply, scope="route")
+        return {"imported": count, "message": f"Đã import {count} rule tuyến tour từ Sheet", "tours_apply": tours}
+    except Exception as e:
+        raise HTTPException(502, f"Lỗi đọc Google Sheet: {e}") from e
+
+
 @router.post("/sync-route-from-sheet")
 def sync_route_from_sheet(
     auto_apply: bool = Query(True),
