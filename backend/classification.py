@@ -173,23 +173,36 @@ def _canonical_tour_query(db):
     return db.query(Tour).filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
 
 
+def _iter_canonical_tour_batches(db, batch_size: int = 500):
+    """Phân trang theo id — tránh yield_per + commit (đóng cursor trên Postgres)."""
+    from models import Tour
+
+    last_id = 0
+    while True:
+        rows = (
+            _canonical_tour_query(db)
+            .filter(Tour.id > last_id)
+            .order_by(Tour.id)
+            .limit(batch_size)
+            .all()
+        )
+        if not rows:
+            break
+        yield rows
+        last_id = rows[-1].id
+
+
 def apply_duration_aliases_to_tours(db) -> int:
     count = 0
-    batch = 0
-    for t in _canonical_tour_query(db).yield_per(500):
-        days, matched = resolve_duration_days(t.thoi_gian, t.so_ngay)
-        if days is None:
-            continue
-        changed = False
-        if matched and (not t.so_ngay or float(t.so_ngay) != days):
-            t.so_ngay = days
-            changed = True
-        if changed:
-            count += 1
-        batch += 1
-        if batch % 500 == 0:
-            db.commit()
-    db.commit()
+    for batch in _iter_canonical_tour_batches(db):
+        for t in batch:
+            days, matched = resolve_duration_days(t.thoi_gian, t.so_ngay)
+            if days is None:
+                continue
+            if matched and (not t.so_ngay or float(t.so_ngay) != days):
+                t.so_ngay = days
+                count += 1
+        db.commit()
     return count
 
 
@@ -434,16 +447,13 @@ def seed_company_aliases_from_defaults() -> int:
 
 def apply_company_aliases_to_tours(db) -> int:
     count = 0
-    batch = 0
-    for t in _canonical_tour_query(db).yield_per(500):
-        resolved = resolve_company_name(t.cong_ty)
-        if resolved and resolved != (t.cong_ty or ""):
-            t.cong_ty = resolved[:256]
-            count += 1
-        batch += 1
-        if batch % 500 == 0:
-            db.commit()
-    db.commit()
+    for batch in _iter_canonical_tour_batches(db):
+        for t in batch:
+            resolved = resolve_company_name(t.cong_ty)
+            if resolved and resolved != (t.cong_ty or ""):
+                t.cong_ty = resolved[:256]
+                count += 1
+        db.commit()
     return count
 
 
@@ -545,16 +555,13 @@ def seed_departure_aliases_from_defaults() -> int:
 
 def apply_departure_aliases_to_tours(db) -> int:
     count = 0
-    batch = 0
-    for t in _canonical_tour_query(db).yield_per(500):
-        resolved = resolve_departure_point(t.diem_kh)
-        if resolved and resolved != (t.diem_kh or ""):
-            t.diem_kh = resolved[:256]
-            count += 1
-        batch += 1
-        if batch % 500 == 0:
-            db.commit()
-    db.commit()
+    for batch in _iter_canonical_tour_batches(db):
+        for t in batch:
+            resolved = resolve_departure_point(t.diem_kh)
+            if resolved and resolved != (t.diem_kh or ""):
+                t.diem_kh = resolved[:256]
+                count += 1
+        db.commit()
     return count
 
 
@@ -588,28 +595,25 @@ def apply_classification_rules_to_tours(db) -> dict:
     from link_utils import normalize_tour_link
 
     market_n = route_n = link_n = 0
-    batch = 0
-    for t in _canonical_tour_query(db).yield_per(500):
-        mk = resolve_thi_truong(t.ten_tour or "", t.lich_trinh or "")
-        rt = resolve_tuyen_tour(mk, t.ten_tour or "", t.lich_trinh or "")
-        if mk and mk != (t.thi_truong or ""):
-            t.thi_truong = mk[:128]
-            market_n += 1
-        current_route = (t.tuyen_tour or "").strip()
-        if rt and rt != current_route:
-            if rt == mk and current_route and current_route.casefold() not in {mk.casefold(), "khác", "khac"}:
-                pass
-            else:
-                t.tuyen_tour = rt[:256]
-                route_n += 1
-        fixed_link = normalize_tour_link(t.link_url)
-        if fixed_link != (t.link_url or ""):
-            t.link_url = fixed_link
-            link_n += 1
-        batch += 1
-        if batch % 500 == 0:
-            db.commit()
-    db.commit()
+    for batch in _iter_canonical_tour_batches(db):
+        for t in batch:
+            mk = resolve_thi_truong(t.ten_tour or "", t.lich_trinh or "")
+            rt = resolve_tuyen_tour(mk, t.ten_tour or "", t.lich_trinh or "")
+            if mk and mk != (t.thi_truong or ""):
+                t.thi_truong = mk[:128]
+                market_n += 1
+            current_route = (t.tuyen_tour or "").strip()
+            if rt and rt != current_route:
+                if rt == mk and current_route and current_route.casefold() not in {mk.casefold(), "khác", "khac"}:
+                    pass
+                else:
+                    t.tuyen_tour = rt[:256]
+                    route_n += 1
+            fixed_link = normalize_tour_link(t.link_url)
+            if fixed_link != (t.link_url or ""):
+                t.link_url = fixed_link
+                link_n += 1
+        db.commit()
     try:
         from compare_cache import invalidate_compare_cache
         invalidate_compare_cache()

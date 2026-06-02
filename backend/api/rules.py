@@ -115,8 +115,8 @@ def _auto_apply_tours(db: Session, enabled: bool, scope: str = "all") -> dict | 
                 apply_duration_aliases_to_tours(session)
             else:
                 apply_all_rules_to_tours(session)
-        except Exception:
-            log.exception("auto_apply_tours failed scope=%s", scope)
+        except Exception as e:
+            log.exception("auto_apply_tours failed scope=%s: %s", scope, e)
         finally:
             session.close()
 
@@ -158,12 +158,12 @@ def _start_apply_all_rules_background(*, recompute_phan_khuc: bool = False) -> d
                 "last_result": result,
                 "message": result.get("message", "Đã áp dụng quy tắc lên tour"),
             })
-        except Exception:
+        except Exception as e:
             log.exception("apply_all_rules_to_tours failed")
             set_apply_status({
                 "running": False,
-                "error": "Áp dụng quy tắc thất bại — xem log server",
-                "message": "Áp dụng thất bại",
+                "error": str(e)[:500],
+                "message": f"Áp dụng thất bại: {e}",
             })
         finally:
             session.close()
