@@ -740,6 +740,36 @@ def apply_duration_rules_to_tours(_: User = Depends(require_admin), db: Session 
     return {"updated": updated, "message": f"Đã chuẩn hóa số ngày cho {updated} tour"}
 
 
+class ClassifyMarketOrderIn(BaseModel):
+    markets: list[str] = Field(default_factory=list)
+
+
+@router.get("/classify/market-order")
+def get_classify_market_order(
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    from classify_market_order import merged_market_order
+
+    return {"markets": merged_market_order(db)}
+
+
+@router.put("/classify/market-order")
+def put_classify_market_order(
+    body: ClassifyMarketOrderIn,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    from classify_market_order import save_market_order
+    from classification import invalidate_classification_cache
+    from rules_job_store import invalidate_unmatched_cache
+
+    markets = save_market_order(db, body.markets)
+    invalidate_classification_cache()
+    invalidate_unmatched_cache()
+    return {"markets": markets, "message": "Đã lưu thứ tự thị trường (trên xuống = ưu tiên)"}
+
+
 @router.get("/stats-exclusions")
 def list_stats_exclusions(_: User = Depends(require_admin)):
     """Pattern tên tour bị loại khỏi KPI / compare (FIT placeholder)."""

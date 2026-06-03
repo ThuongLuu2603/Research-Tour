@@ -68,15 +68,19 @@ def _tour_fingerprint(db) -> tuple[int, str | None]:
 def _rules_fingerprint(db) -> tuple:
     from sqlalchemy import func
 
-    from models import MarketKeywordRule, RouteKeywordRule
+    from classify_market_order import MARKET_ORDER_KV_KEY
+    from models import AppKv, MarketKeywordRule, RouteKeywordRule
 
     mk = db.query(func.count(MarketKeywordRule.id), func.max(MarketKeywordRule.updated_at)).one()
     rt = db.query(func.count(RouteKeywordRule.id), func.max(RouteKeywordRule.updated_at)).one()
+    kv = db.get(AppKv, MARKET_ORDER_KV_KEY)
+    kv_ts = kv.updated_at.isoformat() if kv and kv.updated_at else None
     return (
         int(mk[0] or 0),
         mk[1].isoformat() if mk[1] else None,
         int(rt[0] or 0),
         rt[1].isoformat() if rt[1] else None,
+        kv_ts,
     )
 
 

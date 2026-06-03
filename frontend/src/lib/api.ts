@@ -721,6 +721,16 @@ export type UnmatchedItem = {
   resolved_market?: string;
 };
 
+export const getClassifyMarketOrder = async () => {
+  const { data } = await api.get("/admin/rules/classify/market-order");
+  return data as { markets: string[] };
+};
+
+export const putClassifyMarketOrder = async (markets: string[]) => {
+  const { data } = await api.put("/admin/rules/classify/market-order", { markets });
+  return data as { markets: string[]; message?: string };
+};
+
 export const assignClassification = async (body: {
   thi_truong: string;
   tuyen_tour?: string;

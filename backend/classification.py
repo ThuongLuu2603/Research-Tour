@@ -871,17 +871,29 @@ def resolve_thi_truong(
 
 
 def _load_route_rules() -> tuple[tuple[str, str, tuple[str, ...]], ...]:
-    """(thi_truong, tuyen_tour, keyword AND tuple) — đọc DB mỗi lần."""
+    """
+    (thi_truong, tuyen_tour, keyword AND tuple) — đọc DB mỗi lần.
+    Ưu tiên: thị trường trên xuống (market order) → nhiều từ AND hơn trước → sort_order.
+    """
+    from classify_market_order import market_rank_map
+
     db = SessionLocal()
     try:
-        rules = (
+        rows = (
             db.query(RouteKeywordRule)
             .filter(RouteKeywordRule.active == True)
-            .order_by(RouteKeywordRule.sort_order, RouteKeywordRule.id)
             .all()
         )
+        ranks = market_rank_map(db, rows)
+
+        def _row_key(r: RouteKeywordRule) -> tuple:
+            kws = tuple(k.strip().lower() for k in r.keywords.split(",") if k.strip())
+            mk = r.thi_truong.strip()
+            return (ranks.get(mk, 99999), -len(kws), r.sort_order, r.id)
+
+        sorted_rows = sorted(rows, key=_row_key)
         out = []
-        for r in rules:
+        for r in sorted_rows:
             kws = tuple(k.strip().lower() for k in r.keywords.split(",") if k.strip())
             if kws:
                 out.append((r.thi_truong.strip(), r.tuyen_tour.strip(), kws))
