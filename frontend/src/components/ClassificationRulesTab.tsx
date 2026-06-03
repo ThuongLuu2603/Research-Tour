@@ -4,7 +4,7 @@ import { assignClassification, seedMarketDefaults, seedRouteDefaults } from "@/l
 import { buildRouteKeywordConflicts, conflictHintForKeyword, parseRouteKeywordList } from "@/lib/rulesUnmatched";
 import { InfoTip } from "@/components/InfoTip";
 import { cn } from "@/lib/utils";
-import { Database, GripVertical, Plus } from "lucide-react";
+import { Database, GripVertical, Plus, Trash2 } from "lucide-react";
 import {
   dropHandlers,
   dragAliasProps,
@@ -76,8 +76,26 @@ export function ClassificationRulesTab({
     const keys = new Set<string>();
     (marketRules ?? []).forEach((r) => keys.add(r.market));
     (routeRules ?? []).forEach((r) => keys.add(r.thi_truong));
-    return [...keys].sort();
-  }, [marketRules, routeRules]);
+    return [...keys]
+      .filter((mk) => {
+        const mRules = (marketRules ?? []).filter((r) => r.market === mk);
+        const rRules = routesByMarket.get(mk) ?? [];
+        return marketVisibleInRulesSearch(searchQuery, mk, mRules, rRules);
+      })
+      .sort((a, b) => a.localeCompare(b, "vi"));
+  }, [marketRules, routeRules, routesByMarket, searchQuery]);
+
+  const deleteMarketGroup = async (mk: string) => {
+    const mRules = (marketRules ?? []).filter((r) => r.market === mk);
+    const rRules = routesByMarket.get(mk) ?? [];
+    if (!mRules.length && !rRules.length) return;
+    if (!window.confirm(`Xóa toàn bộ quy tắc thị trường «${mk}» (${mRules.length} keyword TT + ${rRules.length} tuyến)?`)) return;
+    await Promise.all([
+      ...mRules.map((r) => deleteMarketRule(r.id)),
+      ...rRules.map((r) => deleteRouteRule(r.id)),
+    ]);
+    onAfterSaved(`Đã xóa nhóm ${mk}`);
+  };
 
   const assignOne = async (title: string, item: UnmatchedItem) => {
     const p = pending[title] ?? {
@@ -156,10 +174,15 @@ export function ClassificationRulesTab({
       )}
 
       <div className="card overflow-auto max-h-[320px]">
-        <p className="px-3 py-2 text-xs font-semibold text-gray-600 bg-gray-50 sticky top-0 z-10 border-b">Quy tắc theo thị trường</p>
+        <p className="px-3 py-2 text-xs font-semibold text-gray-600 bg-gray-50 sticky top-0 z-10 border-b flex items-center justify-between gap-2">
+          <span>Quy tắc theo thị trường</span>
+          {searchQuery.trim() && (
+            <span className="font-normal text-gray-500">{rulesByMarket.length} nhóm khớp</span>
+          )}
+        </p>
         <div className="divide-y text-sm">
           {rulesByMarket.length === 0 && searchQuery.trim() && (
-            <p className="p-4 text-sm text-gray-500">Không có quy tắc khớp «{searchQuery.trim()}»</p>
+            <p className="p-4 text-sm text-gray-500">Không có quy tắc khớp «{searchQuery.trim()}» trong bảng này</p>
           )}
           {rulesByMarket.map((mk) => {
             const mRulesAll = (marketRules ?? []).filter((r) => r.market === mk);
@@ -171,11 +194,41 @@ export function ClassificationRulesTab({
             const rRules = showAllRoutes || !searchQuery.trim()
               ? rRulesAll
               : rRulesAll.filter((r) => matchRulesSearch(searchQuery, r.tuyen_tour, r.keywords));
+            if (mRules.length === 0 && rRules.length === 0) return null;
             return (
               <div key={mk} className="p-3">
-                <div className="font-medium text-gray-900 mb-1">{mk}</div>
-                <div className="text-xs text-gray-600 mb-2">
-                  Thị trường: {mRules.length ? mRules.map((r) => r.keyword).join(", ") : "—"}
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <div className="font-medium text-gray-900">{mk}</div>
+                  <button
+                    type="button"
+                    className="text-red-500 hover:text-red-700 shrink-0 inline-flex items-center gap-0.5 text-[10px]"
+                    title="Xóa toàn bộ keyword thị trường + tuyến của nhóm này"
+                    onClick={() => deleteMarketGroup(mk).catch(onError)}
+                  >
+                    <Trash2 size={12} /> Xóa nhóm
+                  </button>
+                </div>
+                <div className="text-xs text-gray-600 mb-2 space-y-1">
+                  <div className="font-medium text-gray-500">Keyword thị trường</div>
+                  {mRules.length === 0 ? (
+                    <span className="text-gray-400">— (chỉ có rule tuyến)</span>
+                  ) : (
+                    <ul className="space-y-0.5">
+                      {mRules.map((r) => (
+                        <li key={r.id} className="flex items-center justify-between gap-2 font-mono">
+                          <span>{r.keyword}</span>
+                          <button
+                            type="button"
+                            className="text-red-500 shrink-0"
+                            title="Xóa keyword thị trường"
+                            onClick={() => deleteMarketRule(r.id).then(() => onAfterSaved(`Đã xóa keyword «${r.keyword}»`)).catch(onError)}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
                 <table className="w-full text-xs">
                   <thead><tr className="text-gray-500"><th className="text-left py-1">Tuyến</th><th className="text-left">Keywords</th><th /></tr></thead>

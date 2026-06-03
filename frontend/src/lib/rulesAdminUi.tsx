@@ -1,10 +1,18 @@
 import type React from "react";
 import { buildRouteKeywordConflicts, conflictHintForKeyword, parseRouteKeywordList } from "@/lib/rulesUnmatched";
 
+function foldSearchText(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .trim();
+}
+
 export function matchRulesSearch(q: string, ...parts: (string | number | undefined | null)[]) {
   if (!q.trim()) return true;
-  const needle = q.trim().toLowerCase();
-  return parts.some((p) => String(p ?? "").toLowerCase().includes(needle));
+  const needle = foldSearchText(q);
+  return parts.some((p) => foldSearchText(String(p ?? "")).includes(needle));
 }
 
 /** Thị trường hiện trong bảng quy tắc khi search khớp tên TT, keyword TT, hoặc bất kỳ tuyến nào. */
