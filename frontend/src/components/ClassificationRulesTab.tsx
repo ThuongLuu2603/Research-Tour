@@ -90,6 +90,12 @@ export function ClassificationRulesTab({
   }>>({});
   const [selectedGaps, setSelectedGaps] = useState<Set<string>>(() => new Set());
   const [assigning, setAssigning] = useState(false);
+  const [quickAdding, setQuickAdding] = useState(false);
+
+  const applyResultMessage = (
+    r: Awaited<ReturnType<typeof assignClassification>>,
+    fallback: string,
+  ) => r.tours_apply?.message || r.tours_apply?.result?.message || r.message || fallback;
 
   const rowDraft = (title: string, item: UnmatchedItem) => {
     const p = pending[title];
@@ -188,8 +194,9 @@ export function ClassificationRulesTab({
     if (!d.market || !d.route || !d.routeKw) return;
     onMarkGapsHandled([title]);
     setAssigning(true);
+    setActionFeedback({ kind: "loading", text: `Đang gán «${d.routeKw}» → ${d.route}…` });
     try {
-      await assignClassification({
+      const r = await assignClassification({
         thi_truong: d.market,
         tuyen_tour: d.route,
         route_keywords: d.routeKw,
@@ -204,9 +211,12 @@ export function ClassificationRulesTab({
         delete n[title];
         return n;
       });
-      onAfterSaved(`Đã gán ${d.route} (${d.market})`, { gapValues: [title] });
+      const msg = applyResultMessage(r, `Đã gán ${d.route} (${d.market})`);
+      setActionFeedback({ kind: "ok", text: msg });
+      onAfterSaved(msg, { gapValues: [title], skipPoll: true });
     } catch (e) {
       onGapAssignFailed([title]);
+      setActionFeedback({ kind: "err", text: "Gán thất bại — xem thông báo phía trên." });
       throw e;
     } finally {
       setAssigning(false);
@@ -263,8 +273,6 @@ export function ClassificationRulesTab({
   const selectAllReadyGaps = () => {
     setSelectedGaps(new Set(gapItems.filter((item) => isRowReady(item.value, item)).map((i) => i.value)));
   };
-
-  const [quickAdding, setQuickAdding] = useState(false);
 
   const quickAdd = async () => {
     const mk = qMarket.trim();

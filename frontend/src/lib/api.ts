@@ -762,7 +762,12 @@ export const assignClassificationBulk = async (body: {
   auto_apply?: boolean;
 }) => {
   const { data } = await api.post("/admin/rules/assign-classification/bulk", body);
-  return data as { message: string; count: number; added: number };
+  return data as {
+    message: string;
+    count: number;
+    added: number;
+    tours_apply?: { message?: string; result?: { message?: string } };
+  };
 };
 
 export const getRulesUnmatched = async (
