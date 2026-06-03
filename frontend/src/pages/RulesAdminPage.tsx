@@ -18,7 +18,7 @@ import { InfoTip } from "@/components/InfoTip";
 import { cn } from "@/lib/utils";
 import { formatDurationLabel, parseDurationInput } from "@/lib/durationFormat";
 import { buildRouteKeywordConflicts, mergeRouteKeywordLists, parseRouteKeywordList } from "@/lib/rulesUnmatched";
-import { dropHandlers, dragAliasProps, keywordForRouteDrop, matchRulesSearch } from "@/lib/rulesAdminUi";
+import { dropHandlers, dragAliasProps, keepInputKeys, keywordForRouteDrop, matchRulesSearch } from "@/lib/rulesAdminUi";
 import { ClassificationRulesTab } from "@/components/ClassificationRulesTab";
 import { Plus, Trash2, RefreshCw, Database, Search, Pencil, Check, X, GripVertical } from "lucide-react";
 
@@ -35,6 +35,7 @@ function RuleSearchBar({ value, onChange, total, filtered }: { value: string; on
           placeholder="Tìm thị trường, tuyến, keyword, tên tour..."
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onKeyDown={keepInputKeys}
         />
       </div>
       <span className="text-xs text-gray-500">{filtered}/{total} dòng</span>

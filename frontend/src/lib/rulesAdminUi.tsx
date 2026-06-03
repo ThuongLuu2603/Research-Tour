@@ -9,6 +9,30 @@ function foldSearchText(s: string): string {
     .trim();
 }
 
+/** Tránh Space/Arrow bị layout cuộn nuốt — không gõ được khoảng trắng trong ô input. */
+export function keepInputKeys(e: React.KeyboardEvent) {
+  if (e.key === " " || e.key === "Spacebar" || e.key.startsWith("Arrow")) {
+    e.stopPropagation();
+  }
+}
+
+/** Một tên tuyến một lần trong datalist (nhiều rule OR cùng tên tuyến). */
+export function uniqueRouteNames(rules: { tuyen_tour: string }[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const r of rules) {
+    const n = (r.tuyen_tour || "").trim();
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+  return out.sort((a, b) => a.localeCompare(b, "vi"));
+}
+
+export function routeDatalistId(market: string): string {
+  return `classify-route-${encodeURIComponent(market)}`;
+}
+
 export function matchRulesSearch(q: string, ...parts: (string | number | undefined | null)[]) {
   if (!q.trim()) return true;
   const needle = foldSearchText(q);

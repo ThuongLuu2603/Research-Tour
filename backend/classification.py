@@ -445,6 +445,75 @@ def _unmatched_members_list(bucket: dict, *, limit: int = 40) -> list[dict]:
     ]
 
 
+def collect_classify_gaps(db) -> list[dict]:
+    """
+    Tour chưa có tuyến (cột DB trống) — không quét lại toàn bộ DB bằng resolve_market_and_route.
+    Dùng cho bảng vàng «Tour chưa khớp tuyến» trên admin.
+    """
+    from sqlalchemy import func, or_
+
+    from data_sources import DB_CANONICAL_NGUON
+    from models import Tour
+    from tour_stats_exclusions import apply_stats_exclusion_query
+
+    q = (
+        db.query(Tour.ten_tour, Tour.thi_truong, Tour.lich_trinh)
+        .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
+        .filter(
+            or_(
+                Tour.tuyen_tour.is_(None),
+                Tour.tuyen_tour == "",
+                func.trim(Tour.tuyen_tour) == "",
+            )
+        )
+    )
+    q = apply_stats_exclusion_query(q)
+
+    classify_gaps: dict[str, dict] = {}
+    for ten_tour, thi_truong, lich_trinh in q.yield_per(1000):
+        title = re.sub(r"\s+", " ", (ten_tour or "").strip())[:120]
+        if not title:
+            continue
+        stored_mk = (thi_truong or "").strip()
+        if stored_mk in ("Khác",):
+            stored_mk = ""
+        skw = suggest_keyword_from_title(title)
+        hint = _market_unmatched_entry(title)
+        sug_mk = stored_mk or (hint.get("suggested_market") or "")
+        if title not in classify_gaps:
+            classify_gaps[title] = {
+                "value": title,
+                "count": 0,
+                "sample": title,
+                "needs_market": False,
+                "needs_route": True,
+                "suggested_market": sug_mk,
+                "suggested_route": sug_mk or "",
+                "route_keywords": skw,
+                "resolved_market": stored_mk,
+            }
+        classify_gaps[title]["count"] += 1
+
+    return sorted(
+        [
+            {
+                "value": k,
+                "count": v["count"],
+                "sample": v.get("sample", k),
+                "needs_market": bool(v.get("needs_market")),
+                "needs_route": bool(v.get("needs_route")),
+                "suggested_market": v.get("suggested_market") or "",
+                "suggested_route": v.get("suggested_route") or "",
+                "market_keyword": v.get("market_keyword") or "",
+                "route_keywords": v.get("route_keywords") or "",
+                "resolved_market": v.get("resolved_market") or "",
+            }
+            for k, v in classify_gaps.items()
+        ],
+        key=lambda x: -x["count"],
+    )[:200]
+
+
 def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
     """Giá trị tour chưa khớp quy tắc — dùng gán keyword/alias trên UI admin."""
     from data_sources import DB_CANONICAL_NGUON

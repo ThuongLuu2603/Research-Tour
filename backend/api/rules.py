@@ -835,6 +835,19 @@ def list_unmatched_rules(
     from models import Tour
     from rules_job_store import get_unmatched_cached, invalidate_unmatched_cache
 
+    if scope == "classify":
+        from classification import collect_classify_gaps
+
+        def _load_classify() -> dict:
+            return {"classify": collect_classify_gaps(db)}
+
+        if fresh:
+            invalidate_unmatched_cache()
+            data = _load_classify()
+        else:
+            data = get_unmatched_cached(db, "classify", _load_classify)
+        return {"scope": scope, "items": data["classify"]}
+
     def _load() -> dict:
         tours = (
             db.query(Tour)
@@ -852,8 +865,6 @@ def list_unmatched_rules(
         return {"scope": scope, "items": data["thi_truong"]}
     if scope == "route":
         return {"scope": scope, "items": data["tuyen_tour"]}
-    if scope == "classify":
-        return {"scope": scope, "items": data["classify"]}
     if scope == "company":
         return {"scope": scope, "items": data["cong_ty"]}
     if scope == "departure":

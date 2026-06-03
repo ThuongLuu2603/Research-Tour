@@ -15,10 +15,13 @@ import { ChevronDown, ChevronRight, Database, GripVertical, Plus, Trash2 } from 
 import {
   dropHandlers,
   dragAliasProps,
+  keepInputKeys,
   keywordForRouteDrop,
   marketVisibleInRulesSearch,
   matchRulesSearch,
   RouteKeywordsCell,
+  routeDatalistId,
+  uniqueRouteNames,
 } from "@/lib/rulesAdminUi";
 
 type Props = {
@@ -41,6 +44,8 @@ type Props = {
 
 function sortRouteRulesForDisplay(rules: RouteRule[]): RouteRule[] {
   return [...rules].sort((a, b) => {
+    const routeCmp = (a.tuyen_tour || "").localeCompare(b.tuyen_tour || "", "vi");
+    if (routeCmp !== 0) return routeCmp;
     const na = parseRouteKeywordList(a.keywords).length;
     const nb = parseRouteKeywordList(b.keywords).length;
     if (nb !== na) return nb - na;
@@ -108,6 +113,14 @@ export function ClassificationRulesTab({
     }
     return map;
   }, [routeRules]);
+
+  const routeNamesByMarket = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const [mk, rules] of routesByMarket) {
+      map.set(mk, uniqueRouteNames(rules));
+    }
+    return map;
+  }, [routesByMarket]);
 
   const orderedMarkets = useMemo(() => {
     const saved = marketOrderData?.markets ?? [];
@@ -281,9 +294,9 @@ export function ClassificationRulesTab({
           <InfoTip text="Mỗi dòng = một điều kiện (OR). Trong dòng: dấu phẩy = AND. Thị trường chỉ là nhóm lưu trữ, không cần keyword TT." />
         </p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-          <input className="input text-sm" placeholder="Thị trường (nhóm)" value={qMarket} onChange={(e) => setQMarket(e.target.value)} list="classify-market-list" />
-          <input className="input text-sm" placeholder="Tên tuyến tour" value={qRoute} onChange={(e) => setQRoute(e.target.value)} />
-          <input className="input text-sm font-mono" placeholder="Keyword tuyến (vd: kanazawa)" value={qRouteKw} onChange={(e) => setQRouteKw(e.target.value)} />
+          <input className="input text-sm" placeholder="Thị trường (nhóm)" value={qMarket} onChange={(e) => setQMarket(e.target.value)} onKeyDown={keepInputKeys} list="classify-market-list" />
+          <input className="input text-sm" placeholder="Tên tuyến tour" value={qRoute} onChange={(e) => setQRoute(e.target.value)} onKeyDown={keepInputKeys} list={qMarket.trim() ? routeDatalistId(qMarket.trim()) : undefined} />
+          <input className="input text-sm font-mono" placeholder="Keyword tuyến (vd: kanazawa)" value={qRouteKw} onChange={(e) => setQRouteKw(e.target.value)} onKeyDown={keepInputKeys} />
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={quickAdd} disabled={!qMarket.trim() || !qRouteKw.trim()} className="btn-primary text-sm">
@@ -434,7 +447,9 @@ export function ClassificationRulesTab({
           >
             {assigning ? "Đang gán…" : `Gán ${selectedReadyCount} dòng đã chọn`}
           </button>
-          <span className="text-xs text-gray-500 ml-auto">Dòng biến mất ngay sau Gán; server quét lại nền</span>
+          <span className="text-xs text-gray-500 ml-auto">
+            Chỉ tour có <strong>tuyến tour trống</strong> trong DB · Gán xong → ẩn dòng
+          </span>
         </div>
         <table className="w-full text-sm">
           <thead className="bg-amber-50 sticky top-0 z-10">
@@ -454,7 +469,7 @@ export function ClassificationRulesTab({
           </thead>
           <tbody>
             {gapLoading && (
-              <tr><td colSpan={6} className="px-3 py-6 text-center text-gray-400">Đang quét tour…</td></tr>
+              <tr><td colSpan={6} className="px-3 py-6 text-center text-gray-400">Đang tải tour chưa có tuyến (DB)…</td></tr>
             )}
             {!gapLoading && gapItems.length === 0 && (
               <tr><td colSpan={6} className="px-3 py-6 text-center text-green-700">Mọi tour đã khớp ít nhất một rule tuyến</td></tr>
@@ -462,7 +477,6 @@ export function ClassificationRulesTab({
             {gapItems.map((item) => {
               const title = item.value;
               const d = rowDraft(title, item);
-              const routesForMk = routesByMarket.get(d.market) ?? [];
               const rowConflict = conflictHintForKeyword(parseRouteKeywordList(d.routeKw)[0] ?? "", routeKeywordConflicts);
 
               const ready = isRowReady(title, item);
@@ -488,6 +502,7 @@ export function ClassificationRulesTab({
                       list="classify-market-list"
                       placeholder="Nhóm TT"
                       value={d.market}
+                      onKeyDown={keepInputKeys}
                       onChange={(e) => setPending((prev) => ({
                         ...prev,
                         [title]: { market: e.target.value, route: d.route, routeKw: d.routeKw },
@@ -497,26 +512,21 @@ export function ClassificationRulesTab({
                   <td className="px-2 py-2">
                     <input
                       className="input text-xs py-1 w-full"
-                      list={d.market ? `classify-route-${encodeURIComponent(d.market)}` : undefined}
+                      list={d.market.trim() ? routeDatalistId(d.market.trim()) : undefined}
                       placeholder="Tên tuyến"
                       value={d.route}
+                      onKeyDown={keepInputKeys}
                       onChange={(e) => setPending((prev) => ({
                         ...prev,
                         [title]: { market: d.market, route: e.target.value, routeKw: d.routeKw },
                       }))}
                     />
-                    {d.market ? (
-                      <datalist id={`classify-route-${encodeURIComponent(d.market)}`}>
-                        {routesForMk.map((r) => (
-                          <option key={r.id} value={r.tuyen_tour} />
-                        ))}
-                      </datalist>
-                    ) : null}
                   </td>
                   <td className="px-2 py-2">
                     <input
                       className="input text-xs py-1 w-full font-mono"
                       value={d.routeKw}
+                      onKeyDown={keepInputKeys}
                       onChange={(e) => setPending((prev) => ({
                         ...prev,
                         [title]: { market: d.market, route: d.route, routeKw: e.target.value },
@@ -543,8 +553,15 @@ export function ClassificationRulesTab({
           </tbody>
         </table>
         <datalist id="classify-market-list">{marketOptions.map((m) => <option key={m} value={m} />)}</datalist>
+        {[...routeNamesByMarket.entries()].map(([mk, names]) => (
+          <datalist key={mk} id={routeDatalistId(mk)}>
+            {names.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
+        ))}
         <p className="text-xs text-gray-400 p-3">
-          {gapItems.length} tour chưa khớp rule tuyến
+          {gapLoading ? "Đang tải…" : `${gapItems.length} tên tour chưa có tuyến trong DB`}
         </p>
       </div>
     </div>
