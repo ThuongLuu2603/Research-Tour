@@ -15,11 +15,23 @@ engine_kwargs: dict = {}
 if _is_sqlite:
     connect_args = {"check_same_thread": False}
 elif _is_postgres:
-    engine_kwargs = {
-        "pool_pre_ping": True,
-        "pool_size": 5,
-        "max_overflow": 10,
-    }
+    # Supabase Session pooler (~15 clients total). SQLAlchemy pool 5+10 = tràn khi deploy chồng instance.
+    _use_supabase_pooler = "pooler.supabase.com" in _url
+    if _use_supabase_pooler:
+        from sqlalchemy.pool import NullPool
+
+        connect_args = {"connect_timeout": 15}
+        engine_kwargs = {
+            "poolclass": NullPool,
+            "pool_pre_ping": True,
+        }
+    else:
+        engine_kwargs = {
+            "pool_pre_ping": True,
+            "pool_size": 5,
+            "max_overflow": 10,
+            "pool_recycle": 300,
+        }
 
 engine = create_engine(_url, connect_args=connect_args, **engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -29,7 +41,7 @@ if _is_postgres and "supabase" in _url:
 
     _db_log = logging.getLogger(__name__)
     if "pooler.supabase.com" in _url:
-        _db_log.info("Supabase: using pooler connection (IPv4-friendly)")
+        _db_log.info("Supabase: session pooler + NullPool (tránh vượt max clients)")
     elif "@db." in _url:
         _db_log.warning(
             "Supabase direct host (db.*.supabase.co) may fail on Render (no IPv6). "

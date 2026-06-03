@@ -20,32 +20,61 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger(__name__)
 
 
+def _init_db_with_retry(max_attempts: int = 6) -> None:
+    import time
+
+    from sqlalchemy.exc import OperationalError
+
+    last: Exception | None = None
+    for attempt in range(max_attempts):
+        try:
+            init_db()
+            return
+        except OperationalError as e:
+            last = e
+            msg = str(e).lower()
+            if "max clients" not in msg and "emaxconnsession" not in msg:
+                raise
+            wait = min(30, 2 ** attempt)
+            logger.warning(
+                "init_db: Supabase pool đầy (deploy chồng?), thử lại %s/%s sau %ss",
+                attempt + 1,
+                max_attempts,
+                wait,
+            )
+            time.sleep(wait)
+    if last:
+        raise last
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import threading
 
-    init_db()
+    _init_db_with_retry()
     from seed import create_default_users, start_import_background
 
     create_default_users()
-    try:
-        from database import SessionLocal
-        from scrape_job_utils import reconcile_stale_scrape_jobs
-
-        db = SessionLocal()
-        try:
-            fixed = reconcile_stale_scrape_jobs(db)
-            if fixed:
-                logger.info("Reconciled %s stale scrape job(s) on startup: %s", len(fixed), fixed)
-        finally:
-            db.close()
-    except Exception as e:
-        logger.warning("Stale scrape job reconcile skipped: %s", e)
     start_import_background()
 
     def _startup_maintenance() -> None:
         import time
         from seed import get_import_status
+
+        time.sleep(3)
+        try:
+            from database import SessionLocal
+            from scrape_job_utils import reconcile_stale_scrape_jobs
+
+            db = SessionLocal()
+            try:
+                fixed = reconcile_stale_scrape_jobs(db)
+                if fixed:
+                    logger.info("Reconciled %s stale scrape job(s): %s", len(fixed), fixed)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("Stale scrape job reconcile skipped: %s", e)
 
         for _ in range(180):
             if not get_import_status().get("running"):
@@ -67,6 +96,9 @@ async def lifespan(app: FastAPI):
             logger.warning("Compare pre-warm skipped: %s", e)
 
     def _snapshot_bg() -> None:
+        import time
+
+        time.sleep(15)
         try:
             from database import SessionLocal
             from snapshot_service import capture_daily_snapshot
