@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from datetime import date
+from typing import Any
 
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from compare_cache import get_compare_context
 from market_lab_engine import RouteAgg, build_route_aggregates_from_context
@@ -15,10 +17,49 @@ from models import RouteDailyMetrics
 
 logger = logging.getLogger(__name__)
 
-TTL_SECONDS = 180
+TTL_SECONDS = int(os.getenv("MARKET_LAB_ROUTES_TTL", "300"))
+OVERVIEW_TTL = int(os.getenv("MARKET_LAB_OVERVIEW_TTL", "120"))
+MOMENTUM_TTL = 120
+
 _lock = threading.Lock()
 _cache: tuple[float, dict[str, RouteAgg]] | None = None
 _inflight: threading.Event | None = None
+_overview_cache: dict[tuple, tuple[float, dict[str, Any]]] = {}
+_momentum_cache: tuple[float, tuple, dict[str, dict]] | None = None
+
+_ROUTE_METRIC_COLS = (
+    RouteDailyMetrics.route_key,
+    RouteDailyMetrics.snapshot_date,
+    RouteDailyMetrics.thi_truong,
+    RouteDailyMetrics.tuyen_tour,
+    RouteDailyMetrics.vtr_tour_count,
+    RouteDailyMetrics.market_tour_count,
+    RouteDailyMetrics.market_departures_monthly,
+    RouteDailyMetrics.vtr_departures_monthly,
+    RouteDailyMetrics.avg_gap_pct,
+    RouteDailyMetrics.freq_gap_pct,
+    RouteDailyMetrics.market_price_day,
+    RouteDailyMetrics.phase,
+    RouteDailyMetrics.opportunity_score,
+    RouteDailyMetrics.competitor_count,
+)
+
+_MOMENTUM_COLS = (
+    RouteDailyMetrics.route_key,
+    RouteDailyMetrics.snapshot_date,
+    RouteDailyMetrics.market_departures_monthly,
+    RouteDailyMetrics.vtr_departures_monthly,
+    RouteDailyMetrics.avg_gap_pct,
+)
+
+
+def latest_snapshot_date(db: Session) -> date | None:
+    return (
+        db.query(RouteDailyMetrics.snapshot_date)
+        .order_by(RouteDailyMetrics.snapshot_date.desc())
+        .limit(1)
+        .scalar()
+    )
 
 
 def get_cached_routes(db: Session, *, force: bool = False) -> dict[str, RouteAgg]:
@@ -62,23 +103,74 @@ def get_cached_routes(db: Session, *, force: bool = False) -> dict[str, RouteAgg
 
 
 def invalidate_market_lab_cache() -> None:
-    global _cache, _inflight
+    global _cache, _inflight, _overview_cache, _momentum_cache
     with _lock:
         _cache = None
+        _overview_cache.clear()
+        _momentum_cache = None
         if _inflight:
             _inflight.set()
             _inflight = None
+    try:
+        from route_quality import invalidate_route_quality_cache
+        invalidate_route_quality_cache()
+    except Exception:
+        pass
 
 
 def prewarm_market_lab_cache(db: Session) -> None:
     try:
         get_cached_routes(db, force=True)
+        get_market_lab_overview_cached(
+            db, grain="route", tab="opportunity", thi_truong=None, hide_suspect=True,
+        )
     except Exception as e:
         logger.warning("Market Lab prewarm failed: %s", e)
 
 
+def get_market_lab_overview_cached(
+    db: Session,
+    *,
+    grain: str = "route",
+    tab: str = "opportunity",
+    thi_truong: str | None = None,
+    hide_suspect: bool = True,
+) -> dict[str, Any]:
+    """Cache response overview — lần 2+ trong TTL ~ instant."""
+    from market_lab_engine import get_market_lab_overview
+
+    snap = latest_snapshot_date(db)
+    key = (grain, tab, thi_truong or "", hide_suspect, snap)
+    now = time.time()
+    with _lock:
+        hit = _overview_cache.get(key)
+        if hit and now - hit[0] < OVERVIEW_TTL:
+            return hit[1]
+
+    data = get_market_lab_overview(
+        db, grain=grain, tab=tab, thi_truong=thi_truong, hide_suspect=hide_suspect,
+    )
+    with _lock:
+        if len(_overview_cache) > 24:
+            _overview_cache.clear()
+        _overview_cache[key] = (now, data)
+    return data
+
+
 def load_momentum_map(db: Session) -> dict[str, dict]:
-    """Momentum mọi tuyến — tối đa 2 ngày snapshot, 1 query."""
+    """Momentum mọi tuyến — tối đa 2 ngày snapshot; không load JSON slots."""
+    global _momentum_cache
+    from compare_cache import _db_fingerprint
+
+    snap = latest_snapshot_date(db)
+    fp = _db_fingerprint(db)
+    cache_key = (snap, fp[0], fp[1])
+    now = time.time()
+    with _lock:
+        hit = _momentum_cache
+        if hit and now - hit[0] < MOMENTUM_TTL and hit[1] == cache_key:
+            return hit[2]
+
     history_days = db.query(func.count(func.distinct(RouteDailyMetrics.snapshot_date))).scalar() or 0
     dates = [
         r[0]
@@ -91,7 +183,12 @@ def load_momentum_map(db: Session) -> dict[str, dict]:
     if not dates:
         return {}
 
-    rows = db.query(RouteDailyMetrics).filter(RouteDailyMetrics.snapshot_date.in_(dates)).all()
+    rows = (
+        db.query(RouteDailyMetrics)
+        .options(load_only(*_MOMENTUM_COLS))
+        .filter(RouteDailyMetrics.snapshot_date.in_(dates))
+        .all()
+    )
     by_key: dict[str, list[RouteDailyMetrics]] = {}
     for row in rows:
         by_key.setdefault(row.route_key, []).append(row)
@@ -120,21 +217,24 @@ def load_momentum_map(db: Session) -> dict[str, dict]:
                 else None
             ),
         }
+
+    with _lock:
+        _momentum_cache = (now, cache_key, out)
     return out
 
 
 def routes_from_daily_metrics(db: Session, snap_date: date | None = None) -> dict[str, RouteAgg] | None:
     if snap_date is None:
-        snap_date = (
-            db.query(RouteDailyMetrics.snapshot_date)
-            .order_by(RouteDailyMetrics.snapshot_date.desc())
-            .limit(1)
-            .scalar()
-        )
+        snap_date = latest_snapshot_date(db)
     if not snap_date:
         return None
 
-    rows = db.query(RouteDailyMetrics).filter(RouteDailyMetrics.snapshot_date == snap_date).all()
+    rows = (
+        db.query(RouteDailyMetrics)
+        .options(load_only(*_ROUTE_METRIC_COLS))
+        .filter(RouteDailyMetrics.snapshot_date == snap_date)
+        .all()
+    )
     if len(rows) < 5:
         return None
 

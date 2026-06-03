@@ -224,6 +224,11 @@ def invalidate_compare_cache() -> None:
         _inflight.clear()
     _fingerprint_cache = None
     try:
+        from api_cache import invalidate_api_read_cache
+        invalidate_api_read_cache()
+    except Exception:
+        pass
+    try:
         from market_lab_cache import invalidate_market_lab_cache
         invalidate_market_lab_cache()
     except Exception:

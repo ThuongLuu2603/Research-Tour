@@ -88,7 +88,7 @@ export default function ResearchGrid() {
     }),
     enabled: !!workspaceId,
     placeholderData: (prev) => prev,
-    staleTime: 30_000,
+    staleTime: 60_000,
     refetchInterval: 120_000,
     refetchOnWindowFocus: true,
   });

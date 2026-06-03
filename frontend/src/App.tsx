@@ -13,7 +13,7 @@ import RulesAdminPage from "@/pages/RulesAdminPage";
 import MarketLab from "@/pages/MarketLab";
 
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
+  defaultOptions: { queries: { staleTime: 90_000, retry: 1 } },
 });
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {

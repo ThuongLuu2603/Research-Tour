@@ -91,7 +91,7 @@ def get_unmatched_cached(db, scope: str, loader: Callable[[], dict]) -> dict:
     now = time.time()
     with _lock:
         hit = _unmatched_cache.get(key)
-        if hit and now - hit[0] < 180:
+        if hit and now - hit[0] < 600:
             return hit[1]
     data = loader()
     with _lock:

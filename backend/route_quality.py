@@ -1,12 +1,21 @@
 """Phát hiện tuyến / thị trường không nhất quán trong dữ liệu Sheet."""
 from __future__ import annotations
 
+import logging
+import threading
+import time
 from collections import defaultdict
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from models import Tour
+
+logger = logging.getLogger(__name__)
+
+_hist_lock = threading.Lock()
+_hist_cache: tuple[float, tuple[int, str | None], dict[str, list[tuple[str, int]]]] | None = None
+HIST_TTL = 600
 
 
 def load_tuyen_market_histogram(db: Session) -> dict[str, list[tuple[str, int]]]:
@@ -23,6 +32,32 @@ def load_tuyen_market_histogram(db: Session) -> dict[str, list[tuple[str, int]]]
         if tuyen:
             hist[tuyen].append((market, int(cnt)))
     return hist
+
+
+def load_tuyen_market_histogram_cached(db: Session) -> dict[str, list[tuple[str, int]]]:
+    """GROUP BY tuyến×TT — cache 10 phút (Market Lab gọi mỗi lần mở trang)."""
+    from compare_cache import _db_fingerprint
+
+    global _hist_cache
+    fp = _db_fingerprint(db)
+    now = time.time()
+    with _hist_lock:
+        hit = _hist_cache
+        if hit and now - hit[0] < HIST_TTL and hit[1] == fp:
+            return hit[2]
+
+    t0 = time.time()
+    hist = load_tuyen_market_histogram(db)
+    with _hist_lock:
+        _hist_cache = (now, fp, hist)
+    logger.info("Built tuyen×market histogram (%s routes) in %.1fs", len(hist), time.time() - t0)
+    return hist
+
+
+def invalidate_route_quality_cache() -> None:
+    global _hist_cache
+    with _hist_lock:
+        _hist_cache = None
 
 
 def assess_route_quality(

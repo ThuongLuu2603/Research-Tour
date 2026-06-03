@@ -72,7 +72,7 @@ export default function RulesAdminPage() {
     queryKey: ["rules-unmatched", unmatchedScope],
     queryFn: () => getRulesUnmatched(unmatchedScope!, false),
     enabled: isAdmin && !!unmatchedScope,
-    staleTime: 30_000,
+    staleTime: 120_000,
   });
 
   const refreshUnmatchedList = useCallback(async () => {

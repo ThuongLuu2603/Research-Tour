@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
 from database import get_db
-from market_lab_engine import get_market_lab_overview, get_supply_calendar
+from market_lab_cache import get_market_lab_overview_cached
+from market_lab_engine import get_supply_calendar
 from models import User
 
 router = APIRouter(prefix="/api/market-lab", tags=["market-lab"])
@@ -42,5 +43,5 @@ def weekly_brief(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    data = get_market_lab_overview(db, grain="route", tab="opportunity", thi_truong=thi_truong or None)
+    data = get_market_lab_overview_cached(db, grain="route", tab="opportunity", thi_truong=thi_truong or None)
     return data.get("weekly_brief", {})

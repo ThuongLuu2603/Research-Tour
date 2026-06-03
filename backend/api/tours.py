@@ -138,22 +138,10 @@ def filter_options(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    def distinct(col):
-        return [
-            r[0]
-            for r in db.query(col).filter(col != "").distinct().order_by(col).all()
-        ]
+    from api_cache import get_tour_filter_options
 
-    from data_sources import DB_CANONICAL_NGUON
-
-    return FilterOptions(
-        thi_truong=distinct(Tour.thi_truong),
-        tuyen_tour=distinct(Tour.tuyen_tour),
-        cong_ty=distinct(Tour.cong_ty),
-        diem_kh=distinct(Tour.diem_kh),
-        nguon=[n for n in distinct(Tour.nguon) if n in DB_CANONICAL_NGUON],
-        phan_khuc=distinct(Tour.phan_khuc),
-    )
+    data = get_tour_filter_options(db)
+    return FilterOptions(**data)
 
 
 @router.patch("/{tour_id}", response_model=TourOut)

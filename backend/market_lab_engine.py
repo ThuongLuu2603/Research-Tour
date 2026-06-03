@@ -413,10 +413,10 @@ def get_market_lab_overview(
 ) -> dict:
     import time
     from market_lab_cache import get_cached_routes, load_momentum_map, routes_from_daily_metrics
-    from route_quality import assess_route_quality, load_tuyen_market_histogram
+    from route_quality import assess_route_quality, load_tuyen_market_histogram_cached
 
     t0 = time.time()
-    quality_hist = load_tuyen_market_histogram(db)
+    quality_hist = load_tuyen_market_histogram_cached(db)
     routes = routes_from_daily_metrics(db)
     data_source = "snapshot"
     if routes is None:
