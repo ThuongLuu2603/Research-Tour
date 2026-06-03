@@ -425,13 +425,9 @@ def is_market_rule_matched(
 
 
 def is_route_rule_matched(thi_truong: str, ten_tour: str, lich_trinh: str = "") -> bool:
-    market, route, from_route_rule = resolve_market_and_route(ten_tour or "", lich_trinh or "")
-    if not market or market == "Khác":
-        return True
-    if from_route_rule:
-        return True
-    generic = {market.casefold(), "khác", "khac", ""}
-    return route.strip().casefold() not in generic
+    _ = thi_truong
+    _, _, from_route_rule = resolve_market_and_route(ten_tour or "", lich_trinh or "")
+    return from_route_rule
 
 
 def _unmatched_add_member(bucket: dict, title: str) -> None:
@@ -502,7 +498,7 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
             if title not in tuyen_tour:
                 tuyen_tour[title] = {
                     "count": 0,
-                    "thi_truong": stored_mk or sug_mk or "Khác",
+                    "thi_truong": stored_mk or sug_mk or "",
                     "sample": title,
                     "suggested_thi_truong": sug_mk,
                     "bucket_key": f"route:{title}",
@@ -832,14 +828,19 @@ def apply_classification_rules_to_tours(db) -> dict:
                 t.lich_trinh or "",
                 route_rules=route_rules,
             )
-            if not from_rule:
-                pass
-            else:
-                if mk and mk != (t.thi_truong or ""):
+            if from_rule:
+                if mk != (t.thi_truong or ""):
                     t.thi_truong = mk[:128]
                     market_n += 1
-                if rt and rt != (t.tuyen_tour or "").strip():
+                if rt != (t.tuyen_tour or "").strip():
                     t.tuyen_tour = rt[:256]
+                    route_n += 1
+            else:
+                if (t.thi_truong or "").strip():
+                    t.thi_truong = ""
+                    market_n += 1
+                if (t.tuyen_tour or "").strip():
+                    t.tuyen_tour = ""
                     route_n += 1
             fixed_link = normalize_tour_link(t.link_url)
             if fixed_link != (t.link_url or ""):
@@ -920,12 +921,20 @@ def resolve_market_and_route(
     _ = market_pairs  # legacy callers
     combined = f"{ten_tour or ''} {lich_trinh or ''}".lower().strip()
     if not combined:
-        return "Khác", "Khác", False
+        return "", "", False
     rules = route_rules if route_rules is not None else _load_route_rules()
     for mkt, route, kws in rules:
         if all(kw in combined for kw in kws):
             return mkt, route, True
-    return "Khác", "Khác", False
+    return "", "", False
+
+
+def classify_route_fields(ten_tour: str, lich_trinh: str = "") -> tuple[str, str]:
+    """Thị trường + tuyến từ rule; không khớp → chuỗi rỗng."""
+    mk, rt, ok = resolve_market_and_route(ten_tour or "", lich_trinh or "")
+    if ok:
+        return mk, rt
+    return "", ""
 
 
 def resolve_tuyen_tour(thi_truong: str, ten_tour: str, lich_trinh: str = "") -> str:

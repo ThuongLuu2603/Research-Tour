@@ -144,7 +144,7 @@ def _scrape_row_to_fields(row) -> dict | None:
     }
 
 
-def _row_to_fields(row: list[str]) -> dict | None:
+def _row_to_fields(row: list[str], *, nguon: str = "") -> dict | None:
     if len(row) < 4:
         return None
     ten = (row[3] if len(row) > 3 else "").strip()
@@ -156,10 +156,13 @@ def _row_to_fields(row: list[str]) -> dict | None:
         link = _extract_url(row[COL_LINK_RAW - 1])
     if not link and len(row) > 9:
         link = _extract_url(row[9])
+    # Main: cột B/C (thị trường, tuyến) không import — gán bằng quy tắc tuyến sau.
+    sheet_tt = "" if nguon == "Main" else (row[1] if len(row) > 1 else "").strip()
+    sheet_route = "" if nguon == "Main" else (row[2] if len(row) > 2 else "").strip()
     return {
         "cong_ty": (row[0] if len(row) > 0 else "").strip(),
-        "thi_truong": (row[1] if len(row) > 1 else "").strip(),
-        "tuyen_tour": (row[2] if len(row) > 2 else "").strip(),
+        "thi_truong": sheet_tt,
+        "tuyen_tour": sheet_route,
         "ten_tour": ten,
         "lich_trinh": (row[4] if len(row) > 4 else "").strip(),
         "diem_kh": (row[5] if len(row) > 5 else "").strip(),
@@ -223,17 +226,23 @@ def _apply_fields_to_tour(
     external_id: str = "",
     sheet_row: int | None = None,
 ) -> None:
-    from classification import resolve_company_name, resolve_departure_point
+    from classification import classify_route_fields, resolve_company_name, resolve_departure_point
     from seed import parse_ngay
 
     note = tour.analyst_note
     flagged = tour.flagged
 
     tour.cong_ty = resolve_company_name(fields["cong_ty"])[:256]
-    tour.thi_truong = fields["thi_truong"][:128]
-    tour.tuyen_tour = fields["tuyen_tour"][:256]
     tour.ten_tour = fields["ten_tour"][:512]
     tour.lich_trinh = fields["lich_trinh"]
+    if nguon == "Main":
+        mk, rt = classify_route_fields(tour.ten_tour, tour.lich_trinh)
+        tour.thi_truong = mk[:128]
+        tour.tuyen_tour = rt[:256]
+        fields = {**fields, "thi_truong": tour.thi_truong, "tuyen_tour": tour.tuyen_tour}
+    else:
+        tour.thi_truong = fields["thi_truong"][:128]
+        tour.tuyen_tour = fields["tuyen_tour"][:256]
     tour.diem_kh = resolve_departure_point(fields["diem_kh"])[:256]
     tour.thoi_gian = fields["thoi_gian"][:64]
     tour.gia_raw = fields["gia_raw"][:64]
@@ -457,7 +466,7 @@ def merge_sheet_source_to_db(
     synced_tour_ids: set[int] = set()
     now = datetime.utcnow()
     for row_idx, row in enumerate(rows[1:], start=2):
-        fields = _row_to_fields(row)
+        fields = _row_to_fields(row, nguon=nguon)
         if not fields:
             skipped += 1
             continue
