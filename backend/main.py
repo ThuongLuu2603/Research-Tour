@@ -28,6 +28,19 @@ async def lifespan(app: FastAPI):
     from seed import create_default_users, start_import_background
 
     create_default_users()
+    try:
+        from database import SessionLocal
+        from scrape_job_utils import reconcile_stale_scrape_jobs
+
+        db = SessionLocal()
+        try:
+            fixed = reconcile_stale_scrape_jobs(db)
+            if fixed:
+                logger.info("Reconciled %s stale scrape job(s) on startup: %s", len(fixed), fixed)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("Stale scrape job reconcile skipped: %s", e)
     start_import_background()
 
     def _startup_maintenance() -> None:

@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { triggerScrape, getScrapeJobs, getSchedule, updateSchedule, getDataStatus, syncSheetData, ScrapeJob } from "@/lib/api";
+import {
+  triggerScrape, getScrapeJobs, getSchedule, updateSchedule, getDataStatus, syncSheetData,
+  cancelScrapeJob, ScrapeJob,
+} from "@/lib/api";
 import { fmtDate, statusColor, cn } from "@/lib/utils";
 import { Play, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Database } from "lucide-react";
 
@@ -107,6 +110,24 @@ function addMinutes(h: number, m: number, offset: number) {
   return { h: Math.floor(total / 60) % 24, m: total % 60 };
 }
 
+function jobAgeHours(job: ScrapeJob): number {
+  const t = new Date(job.started_at).getTime();
+  if (Number.isNaN(t)) return 0;
+  return (Date.now() - t) / 3_600_000;
+}
+
+function isJobLikelyStale(job: ScrapeJob): boolean {
+  if (job.status !== "running" && job.status !== "pending") return false;
+  const limitH = job.scraper_name === "vietravel" ? 3 : 2;
+  return jobAgeHours(job) >= limitH;
+}
+
+function fmtRunningDuration(job: ScrapeJob): string {
+  const h = jobAgeHours(job);
+  if (h < 1) return `${Math.round(h * 60)} phút`;
+  return `${h.toFixed(1)} giờ`;
+}
+
 export default function ScraperHub() {
   const qc = useQueryClient();
   const [schedHour, setSchedHour] = useState(7);
@@ -117,6 +138,11 @@ export default function ScraperHub() {
     queryKey: ["scrape-jobs"],
     queryFn: getScrapeJobs,
     refetchInterval: 5000,
+  });
+
+  const cancelJob = useMutation({
+    mutationFn: cancelScrapeJob,
+    onSuccess: () => refetchJobs(),
   });
 
   const { data: schedule } = useQuery({
@@ -296,6 +322,13 @@ export default function ScraperHub() {
         </div>
       </div>
 
+      {(jobs ?? []).some(isJobLikelyStale) && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Có job hiển thị <strong>running</strong> quá lâu — thường do server restart (Render deploy) khiến thread scraper chết
+          nhưng DB chưa cập nhật. Hệ thống tự đánh dấu lỗi sau 2–3 giờ; hoặc bấm <strong>Hủy job treo</strong> để chạy lại ngay.
+        </div>
+      )}
+
       {/* Job history */}
       <div className="card overflow-auto">
         <div className="px-5 py-3 border-b border-gray-200">
@@ -310,19 +343,45 @@ export default function ScraperHub() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {(jobs ?? []).map((job: ScrapeJob) => (
-              <tr key={job.id} className="hover:bg-blue-50 transition-colors">
+            {(jobs ?? []).map((job: ScrapeJob) => {
+              const stale = isJobLikelyStale(job);
+              return (
+              <tr key={job.id} className={cn("hover:bg-blue-50 transition-colors", stale && "bg-amber-50/80")}>
                 <td className="px-4 py-2.5 text-xs text-gray-400">{job.id}</td>
                 <td className="px-4 py-2.5 text-xs font-medium text-gray-700 capitalize">{job.scraper_name}</td>
-                <td className="px-4 py-2.5"><JobStatusBadge status={job.status} /></td>
+                <td className="px-4 py-2.5">
+                  <JobStatusBadge status={stale ? "failed" : job.status} />
+                  {stale && (
+                    <span className="block text-[10px] text-amber-700 mt-0.5">treo {fmtRunningDuration(job)}</span>
+                  )}
+                </td>
                 <td className="px-4 py-2.5 text-xs text-green-600 font-medium">+{job.tours_added}</td>
                 <td className="px-4 py-2.5 text-xs text-blue-600 font-medium">~{job.tours_updated}</td>
                 <td className="px-4 py-2.5 text-xs text-gray-600">{job.tours_total}</td>
                 <td className="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">{fmtDate(job.started_at)}</td>
-                <td className="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">{job.finished_at ? fmtDate(job.finished_at) : <span className="text-blue-500 animate-pulse">Đang chạy</span>}</td>
-                <td className="px-4 py-2.5 text-xs text-gray-400 max-w-xs truncate">{job.message || `by ${job.triggered_by}`}</td>
+                <td className="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">
+                  {job.finished_at ? fmtDate(job.finished_at) : (
+                    <span className={cn(stale ? "text-amber-700" : "text-blue-500 animate-pulse")}>
+                      {stale ? `Treo ~${fmtRunningDuration(job)}` : "Đang chạy"}
+                    </span>
+                  )}
+                </td>
+                <td className="px-4 py-2.5 text-xs text-gray-400 max-w-xs">
+                  <span className="truncate block">{job.message || `by ${job.triggered_by}`}</span>
+                  {stale && (
+                    <button
+                      type="button"
+                      className="text-[10px] text-red-600 hover:underline mt-0.5"
+                      disabled={cancelJob.isPending}
+                      onClick={() => cancelJob.mutate(job.id)}
+                    >
+                      Hủy job treo
+                    </button>
+                  )}
+                </td>
               </tr>
-            ))}
+            );
+            })}
             {(jobs ?? []).length === 0 && (
               <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400 text-sm">Chưa có job nào. Bấm "Chạy ngay" để bắt đầu.</td></tr>
             )}

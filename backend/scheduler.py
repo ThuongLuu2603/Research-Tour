@@ -60,8 +60,25 @@ async def _auto_scrape(scraper_name: str):
     from models import ScrapeJob
     from api.scraper import _run_job
 
+    from scrape_job_utils import reconcile_stale_scrape_jobs
+
     db = SessionLocal()
     try:
+        reconcile_stale_scrape_jobs(db)
+        running = (
+            db.query(ScrapeJob)
+            .filter(ScrapeJob.scraper_name == scraper_name, ScrapeJob.status == "running")
+            .first()
+        )
+        if running:
+            logger.warning(
+                "Skip scheduled %s: job %s still running since %s",
+                scraper_name,
+                running.id,
+                running.started_at,
+            )
+            return
+
         job = ScrapeJob(
             scraper_name=scraper_name,
             status="pending",

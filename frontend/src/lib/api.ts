@@ -306,6 +306,11 @@ export const getScrapeJobs = async (): Promise<ScrapeJob[]> => {
   return data;
 };
 
+export const cancelScrapeJob = async (jobId: number) => {
+  const { data } = await api.post(`/scraper/jobs/${jobId}/cancel`);
+  return data as { message: string; job_id: number };
+};
+
 export const getScrapeJob = async (id: number): Promise<ScrapeJob> => {
   const { data } = await api.get(`/scraper/jobs/${id}`);
   return data;
@@ -736,9 +741,18 @@ export const assignClassification = async (body: {
   tuyen_tour?: string;
   route_keywords: string;
   market_keyword?: string;
+  auto_apply?: boolean;
 }) => {
   const { data } = await api.post("/admin/rules/assign-classification", body);
   return data as { message: string; thi_truong?: string; tuyen_tour?: string };
+};
+
+export const assignClassificationBulk = async (body: {
+  items: { thi_truong: string; tuyen_tour?: string; route_keywords: string }[];
+  auto_apply?: boolean;
+}) => {
+  const { data } = await api.post("/admin/rules/assign-classification/bulk", body);
+  return data as { message: string; count: number; added: number };
 };
 
 export const getRulesUnmatched = async (

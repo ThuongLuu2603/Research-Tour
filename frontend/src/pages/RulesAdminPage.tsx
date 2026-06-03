@@ -1,5 +1,5 @@
 import { Navigate } from "react-router-dom";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -66,13 +66,43 @@ export default function RulesAdminPage() {
   const { data: departureRules } = useQuery({ queryKey: ["departure-rules"], queryFn: listDepartureRules, enabled: isAdmin });
   const { data: durationRules } = useQuery({ queryKey: ["duration-rules"], queryFn: listDurationRules, enabled: isAdmin });
   const unmatchedScope = tab === "classify" || tab === "company" || tab === "departure" || tab === "duration" ? tab : null;
-  const [unmatchedFresh, setUnmatchedFresh] = useState(false);
+  const [hiddenGapValues, setHiddenGapValues] = useState<Set<string>>(() => new Set());
   const { data: unmatched, isLoading: unmatchedLoading } = useQuery({
-    queryKey: ["rules-unmatched", unmatchedScope, unmatchedFresh],
-    queryFn: () => getRulesUnmatched(unmatchedScope!, unmatchedFresh),
+    queryKey: ["rules-unmatched", unmatchedScope],
+    queryFn: () => getRulesUnmatched(unmatchedScope!, false),
     enabled: isAdmin && !!unmatchedScope,
-    staleTime: unmatchedFresh ? 0 : 3 * 60_000,
+    staleTime: 30_000,
   });
+
+  const refreshUnmatchedList = useCallback(async () => {
+    if (!unmatchedScope) return;
+    const data = await getRulesUnmatched(unmatchedScope, true);
+    qc.setQueryData(["rules-unmatched", unmatchedScope], data);
+    setHiddenGapValues((prev) => {
+      if (!prev.size) return prev;
+      const remaining = new Set(data.items.map((i) => i.value));
+      const next = new Set<string>();
+      for (const v of prev) {
+        if (remaining.has(v)) next.add(v);
+      }
+      return next;
+    });
+  }, [unmatchedScope, qc]);
+
+  const markGapsHandled = useCallback((values: string[]) => {
+    if (!values.length) return;
+    setHiddenGapValues((prev) => new Set([...prev, ...values]));
+    void refreshUnmatchedList();
+  }, [refreshUnmatchedList]);
+
+  const unmarkGapsHandled = useCallback((values: string[]) => {
+    if (!values.length) return;
+    setHiddenGapValues((prev) => {
+      const next = new Set(prev);
+      for (const v of values) next.delete(v);
+      return next;
+    });
+  }, []);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["market-rules"] });
@@ -121,7 +151,6 @@ export default function RulesAdminPage() {
 
   const finishApplyPoll = (st: { running?: boolean; error?: string; message?: string; last_result?: unknown }) => {
     setApplying(false);
-    setUnmatchedFresh(true);
     if (st.error) {
       setSyncMsg(st.error);
       return;
@@ -133,7 +162,7 @@ export default function RulesAdminPage() {
         : "");
     if (msg) setSyncMsg(msg);
     invalidate();
-    window.setTimeout(() => setUnmatchedFresh(false), 500);
+    void refreshUnmatchedList();
   };
 
   const pollApplyStatus = (attempt = 0) => {
@@ -156,15 +185,13 @@ export default function RulesAdminPage() {
           window.setTimeout(() => pollAfterRuleSave(attempt + 1), 2000);
           return;
         }
-        setUnmatchedFresh(true);
         invalidate();
         if (st.message && !st.running) setSyncMsg(st.message);
-        window.setTimeout(() => setUnmatchedFresh(false), 500);
+        void refreshUnmatchedList();
       })
       .catch(() => {
-        setUnmatchedFresh(true);
         invalidate();
-        window.setTimeout(() => setUnmatchedFresh(false), 500);
+        void refreshUnmatchedList();
       });
   };
 
@@ -179,10 +206,12 @@ export default function RulesAdminPage() {
       .catch((e) => { showErr(e); setApplying(false); });
   };
 
-  const afterRuleSaved = (label: string) => {
+  const afterRuleSaved = (label: string, opts?: { gapValues?: string[]; skipPoll?: boolean }) => {
+    if (opts?.gapValues?.length) markGapsHandled(opts.gapValues);
     invalidate();
-    setSyncMsg(`${label} — đang cập nhật tour và danh sách chưa khớp…`);
-    pollAfterRuleSave();
+    setSyncMsg(label);
+    void refreshUnmatchedList();
+    if (!opts?.skipPoll) pollAfterRuleSave();
   };
 
   const startEdit = (id: number, draft: Record<string, string>) => {
@@ -227,8 +256,8 @@ export default function RulesAdminPage() {
       x.needs_route ? "thiếu tuyến" : "",
       ...(x.members ?? []).flatMap((m) => [m.title, m.count]),
     ));
-    return base;
-  }, [unmatched, search]);
+    return base.filter((x) => !hiddenGapValues.has(x.value));
+  }, [unmatched, search, hiddenGapValues]);
 
   const classifySearchCounts = useMemo(() => {
     const routes = (routeRules ?? []).filter((r) =>
@@ -342,6 +371,8 @@ export default function RulesAdminPage() {
           dropTarget={dropTarget}
           setDropTarget={setDropTarget}
           onAfterSaved={afterRuleSaved}
+          onMarkGapsHandled={markGapsHandled}
+          onGapAssignFailed={unmarkGapsHandled}
           onError={showErr}
           appendKeywordToRouteRule={appendKeywordToRouteRule}
           deleteRouteRule={deleteRouteRule}

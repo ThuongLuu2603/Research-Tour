@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { RouteRule, UnmatchedItem } from "@/lib/api";
-import { assignClassification, getClassifyMarketOrder, putClassifyMarketOrder, seedRouteDefaults } from "@/lib/api";
+import {
+  assignClassification,
+  assignClassificationBulk,
+  getClassifyMarketOrder,
+  putClassifyMarketOrder,
+  seedRouteDefaults,
+} from "@/lib/api";
 import { buildRouteKeywordConflicts, conflictHintForKeyword, parseRouteKeywordList } from "@/lib/rulesUnmatched";
 import { InfoTip } from "@/components/InfoTip";
 import { cn } from "@/lib/utils";
@@ -24,7 +30,9 @@ type Props = {
   routeKeywordConflicts: ReturnType<typeof buildRouteKeywordConflicts>;
   dropTarget: string | null;
   setDropTarget: (k: string | null) => void;
-  onAfterSaved: (msg: string) => void;
+  onAfterSaved: (msg: string, opts?: { gapValues?: string[]; skipPoll?: boolean }) => void;
+  onMarkGapsHandled: (values: string[]) => void;
+  onGapAssignFailed: (values: string[]) => void;
   onError: (e: unknown) => void;
   appendKeywordToRouteRule: (rule: RouteRule, raw: string) => Promise<void>;
   deleteRouteRule: (id: number) => Promise<void>;
@@ -50,6 +58,8 @@ export function ClassificationRulesTab({
   dropTarget,
   setDropTarget,
   onAfterSaved,
+  onMarkGapsHandled,
+  onGapAssignFailed,
   onError,
   appendKeywordToRouteRule,
   deleteRouteRule,
@@ -72,6 +82,22 @@ export function ClassificationRulesTab({
     route: string;
     routeKw: string;
   }>>({});
+  const [selectedGaps, setSelectedGaps] = useState<Set<string>>(() => new Set());
+  const [assigning, setAssigning] = useState(false);
+
+  const rowDraft = (title: string, item: UnmatchedItem) => {
+    const p = pending[title];
+    return {
+      market: (p?.market ?? item.suggested_market ?? item.resolved_market ?? "").trim(),
+      route: (p?.route ?? item.suggested_route ?? "").trim(),
+      routeKw: (p?.routeKw ?? item.route_keywords ?? keywordForRouteDrop(title)).trim(),
+    };
+  };
+
+  const isRowReady = (title: string, item: UnmatchedItem) => {
+    const d = rowDraft(title, item);
+    return Boolean(d.market && d.route && d.routeKw);
+  };
 
   const routesByMarket = useMemo(() => {
     const map = new Map<string, RouteRule[]>();
@@ -144,26 +170,80 @@ export function ClassificationRulesTab({
   };
 
   const assignOne = async (title: string, item: UnmatchedItem) => {
-    const p = pending[title] ?? {
-      market: item.suggested_market || item.resolved_market || "",
-      route: item.suggested_route || item.suggested_market || "",
-      routeKw: item.route_keywords || keywordForRouteDrop(title),
-    };
-    const mk = p.market.trim();
-    const route = p.route.trim();
-    const routeKw = p.routeKw.trim();
-    if (!mk || !route || !routeKw) return;
-    await assignClassification({
-      thi_truong: mk,
-      tuyen_tour: route,
-      route_keywords: routeKw,
+    const d = rowDraft(title, item);
+    if (!d.market || !d.route || !d.routeKw) return;
+    onMarkGapsHandled([title]);
+    setAssigning(true);
+    try {
+      await assignClassification({
+        thi_truong: d.market,
+        tuyen_tour: d.route,
+        route_keywords: d.routeKw,
+      });
+      setSelectedGaps((prev) => {
+        const n = new Set(prev);
+        n.delete(title);
+        return n;
+      });
+      setPending((prev) => {
+        const n = { ...prev };
+        delete n[title];
+        return n;
+      });
+      onAfterSaved(`Đã gán ${d.route} (${d.market})`, { skipPoll: true });
+    } catch (e) {
+      onGapAssignFailed([title]);
+      throw e;
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  const assignSelected = async () => {
+    const titles = [...selectedGaps].filter((t) => {
+      const item = gapItems.find((x) => x.value === t);
+      return item && isRowReady(t, item);
     });
-    onAfterSaved(`Đã gán ${route} → ${mk}`);
-    setPending((prev) => {
-      const n = { ...prev };
-      delete n[title];
+    if (!titles.length) return;
+    const items = titles.map((title) => {
+      const item = gapItems.find((x) => x.value === title)!;
+      const d = rowDraft(title, item);
+      return { thi_truong: d.market, tuyen_tour: d.route, route_keywords: d.routeKw };
+    });
+    onMarkGapsHandled(titles);
+    setAssigning(true);
+    try {
+      const r = await assignClassificationBulk({ items });
+      setSelectedGaps((prev) => {
+        const n = new Set(prev);
+        for (const t of titles) n.delete(t);
+        return n;
+      });
+      setPending((prev) => {
+        const n = { ...prev };
+        for (const t of titles) delete n[t];
+        return n;
+      });
+      onAfterSaved(r.message || `Đã gán ${titles.length} tour`, { skipPoll: true });
+    } catch (e) {
+      onGapAssignFailed(titles);
+      throw e;
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  const toggleGapSelect = (title: string) => {
+    setSelectedGaps((prev) => {
+      const n = new Set(prev);
+      if (n.has(title)) n.delete(title);
+      else n.add(title);
       return n;
     });
+  };
+
+  const selectAllReadyGaps = () => {
+    setSelectedGaps(new Set(gapItems.filter((item) => isRowReady(item.value, item)).map((i) => i.value)));
   };
 
   const quickAdd = async () => {
@@ -178,6 +258,14 @@ export function ClassificationRulesTab({
     setQRouteKw("");
     onAfterSaved(`Đã thêm tuyến ${route} (${mk})`);
   };
+
+  const selectedReadyCount = useMemo(
+    () => [...selectedGaps].filter((t) => {
+      const item = gapItems.find((x) => x.value === t);
+      return item && isRowReady(t, item);
+    }).length,
+    [selectedGaps, gapItems, pending],
+  );
 
   return (
     <div className="space-y-4">
@@ -321,10 +409,38 @@ export function ClassificationRulesTab({
       </div>
 
       <div className="card overflow-auto max-h-[480px]">
+        <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b bg-amber-50/80 sticky top-0 z-20">
+          <button
+            type="button"
+            className="btn-secondary text-xs py-1"
+            disabled={gapLoading || !gapItems.length}
+            onClick={selectAllReadyGaps}
+          >
+            Chọn tất cả (đủ ô)
+          </button>
+          <button
+            type="button"
+            className="btn-secondary text-xs py-1"
+            disabled={!selectedGaps.size}
+            onClick={() => setSelectedGaps(new Set())}
+          >
+            Bỏ chọn
+          </button>
+          <button
+            type="button"
+            className="btn-primary text-xs py-1"
+            disabled={assigning || selectedReadyCount < 1}
+            onClick={() => assignSelected().catch(onError)}
+          >
+            {assigning ? "Đang gán…" : `Gán ${selectedReadyCount} dòng đã chọn`}
+          </button>
+          <span className="text-xs text-gray-500 ml-auto">Dòng biến mất ngay sau Gán; server quét lại nền</span>
+        </div>
         <table className="w-full text-sm">
           <thead className="bg-amber-50 sticky top-0 z-10">
             <tr>
-              <th className="px-2 py-2 text-left w-[30%]">Tour chưa khớp tuyến</th>
+              <th className="px-1 py-2 w-8" />
+              <th className="px-2 py-2 text-left w-[28%]">Tour chưa khớp tuyến</th>
               <th className="px-2 py-2 text-left">Thị trường (nhóm)</th>
               <th className="px-2 py-2 text-left">Tuyến tour</th>
               <th className="px-2 py-2 text-left">
@@ -338,22 +454,30 @@ export function ClassificationRulesTab({
           </thead>
           <tbody>
             {gapLoading && (
-              <tr><td colSpan={5} className="px-3 py-6 text-center text-gray-400">Đang quét tour…</td></tr>
+              <tr><td colSpan={6} className="px-3 py-6 text-center text-gray-400">Đang quét tour…</td></tr>
             )}
             {!gapLoading && gapItems.length === 0 && (
-              <tr><td colSpan={5} className="px-3 py-6 text-center text-green-700">Mọi tour đã khớp ít nhất một rule tuyến</td></tr>
+              <tr><td colSpan={6} className="px-3 py-6 text-center text-green-700">Mọi tour đã khớp ít nhất một rule tuyến</td></tr>
             )}
             {gapItems.map((item) => {
               const title = item.value;
-              const p = pending[title];
-              const market = p?.market ?? item.suggested_market ?? item.resolved_market ?? "";
-              const route = p?.route ?? item.suggested_route ?? "";
-              const routeKw = p?.routeKw ?? item.route_keywords ?? keywordForRouteDrop(title);
-              const routesForMk = routesByMarket.get(market) ?? [];
-              const rowConflict = conflictHintForKeyword(parseRouteKeywordList(routeKw)[0] ?? "", routeKeywordConflicts);
+              const d = rowDraft(title, item);
+              const routesForMk = routesByMarket.get(d.market) ?? [];
+              const rowConflict = conflictHintForKeyword(parseRouteKeywordList(d.routeKw)[0] ?? "", routeKeywordConflicts);
 
+              const ready = isRowReady(title, item);
               return (
-                <tr key={title} className="border-t bg-amber-50/50 align-top">
+                <tr key={title} className={cn("border-t bg-amber-50/50 align-top", selectedGaps.has(title) && "ring-1 ring-primary-400")}>
+                  <td className="px-1 py-2 text-center">
+                    <input
+                      type="checkbox"
+                      className="rounded"
+                      checked={selectedGaps.has(title)}
+                      disabled={!ready || assigning}
+                      title={ready ? "Chọn để gán hàng loạt" : "Điền đủ thị trường, tuyến, keyword"}
+                      onChange={() => toggleGapSelect(title)}
+                    />
+                  </td>
                   <td className="px-2 py-2 text-xs">
                     {item.count > 1 && <span className="text-gray-500 block mb-0.5">{item.count} tour</span>}
                     <span className="line-clamp-3" title={item.sample}>{item.sample || title}</span>
@@ -363,26 +487,26 @@ export function ClassificationRulesTab({
                       className="input text-xs py-1 w-full"
                       list="classify-market-list"
                       placeholder="Nhóm TT"
-                      value={market}
+                      value={d.market}
                       onChange={(e) => setPending((prev) => ({
                         ...prev,
-                        [title]: { market: e.target.value, route, routeKw },
+                        [title]: { market: e.target.value, route: d.route, routeKw: d.routeKw },
                       }))}
                     />
                   </td>
                   <td className="px-2 py-2">
                     <input
                       className="input text-xs py-1 w-full"
-                      list={market ? `classify-route-${encodeURIComponent(market)}` : undefined}
+                      list={d.market ? `classify-route-${encodeURIComponent(d.market)}` : undefined}
                       placeholder="Tên tuyến"
-                      value={route}
+                      value={d.route}
                       onChange={(e) => setPending((prev) => ({
                         ...prev,
-                        [title]: { market, route: e.target.value, routeKw },
+                        [title]: { market: d.market, route: e.target.value, routeKw: d.routeKw },
                       }))}
                     />
-                    {market ? (
-                      <datalist id={`classify-route-${encodeURIComponent(market)}`}>
+                    {d.market ? (
+                      <datalist id={`classify-route-${encodeURIComponent(d.market)}`}>
                         {routesForMk.map((r) => (
                           <option key={r.id} value={r.tuyen_tour} />
                         ))}
@@ -392,14 +516,14 @@ export function ClassificationRulesTab({
                   <td className="px-2 py-2">
                     <input
                       className="input text-xs py-1 w-full font-mono"
-                      value={routeKw}
+                      value={d.routeKw}
                       onChange={(e) => setPending((prev) => ({
                         ...prev,
-                        [title]: { market, route, routeKw: e.target.value },
+                        [title]: { market: d.market, route: d.route, routeKw: e.target.value },
                       }))}
                     />
                     {rowConflict && <p className="text-[10px] text-red-700 mt-0.5">{rowConflict}</p>}
-                    <span {...dragAliasProps(routeKw)} className="text-[10px] text-amber-700 cursor-grab inline-flex items-center gap-0.5 mt-1">
+                    <span {...dragAliasProps(d.routeKw)} className="text-[10px] text-amber-700 cursor-grab inline-flex items-center gap-0.5 mt-1">
                       <GripVertical size={10} /> kéo keyword
                     </span>
                   </td>
@@ -407,7 +531,7 @@ export function ClassificationRulesTab({
                     <button
                       type="button"
                       className="btn-primary text-[10px] py-1 px-2 w-full"
-                      disabled={!market.trim() || !route.trim() || !routeKw.trim()}
+                      disabled={assigning || !ready}
                       onClick={() => assignOne(title, item).catch(onError)}
                     >
                       Gán

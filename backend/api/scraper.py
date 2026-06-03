@@ -60,6 +60,10 @@ def trigger_scrape(
     if req.scraper not in ("vietravel", "findtourgo"):
         raise HTTPException(status_code=400, detail="scraper phải là 'vietravel' hoặc 'findtourgo'")
 
+    from scrape_job_utils import reconcile_stale_scrape_jobs
+
+    reconcile_stale_scrape_jobs(db)
+
     running = (
         db.query(ScrapeJob)
         .filter(ScrapeJob.scraper_name == req.scraper, ScrapeJob.status == "running")
@@ -89,12 +93,34 @@ def list_jobs(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    from scrape_job_utils import reconcile_stale_scrape_jobs
+
+    reconcile_stale_scrape_jobs(db)
     return (
         db.query(ScrapeJob)
         .order_by(ScrapeJob.started_at.desc())
         .limit(limit)
         .all()
     )
+
+
+@router.post("/jobs/{job_id}/cancel")
+def cancel_stale_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Đánh dấu job pending/running là failed — mở khóa «Chạy ngay»."""
+    job = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job không tồn tại")
+    if job.status not in ("pending", "running"):
+        raise HTTPException(status_code=400, detail=f"Job đã {job.status}, không hủy được")
+    job.status = "failed"
+    job.finished_at = datetime.utcnow()
+    job.message = ((job.message or "").strip() + " | Đã hủy thủ công trên UI")[:512]
+    db.commit()
+    return {"message": f"Đã hủy job #{job_id}", "job_id": job_id}
 
 
 @router.get("/jobs/{job_id}", response_model=JobOut)

@@ -86,6 +86,44 @@ class AssignClassificationIn(BaseModel):
     auto_apply: bool = True
 
 
+class BulkAssignClassificationItem(BaseModel):
+    thi_truong: str = Field(max_length=128)
+    tuyen_tour: str = Field(default="", max_length=256)
+    route_keywords: str = Field(max_length=512)
+
+
+class BulkAssignClassificationIn(BaseModel):
+    items: list[BulkAssignClassificationItem] = Field(min_length=1, max_length=100)
+    auto_apply: bool = True
+
+
+def _add_route_rule_row(db: Session, mk: str, route: str, route_kws: str) -> bool:
+    """Thêm dòng rule OR nếu chưa có cùng bộ keyword. Trả về True nếu đã thêm."""
+    from classification import merge_keyword_csv
+
+    siblings = (
+        db.query(RouteKeywordRule)
+        .filter(
+            RouteKeywordRule.thi_truong == mk,
+            RouteKeywordRule.tuyen_tour == route,
+            RouteKeywordRule.active == True,
+        )
+        .all()
+    )
+    if any(merge_keyword_csv(r.keywords, "") == route_kws for r in siblings):
+        return False
+    next_order = max((r.sort_order for r in siblings), default=-1) + 1
+    db.add(
+        RouteKeywordRule(
+            thi_truong=mk,
+            tuyen_tour=route,
+            keywords=route_kws,
+            sort_order=next_order,
+        )
+    )
+    return True
+
+
 def _try_push_market(db: Session) -> str | None:
     try:
         n = push_market_rules_to_sheet(db)
@@ -842,28 +880,7 @@ def assign_classification(
     if not route:
         raise HTTPException(400, "Cần tên tuyến tour")
 
-    # Route-first: thị trường gắn trên rule tuyến, không tạo keyword thị trường.
-
-    # Mỗi lần Gán từ tour chưa khớp = thêm một dòng rule (OR). Không gộp vào dòng cũ.
-    siblings = (
-        db.query(RouteKeywordRule)
-        .filter(
-            RouteKeywordRule.thi_truong == mk,
-            RouteKeywordRule.tuyen_tour == route,
-            RouteKeywordRule.active == True,
-        )
-        .all()
-    )
-    if not any(merge_keyword_csv(r.keywords, "") == route_kws for r in siblings):
-        next_order = max((r.sort_order for r in siblings), default=-1) + 1
-        db.add(
-            RouteKeywordRule(
-                thi_truong=mk,
-                tuyen_tour=route,
-                keywords=route_kws,
-                sort_order=next_order,
-            )
-        )
+    _add_route_rule_row(db, mk, route, route_kws)
 
     db.commit()
     invalidate_classification_cache()
@@ -872,6 +889,37 @@ def assign_classification(
         "message": f"Đã gán tuyến {route} ({mk}) — keyword: {route_kws}",
         "thi_truong": mk,
         "tuyen_tour": route,
+        "tours_apply": tours,
+    }
+
+
+@router.post("/assign-classification/bulk")
+def assign_classification_bulk(
+    body: BulkAssignClassificationIn,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Gán nhiều dòng rule cùng lúc — một lần commit + một lần áp dụng tour."""
+    from classification import merge_keyword_csv
+
+    added = 0
+    for item in body.items:
+        mk = item.thi_truong.strip()
+        route = (item.tuyen_tour or mk).strip()
+        route_kws = merge_keyword_csv("", item.route_keywords)
+        if not mk or not route_kws or not route:
+            raise HTTPException(400, "Mỗi dòng cần thị trường, tuyến và keyword tuyến")
+        if _add_route_rule_row(db, mk, route, route_kws):
+            added += 1
+
+    db.commit()
+    invalidate_classification_cache()
+    tours = _auto_apply_tours(db, body.auto_apply, scope="all")
+    n = len(body.items)
+    return {
+        "message": f"Đã gán {n} rule tuyến ({added} dòng mới)",
+        "count": n,
+        "added": added,
         "tours_apply": tours,
     }
 
