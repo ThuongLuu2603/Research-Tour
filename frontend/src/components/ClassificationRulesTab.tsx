@@ -76,6 +76,7 @@ export function ClassificationRulesTab({
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [dragMarket, setDragMarket] = useState<string | null>(null);
   const [dropMarket, setDropMarket] = useState<string | null>(null);
+  const [actionFeedback, setActionFeedback] = useState<{ kind: "loading" | "ok" | "err"; text: string } | null>(null);
 
   const { data: marketOrderData, refetch: refetchMarketOrder } = useQuery({
     queryKey: ["classify-market-order"],
@@ -225,6 +226,7 @@ export function ClassificationRulesTab({
     });
     onMarkGapsHandled(titles);
     setAssigning(true);
+    setActionFeedback({ kind: "loading", text: `Đang gán ${titles.length} dòng…` });
     try {
       const r = await assignClassificationBulk({ items });
       setSelectedGaps((prev) => {
@@ -237,9 +239,12 @@ export function ClassificationRulesTab({
         for (const t of titles) delete n[t];
         return n;
       });
-      onAfterSaved(r.message || `Đã gán ${titles.length} tour`, { gapValues: titles });
+      const msg = r.message || `Đã gán ${titles.length} dòng`;
+      setActionFeedback({ kind: "ok", text: msg });
+      onAfterSaved(msg, { gapValues: titles, skipPoll: true });
     } catch (e) {
       onGapAssignFailed(titles);
+      setActionFeedback({ kind: "err", text: "Gán hàng loạt thất bại." });
       throw e;
     } finally {
       setAssigning(false);
@@ -259,17 +264,34 @@ export function ClassificationRulesTab({
     setSelectedGaps(new Set(gapItems.filter((item) => isRowReady(item.value, item)).map((i) => i.value)));
   };
 
+  const [quickAdding, setQuickAdding] = useState(false);
+
   const quickAdd = async () => {
     const mk = qMarket.trim();
     const route = (qRoute || qMarket).trim();
-    if (!mk || !route || !qRouteKw.trim()) return;
-    await assignClassification({
-      thi_truong: mk,
-      tuyen_tour: route,
-      route_keywords: qRouteKw.trim(),
+    const kw = qRouteKw.trim();
+    if (!mk || !route || !kw) return;
+    setQuickAdding(true);
+    setActionFeedback({
+      kind: "loading",
+      text: `Đang thêm rule «${kw}» → ${route} và áp dụng lên tour (có thể mất vài giây)…`,
     });
-    setQRouteKw("");
-    onAfterSaved(`Đã thêm tuyến ${route} (${mk})`);
+    try {
+      const r = await assignClassification({
+        thi_truong: mk,
+        tuyen_tour: route,
+        route_keywords: kw,
+      });
+      setQRouteKw("");
+      const msg = applyResultMessage(r, `Đã thêm tuyến ${route} (${mk})`);
+      setActionFeedback({ kind: "ok", text: msg });
+      onAfterSaved(msg, { skipPoll: true });
+    } catch (e) {
+      setActionFeedback({ kind: "err", text: "Thêm & áp dụng thất bại." });
+      onError(e);
+    } finally {
+      setQuickAdding(false);
+    }
   };
 
   const selectedReadyCount = useMemo(
@@ -298,14 +320,33 @@ export function ClassificationRulesTab({
           <input className="input text-sm" placeholder="Tên tuyến tour" value={qRoute} onChange={(e) => setQRoute(e.target.value)} onKeyDown={keepInputKeys} list={qMarket.trim() ? routeDatalistId(qMarket.trim()) : undefined} />
           <input className="input text-sm font-mono" placeholder="Keyword tuyến (vd: kanazawa)" value={qRouteKw} onChange={(e) => setQRouteKw(e.target.value)} onKeyDown={keepInputKeys} />
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={quickAdd} disabled={!qMarket.trim() || !qRouteKw.trim()} className="btn-primary text-sm">
-            <Plus size={14} /> Thêm & áp dụng
+        <div className="flex flex-wrap gap-2 items-center">
+          <button
+            type="button"
+            onClick={() => void quickAdd()}
+            disabled={!qMarket.trim() || !qRouteKw.trim() || quickAdding || assigning}
+            className="btn-primary text-sm disabled:opacity-60"
+          >
+            <Plus size={14} className={quickAdding ? "animate-pulse" : ""} />
+            {quickAdding ? "Đang áp dụng…" : "Thêm & áp dụng"}
           </button>
           <button type="button" onClick={() => seedRouteDefaults().then((r) => onAfterSaved(r.message || "Đã import tuyến")).catch(onError)} className="btn-secondary text-sm">
             <Database size={14} /> Import tuyến mặc định
           </button>
         </div>
+        {actionFeedback && (
+          <p
+            className={cn(
+              "text-sm px-3 py-2 rounded-lg border",
+              actionFeedback.kind === "loading" && "text-amber-900 bg-amber-50 border-amber-200",
+              actionFeedback.kind === "ok" && "text-green-800 bg-green-50 border-green-200",
+              actionFeedback.kind === "err" && "text-red-800 bg-red-50 border-red-200",
+            )}
+            role="status"
+          >
+            {actionFeedback.text}
+          </p>
+        )}
       </div>
 
       {routeKeywordConflicts.size > 0 && (

@@ -749,7 +749,12 @@ export const assignClassification = async (body: {
   auto_apply?: boolean;
 }) => {
   const { data } = await api.post("/admin/rules/assign-classification", body);
-  return data as { message: string; thi_truong?: string; tuyen_tour?: string };
+  return data as {
+    message: string;
+    thi_truong?: string;
+    tuyen_tour?: string;
+    tours_apply?: { message?: string; applied?: boolean; result?: { message?: string } };
+  };
 };
 
 export const assignClassificationBulk = async (body: {

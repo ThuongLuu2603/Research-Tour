@@ -326,7 +326,21 @@ export default function RulesAdminPage() {
         <button type="button" onClick={onApplyTours} disabled={applying} className="btn-primary text-xs flex items-center gap-1 shrink-0 disabled:opacity-60">
           <RefreshCw size={13} className={applying ? "animate-spin" : ""} /> {applying ? "Đang áp dụng…" : "Áp dụng ngay lên tour"}
         </button>
-        {syncMsg && <p className="text-xs text-green-700 bg-green-50 px-3 py-2 rounded w-full">{syncMsg}</p>}
+        {syncMsg && (
+          <p
+            className={cn(
+              "text-sm px-3 py-2 rounded w-full border",
+              applying || syncMsg.includes("Đang ")
+                ? "text-amber-900 bg-amber-50 border-amber-200"
+                : syncMsg.includes("thất bại") || syncMsg.includes("Lỗi") || syncMsg.includes("error")
+                  ? "text-red-800 bg-red-50 border-red-200"
+                  : "text-green-800 bg-green-50 border-green-200",
+            )}
+            role="status"
+          >
+            {syncMsg}
+          </p>
+        )}
       </div>
 
       <div className="flex gap-2 flex-wrap">
