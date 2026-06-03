@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   triggerScrape, getScrapeJobs, getScrapeJob, getSchedule, updateSchedule, getDataStatus, syncSheetData,
-  cancelScrapeJob, ScrapeJob,
+  cancelScrapeJob, reconcileStaleScrapeJobs, ScrapeJob,
 } from "@/lib/api";
 import { fmtDate, statusColor, cn } from "@/lib/utils";
 import { Play, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Database } from "lucide-react";
@@ -191,6 +191,23 @@ export default function ScraperHub() {
     onSuccess: () => refetchJobs(),
   });
 
+  const reconcileStale = useMutation({
+    mutationFn: reconcileStaleScrapeJobs,
+    onSuccess: (r) => {
+      refetchJobs();
+      setReconcileMsg(r.message);
+      window.setTimeout(() => setReconcileMsg(""), 4000);
+    },
+  });
+
+  const [reconcileMsg, setReconcileMsg] = useState("");
+
+  useEffect(() => {
+    reconcileStaleScrapeJobs()
+      .then(() => refetchJobs())
+      .catch(() => { /* ignore */ });
+  }, []);
+
   const { data: schedule } = useQuery({
     queryKey: ["schedule"],
     queryFn: getSchedule,
@@ -368,10 +385,23 @@ export default function ScraperHub() {
         </div>
       </div>
 
-      {(jobs ?? []).some(isJobLikelyStale) && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          Có job hiển thị <strong>running</strong> quá lâu — thường do server restart (Render deploy) khiến thread scraper chết
-          nhưng DB chưa cập nhật. Hệ thống tự đánh dấu lỗi sau 2–3 giờ; hoặc bấm <strong>Hủy job treo</strong> để chạy lại ngay.
+      {reconcileMsg && (
+        <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">{reconcileMsg}</p>
+      )}
+      {(jobs ?? []).some((j) => j.status === "running" || j.status === "pending") && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 space-y-2">
+          <p>
+            Job <strong>running</strong> nhiều giờ với <strong>0 tour</strong> thường là <strong>job chết</strong> sau deploy Render
+            (không phải đang tải). Scraper thật: Vietravel ~15–30 phút, FindTourGo ~20–40 phút (có % tiến độ tăng).
+          </p>
+          <button
+            type="button"
+            className="btn-secondary text-xs"
+            disabled={reconcileStale.isPending}
+            onClick={() => reconcileStale.mutate()}
+          >
+            {reconcileStale.isPending ? "Đang dọn…" : "Dọn job treo ngay"}
+          </button>
         </div>
       )}
 

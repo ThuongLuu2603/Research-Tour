@@ -311,6 +311,11 @@ export const cancelScrapeJob = async (jobId: number) => {
   return data as { message: string; job_id: number };
 };
 
+export const reconcileStaleScrapeJobs = async () => {
+  const { data } = await api.post("/scraper/jobs/reconcile-stale");
+  return data as { message: string; fixed_ids: number[] };
+};
+
 export const getScrapeJob = async (id: number): Promise<ScrapeJob> => {
   const { data } = await api.get(`/scraper/jobs/${id}`);
   return data;

@@ -104,6 +104,18 @@ def list_jobs(
     )
 
 
+@router.post("/jobs/reconcile-stale")
+def reconcile_stale_jobs(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Dọn mọi job pending/running treo — gọi khi Job History kẹt «running»."""
+    from scrape_job_utils import reconcile_stale_scrape_jobs
+
+    fixed = reconcile_stale_scrape_jobs(db)
+    return {"message": f"Đã dọn {len(fixed)} job treo", "fixed_ids": fixed}
+
+
 @router.post("/jobs/{job_id}/cancel")
 def cancel_stale_job(
     job_id: int,
