@@ -41,7 +41,8 @@ if _is_postgres and "supabase" in _url:
 
     _db_log = logging.getLogger(__name__)
     if "pooler.supabase.com" in _url:
-        _db_log.info("Supabase: session pooler + NullPool (tránh vượt max clients)")
+        mode = "transaction :6543" if ":6543" in _url else "session :5432"
+        _db_log.info("Supabase pooler (%s) + NullPool", mode)
     elif "@db." in _url:
         _db_log.warning(
             "Supabase direct host (db.*.supabase.co) may fail on Render (no IPv6). "

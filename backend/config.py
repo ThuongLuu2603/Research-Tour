@@ -22,6 +22,30 @@ def _append_sslmode(url: str) -> str:
     return url
 
 
+def _prefer_transaction_pooler(url: str) -> str:
+    """
+    Session pooler (:5432) giới hạn ~15 client — dễ tràn khi Render deploy chồng instance.
+    Transaction pooler (:6543) phù hợp web app + NullPool.
+  Set SUPABASE_SESSION_POOLER=1 để giữ :5432.
+    """
+    if os.getenv("SUPABASE_SESSION_POOLER", "").lower() in ("1", "true", "yes"):
+        return url
+    if "pooler.supabase.com" not in url or ":6543" in url:
+        return url
+    if ":5432" in url:
+        return url.replace(":5432", ":6543", 1)
+    return url
+
+
+def _finalize_postgres_url(url: str) -> str:
+    url = _append_sslmode(url)
+    on_render = bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"))
+    use_txn = os.getenv("SUPABASE_TRANSACTION_POOLER", "true").lower() not in ("0", "false", "no")
+    if "pooler.supabase.com" in url and (on_render or use_txn):
+        url = _prefer_transaction_pooler(url)
+    return url
+
+
 def _rewrite_supabase_direct_to_pooler(url: str, pooler_host: str) -> str:
     """
     Render (và nhiều host) không ra IPv6 — db.*.supabase.co thường chỉ có AAAA.
@@ -89,10 +113,10 @@ class Settings(BaseSettings):
             if pooler_url.startswith("postgres://"):
                 pooler_url = pooler_url.replace("postgres://", "postgresql://", 1)
             pooler_url = _sanitize_postgres_url(pooler_url)
-            return _append_sslmode(pooler_url)
+            return _finalize_postgres_url(pooler_url)
 
         if "pooler.supabase.com" in v:
-            return _append_sslmode(v)
+            return _finalize_postgres_url(v)
 
         on_render = bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"))
         force = os.getenv("SUPABASE_FORCE_POOLER", "true").lower() not in ("0", "false", "no")
@@ -102,6 +126,10 @@ class Settings(BaseSettings):
                 region = (os.getenv("SUPABASE_REGION") or "ap-southeast-1").strip()
                 host = f"aws-0-{region}.pooler.supabase.com"
             v = _rewrite_supabase_direct_to_pooler(v, host)
+        if "pooler.supabase.com" in v:
+            return _finalize_postgres_url(v)
+        if "supabase.co" in v:
+            return _append_sslmode(v)
         return v
 
 
