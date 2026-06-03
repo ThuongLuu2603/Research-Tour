@@ -331,7 +331,7 @@ export default function ScraperHub() {
         <ScraperCard
           scraper="findtourgo"
           label="FindTourGo — OTA Aggregator"
-          desc="Chỉ ghi Google Sheet (không lưu database)"
+          desc="Phân loại thị trường/tuyến → ghi tab FindTourGo (không lưu DB)"
         />
       </div>
 

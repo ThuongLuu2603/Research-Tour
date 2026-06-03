@@ -80,26 +80,29 @@ def _hyperlink_formula(url: str) -> str:
     return f'=HYPERLINK("{safe}";"Xem chi tiết")'
 
 
-def enrich_market_and_route(df: pd.DataFrame) -> pd.DataFrame:
-    """Áp dụng quy tắc Thị trường (keyword) rồi Tuyến tour (sheet Điểm tuyến Tour)."""
-    from market_rules import resolve_thi_truong
-    from route_rules import load_route_rules, resolve_tuyen_tour
+def enrich_market_and_route(
+    df: pd.DataFrame,
+    progress: Callable[[int, str], None] | None = None,
+) -> pd.DataFrame:
+    """Phân loại thị trường + tuyến từ quy tắc DB (cùng Main/Vietravel); không khớp → để trống."""
+    from classification import _load_route_rules, resolve_market_and_route
 
+    rules = _load_route_rules()
     out = df.copy()
-    rules = load_route_rules()
-    out["thi_truong"] = out.apply(
-        lambda r: resolve_thi_truong(r.get("ten_tour", ""), r.get("lich_trinh", "")),
-        axis=1,
-    )
-    out["tuyen_tour"] = out.apply(
-        lambda r: resolve_tuyen_tour(
-            r.get("thi_truong", ""),
-            r.get("ten_tour", ""),
-            r.get("lich_trinh", ""),
-            rules,
-        ),
-        axis=1,
-    )
+    mk_list: list[str] = []
+    rt_list: list[str] = []
+    n = len(out)
+    for i, (_, row) in enumerate(out.iterrows()):
+        ten = str(row.get("ten_tour") or "")
+        lich = str(row.get("lich_trinh") or "")
+        mk, rt, matched = resolve_market_and_route(ten, lich, route_rules=rules)
+        mk_list.append(mk if matched else "")
+        rt_list.append(rt if matched else "")
+        if progress and n and (i % 200 == 0 or i + 1 == n):
+            pct = 70 + int(8 * (i + 1) / n)
+            progress(pct, f"Phân loại thị trường/tuyến {i + 1}/{n}…")
+    out["thi_truong"] = mk_list
+    out["tuyen_tour"] = rt_list
     return out
 
 

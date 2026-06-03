@@ -410,11 +410,16 @@ def _run_findtourgo(db: Session, job_id: int, job: ScrapeJob):
         _emit(job_id, pct, msg)
 
     _emit(job_id, 8, "Bắt đầu quét FindTourGo API…")
-    df = scrape_all_findtourgo_tours(progress=_progress, classify=False)
+    df = scrape_all_findtourgo_tours(progress=_progress, classify=True)
     if df.empty:
         raise RuntimeError("FindTourGo không trả tour — kiểm tra API hoặc mạng")
     n_co = df["cong_ty"].nunique() if "cong_ty" in df.columns else len(df)
-    _emit(job_id, 72, f"Đã quét {len(df)} tour ({n_co} công ty) — ghi Sheet…")
+    n_mk = df["thi_truong"].astype(str).str.strip().ne("").sum() if "thi_truong" in df.columns else 0
+    _emit(
+        job_id,
+        78,
+        f"Đã quét {len(df)} tour ({n_co} công ty, {n_mk} có thị trường/tuyến) — ghi Sheet…",
+    )
 
     job.tours_total = len(df)
     db.commit()

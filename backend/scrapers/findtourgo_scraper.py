@@ -686,10 +686,10 @@ def scrape_all_findtourgo_tours(
     df = pd.DataFrame(rows)
     if classify:
         if progress:
-            progress(72, f"Phân loại {len(df)} tour (chậm)…")
+            progress(68, f"Phân loại thị trường & tuyến cho {len(df)} tour…")
         from vietravel_scraper import enrich_market_and_route
 
-        return enrich_market_and_route(df)
+        return enrich_market_and_route(df, progress=progress)
     return df
 
 
