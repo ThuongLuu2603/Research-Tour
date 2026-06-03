@@ -10,11 +10,36 @@ export function fmtVND(val: number | null | undefined): string {
   return new Intl.NumberFormat("vi-VN", { style: "decimal" }).format(val);
 }
 
+/** Múi giờ hiển thị mặc định — giờ Việt Nam UTC+7. */
+export const VN_TIMEZONE = "Asia/Ho_Chi_Minh";
+
+const HAS_TZ_SUFFIX = /(?:Z|[+-]\d{2}:?\d{2})$/i;
+
+/** API/DB lưu UTC (naive, không kèm Z) — parse đúng trước khi format. */
+export function parseAppDate(iso: string): Date {
+  const s = iso.trim();
+  if (!s) return new Date(NaN);
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s) && !HAS_TZ_SUFFIX.test(s)) {
+    return new Date(`${s}Z`);
+  }
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s) && !HAS_TZ_SUFFIX.test(s)) {
+    return new Date(`${s.replace(" ", "T")}Z`);
+  }
+  return new Date(s);
+}
+
 export function fmtDate(iso: string | null | undefined): string {
   if (!iso) return "—";
-  const d = new Date(iso);
+  const d = parseAppDate(iso);
   if (isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleString("vi-VN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: VN_TIMEZONE,
+  });
 }
 
 /** Hiển thị ngắn cột Phân khúc (hỗ trợ nhãn cũ trong DB). */

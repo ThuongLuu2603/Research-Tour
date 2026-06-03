@@ -4,7 +4,7 @@ import {
   triggerScrape, getScrapeJobs, getScrapeJob, getSchedule, updateSchedule, getDataStatus, syncSheetData,
   cancelScrapeJob, reconcileStaleScrapeJobs, ScrapeJob,
 } from "@/lib/api";
-import { fmtDate, statusColor, cn } from "@/lib/utils";
+import { fmtDate, parseAppDate, statusColor, cn } from "@/lib/utils";
 import { Play, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Database } from "lucide-react";
 
 interface ProgressEvent { pct: number; msg: string; done: boolean; added?: number; updated?: number; error?: boolean }
@@ -157,7 +157,7 @@ function addMinutes(h: number, m: number, offset: number) {
 }
 
 function jobAgeHours(job: ScrapeJob): number {
-  const t = new Date(job.started_at).getTime();
+  const t = parseAppDate(job.started_at).getTime();
   if (Number.isNaN(t)) return 0;
   return (Date.now() - t) / 3_600_000;
 }

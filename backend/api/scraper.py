@@ -4,12 +4,12 @@ import asyncio
 import re
 import sys
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_serializer
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user, user_from_access_token
@@ -42,6 +42,16 @@ class JobOut(BaseModel):
     finished_at: datetime | None
 
     model_config = {"from_attributes": True}
+
+    @field_serializer("started_at", "finished_at")
+    def _serialize_utc(self, v: datetime | None) -> str | None:
+        if v is None:
+            return None
+        if v.tzinfo is None:
+            v = v.replace(tzinfo=timezone.utc)
+        else:
+            v = v.astimezone(timezone.utc)
+        return v.isoformat().replace("+00:00", "Z")
 
 
 class ScheduleConfig(BaseModel):
