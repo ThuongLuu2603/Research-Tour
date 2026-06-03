@@ -728,7 +728,7 @@ export const assignClassification = async (body: {
   market_keyword?: string;
 }) => {
   const { data } = await api.post("/admin/rules/assign-classification", body);
-  return data as { message: string; market_keyword: string };
+  return data as { message: string; thi_truong?: string; tuyen_tour?: string };
 };
 
 export const getRulesUnmatched = async (

@@ -3,7 +3,6 @@ import { useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  listMarketRules, deleteMarketRule,
   listRouteRules, deleteRouteRule, updateRouteRule,
   listCompanyRules, createCompanyRule, deleteCompanyRule, updateCompanyRule,
   listDepartureRules, createDepartureRule, deleteDepartureRule, updateDepartureRule,
@@ -62,7 +61,6 @@ export default function RulesAdminPage() {
   const [durAlias, setDurAlias] = useState("");
   const [dropTarget, setDropTarget] = useState<string | null>(null);
 
-  const { data: marketRules } = useQuery({ queryKey: ["market-rules"], queryFn: listMarketRules, enabled: isAdmin });
   const { data: routeRules } = useQuery({ queryKey: ["route-rules"], queryFn: listRouteRules, enabled: isAdmin });
   const { data: companyRules } = useQuery({ queryKey: ["company-rules"], queryFn: listCompanyRules, enabled: isAdmin });
   const { data: departureRules } = useQuery({ queryKey: ["departure-rules"], queryFn: listDepartureRules, enabled: isAdmin });
@@ -236,14 +234,11 @@ export default function RulesAdminPage() {
     const routes = (routeRules ?? []).filter((r) =>
       matchSearch(search, r.thi_truong, r.tuyen_tour, r.keywords),
     );
-    const markets = (marketRules ?? []).filter((r) =>
-      matchSearch(search, r.market, r.keyword),
-    );
     return {
-      filtered: routes.length + markets.length + filteredUnmatched.length,
-      total: (routeRules?.length ?? 0) + (marketRules?.length ?? 0) + (unmatched?.items?.length ?? 0),
+      filtered: routes.length + filteredUnmatched.length,
+      total: (routeRules?.length ?? 0) + (unmatched?.items?.length ?? 0),
     };
-  }, [routeRules, marketRules, unmatched, search, filteredUnmatched.length]);
+  }, [routeRules, unmatched, search, filteredUnmatched.length]);
 
   const canonicalOptions = useMemo(() => {
     if (tab === "company") return [...new Set((companyRules ?? []).map((r) => r.canonical_name))];
@@ -251,8 +246,8 @@ export default function RulesAdminPage() {
     return [];
   }, [tab, companyRules, departureRules]);
   const marketOptions = useMemo(
-    () => [...new Set((marketRules ?? []).map((r) => r.market))].sort(),
-    [marketRules],
+    () => [...new Set((routeRules ?? []).map((r) => r.thi_truong))].sort(),
+    [routeRules],
   );
   const addCompany = useMutation({
     mutationFn: () => createCompanyRule({ canonical_name: cCanonical, alias: cAlias }),
@@ -305,7 +300,7 @@ export default function RulesAdminPage() {
 
       <div className="flex gap-2 flex-wrap">
         {([
-          ["classify", "Thị trường & Tuyến"],
+          ["classify", "Tuyến tour"],
           ["company", COL.congTy],
           ["departure", COL.diemKhoiHanh],
           ["duration", COL.thoiGian],
@@ -338,7 +333,6 @@ export default function RulesAdminPage() {
 
       {tab === "classify" && (
         <ClassificationRulesTab
-          marketRules={marketRules}
           routeRules={routeRules}
           searchQuery={search}
           gapItems={filteredUnmatched}
@@ -350,7 +344,6 @@ export default function RulesAdminPage() {
           onAfterSaved={afterRuleSaved}
           onError={showErr}
           appendKeywordToRouteRule={appendKeywordToRouteRule}
-          deleteMarketRule={deleteMarketRule}
           deleteRouteRule={deleteRouteRule}
           actionBtns={actionBtns}
         />

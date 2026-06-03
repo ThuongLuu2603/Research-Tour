@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import type { MarketRule, RouteRule, UnmatchedItem } from "@/lib/api";
-import { assignClassification, seedMarketDefaults, seedRouteDefaults } from "@/lib/api";
+import type { RouteRule, UnmatchedItem } from "@/lib/api";
+import { assignClassification, seedRouteDefaults } from "@/lib/api";
 import { buildRouteKeywordConflicts, conflictHintForKeyword, parseRouteKeywordList } from "@/lib/rulesUnmatched";
 import { InfoTip } from "@/components/InfoTip";
 import { cn } from "@/lib/utils";
@@ -15,7 +15,6 @@ import {
 } from "@/lib/rulesAdminUi";
 
 type Props = {
-  marketRules: MarketRule[] | undefined;
   routeRules: RouteRule[] | undefined;
   searchQuery: string;
   gapItems: UnmatchedItem[];
@@ -27,13 +26,11 @@ type Props = {
   onAfterSaved: (msg: string) => void;
   onError: (e: unknown) => void;
   appendKeywordToRouteRule: (rule: RouteRule, raw: string) => Promise<void>;
-  deleteMarketRule: (id: number) => Promise<void>;
   deleteRouteRule: (id: number) => Promise<void>;
   actionBtns: (onDelete: () => void, onSave?: () => void) => React.ReactNode;
 };
 
 export function ClassificationRulesTab({
-  marketRules,
   routeRules,
   searchQuery,
   gapItems,
@@ -45,21 +42,17 @@ export function ClassificationRulesTab({
   onAfterSaved,
   onError,
   appendKeywordToRouteRule,
-  deleteMarketRule,
   deleteRouteRule,
   actionBtns,
 }: Props) {
   const [qMarket, setQMarket] = useState("");
   const [qRoute, setQRoute] = useState("");
   const [qRouteKw, setQRouteKw] = useState("");
-  const [qMarketKw, setQMarketKw] = useState("");
 
   const [pending, setPending] = useState<Record<string, {
     market: string;
     route: string;
     routeKw: string;
-    marketKw: string;
-    linkMarketKw: boolean;
   }>>({});
 
   const routesByMarket = useMemo(() => {
@@ -72,28 +65,19 @@ export function ClassificationRulesTab({
     return map;
   }, [routeRules]);
 
-  const rulesByMarket = useMemo(() => {
-    const keys = new Set<string>();
-    (marketRules ?? []).forEach((r) => keys.add(r.market));
-    (routeRules ?? []).forEach((r) => keys.add(r.thi_truong));
-    return [...keys]
-      .filter((mk) => {
-        const mRules = (marketRules ?? []).filter((r) => r.market === mk);
-        const rRules = routesByMarket.get(mk) ?? [];
-        return marketVisibleInRulesSearch(searchQuery, mk, mRules, rRules);
-      })
-      .sort((a, b) => a.localeCompare(b, "vi"));
-  }, [marketRules, routeRules, routesByMarket, searchQuery]);
+  const rulesByMarket = useMemo(
+    () =>
+      [...routesByMarket.keys()]
+        .filter((mk) => marketVisibleInRulesSearch(searchQuery, mk, routesByMarket.get(mk) ?? []))
+        .sort((a, b) => a.localeCompare(b, "vi")),
+    [routesByMarket, searchQuery],
+  );
 
   const deleteMarketGroup = async (mk: string) => {
-    const mRules = (marketRules ?? []).filter((r) => r.market === mk);
     const rRules = routesByMarket.get(mk) ?? [];
-    if (!mRules.length && !rRules.length) return;
-    if (!window.confirm(`Xóa toàn bộ quy tắc thị trường «${mk}» (${mRules.length} keyword TT + ${rRules.length} tuyến)?`)) return;
-    await Promise.all([
-      ...mRules.map((r) => deleteMarketRule(r.id)),
-      ...rRules.map((r) => deleteRouteRule(r.id)),
-    ]);
+    if (!rRules.length) return;
+    if (!window.confirm(`Xóa toàn bộ ${rRules.length} dòng rule tuyến của «${mk}»?`)) return;
+    await Promise.all(rRules.map((r) => deleteRouteRule(r.id)));
     onAfterSaved(`Đã xóa nhóm ${mk}`);
   };
 
@@ -101,22 +85,18 @@ export function ClassificationRulesTab({
     const p = pending[title] ?? {
       market: item.suggested_market || item.resolved_market || "",
       route: item.suggested_route || item.suggested_market || "",
-      routeKw: item.route_keywords || item.market_keyword || keywordForRouteDrop(title),
-      marketKw: item.market_keyword || keywordForRouteDrop(title),
-      linkMarketKw: true,
+      routeKw: item.route_keywords || keywordForRouteDrop(title),
     };
     const mk = p.market.trim();
-    const route = (p.route || mk).trim();
+    const route = p.route.trim();
     const routeKw = p.routeKw.trim();
-    const marketKw = (p.linkMarketKw ? routeKw.split(",")[0]?.trim() : p.marketKw.trim()) || routeKw.split(",")[0]?.trim();
-    if (!mk || !routeKw) return;
+    if (!mk || !route || !routeKw) return;
     await assignClassification({
       thi_truong: mk,
       tuyen_tour: route,
       route_keywords: routeKw,
-      market_keyword: marketKw,
     });
-    onAfterSaved(`Đã gán ${mk} / ${route}`);
+    onAfterSaved(`Đã gán ${route} → ${mk}`);
     setPending((prev) => {
       const n = { ...prev };
       delete n[title];
@@ -125,113 +105,84 @@ export function ClassificationRulesTab({
   };
 
   const quickAdd = async () => {
-    if (!qMarket.trim() || !qRouteKw.trim()) return;
+    const mk = qMarket.trim();
+    const route = (qRoute || qMarket).trim();
+    if (!mk || !route || !qRouteKw.trim()) return;
     await assignClassification({
-      thi_truong: qMarket.trim(),
-      tuyen_tour: (qRoute || qMarket).trim(),
+      thi_truong: mk,
+      tuyen_tour: route,
       route_keywords: qRouteKw.trim(),
-      market_keyword: (qMarketKw || qRouteKw.split(",")[0]).trim(),
     });
     setQRouteKw("");
-    setQMarketKw("");
-    onAfterSaved(`Đã thêm rule ${qMarket}`);
+    onAfterSaved(`Đã thêm tuyến ${route} (${mk})`);
   };
 
   return (
     <div className="space-y-4">
       <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-        Tour placeholder FIT (vd. «TẠM CHƯA CÓ GIÁ», «Đoàn Riêng») tự loại khỏi thống kê / so sánh — không cần gán quy tắc.
+        <strong>Route-first:</strong> chỉ cần rule <strong>tuyến</strong> (keyword trong tên tour).
+        Thị trường = cột «Thị trường» trên mỗi dòng rule — tour khớp tuyến sẽ được gán cả TT + tuyến.
+        Tour placeholder FIT tự loại khỏi thống kê.
       </p>
 
       <div className="card p-4 space-y-3 bg-primary-50/40 border-primary-100">
         <p className="text-sm font-medium text-primary-900">
-          Gán một lần — thị trường + tuyến + keyword
-          <InfoTip text="Gán / Thêm = tạo thêm một dòng điều kiện tuyến (OR với các dòng khác cùng tên). Trong một dòng, dấu phẩy = tour phải có đủ các từ (AND). Kéo keyword lên bảng quy tắc phía trên = bổ sung từ vào đúng dòng đó." />
+          Thêm rule tuyến
+          <InfoTip text="Mỗi dòng = một điều kiện (OR). Trong dòng: dấu phẩy = AND. Thị trường chỉ là nhóm lưu trữ, không cần keyword TT." />
         </p>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          <input className="input text-sm" placeholder="Thị trường" value={qMarket} onChange={(e) => setQMarket(e.target.value)} list="classify-market-list" />
-          <input className="input text-sm" placeholder="Tuyến tour" value={qRoute} onChange={(e) => setQRoute(e.target.value)} title="Để trống = trùng tên thị trường" />
-          <input className="input text-sm font-mono" placeholder="Keyword tuyến (vd: đài loan)" value={qRouteKw} onChange={(e) => setQRouteKw(e.target.value)} />
-          <input className="input text-sm font-mono" placeholder="Keyword TT (tùy chọn)" value={qMarketKw} onChange={(e) => setQMarketKw(e.target.value)} title="Trống = lấy từ từ đầu keyword tuyến" />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+          <input className="input text-sm" placeholder="Thị trường (nhóm)" value={qMarket} onChange={(e) => setQMarket(e.target.value)} list="classify-market-list" />
+          <input className="input text-sm" placeholder="Tên tuyến tour" value={qRoute} onChange={(e) => setQRoute(e.target.value)} />
+          <input className="input text-sm font-mono" placeholder="Keyword tuyến (vd: kanazawa)" value={qRouteKw} onChange={(e) => setQRouteKw(e.target.value)} />
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={quickAdd} disabled={!qMarket.trim() || !qRouteKw.trim()} className="btn-primary text-sm">
             <Plus size={14} /> Thêm & áp dụng
           </button>
-          <button type="button" onClick={() => seedMarketDefaults().then(() => onAfterSaved("Đã import thị trường")).catch(onError)} className="btn-secondary text-sm">
-            <Database size={14} /> Import TT
-          </button>
           <button type="button" onClick={() => seedRouteDefaults().then((r) => onAfterSaved(r.message || "Đã import tuyến")).catch(onError)} className="btn-secondary text-sm">
-            <Database size={14} /> Import tuyến
+            <Database size={14} /> Import tuyến mặc định
           </button>
         </div>
       </div>
 
       {routeKeywordConflicts.size > 0 && (
         <p className="text-sm text-red-800 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-          {routeKeywordConflicts.size} từ keyword trùng nhiều tuyến (đỏ bên dưới) — rule sort_order nhỏ hơn được ưu tiên.
+          {routeKeywordConflicts.size} từ keyword trùng nhiều tuyến — rule sort_order nhỏ hơn được ưu tiên.
         </p>
       )}
 
       <div className="card overflow-auto max-h-[320px]">
         <p className="px-3 py-2 text-xs font-semibold text-gray-600 bg-gray-50 sticky top-0 z-10 border-b flex items-center justify-between gap-2">
-          <span>Quy tắc theo thị trường</span>
+          <span>Quy tắc theo thị trường (từ rule tuyến)</span>
           {searchQuery.trim() && (
             <span className="font-normal text-gray-500">{rulesByMarket.length} nhóm khớp</span>
           )}
         </p>
         <div className="divide-y text-sm">
           {rulesByMarket.length === 0 && searchQuery.trim() && (
-            <p className="p-4 text-sm text-gray-500">Không có quy tắc khớp «{searchQuery.trim()}» trong bảng này</p>
+            <p className="p-4 text-sm text-gray-500">Không có rule khớp «{searchQuery.trim()}»</p>
           )}
           {rulesByMarket.map((mk) => {
-            const mRulesAll = (marketRules ?? []).filter((r) => r.market === mk);
             const rRulesAll = routesByMarket.get(mk) ?? [];
-            const showAllRoutes = matchRulesSearch(searchQuery, mk);
-            const mRules = showAllRoutes || !searchQuery.trim()
-              ? mRulesAll
-              : mRulesAll.filter((r) => matchRulesSearch(searchQuery, r.keyword));
-            const rRules = showAllRoutes || !searchQuery.trim()
+            const showAll = matchRulesSearch(searchQuery, mk);
+            const rRules = showAll || !searchQuery.trim()
               ? rRulesAll
               : rRulesAll.filter((r) => matchRulesSearch(searchQuery, r.tuyen_tour, r.keywords));
-            if (mRules.length === 0 && rRules.length === 0) return null;
+            if (!rRules.length) return null;
             return (
               <div key={mk} className="p-3">
-                <div className="flex items-start justify-between gap-2 mb-1">
+                <div className="flex items-start justify-between gap-2 mb-2">
                   <div className="font-medium text-gray-900">{mk}</div>
                   <button
                     type="button"
                     className="text-red-500 hover:text-red-700 shrink-0 inline-flex items-center gap-0.5 text-[10px]"
-                    title="Xóa toàn bộ keyword thị trường + tuyến của nhóm này"
                     onClick={() => deleteMarketGroup(mk).catch(onError)}
                   >
                     <Trash2 size={12} /> Xóa nhóm
                   </button>
                 </div>
-                <div className="text-xs text-gray-600 mb-2 space-y-1">
-                  <div className="font-medium text-gray-500">Keyword thị trường</div>
-                  {mRules.length === 0 ? (
-                    <span className="text-gray-400">— (chỉ có rule tuyến)</span>
-                  ) : (
-                    <ul className="space-y-0.5">
-                      {mRules.map((r) => (
-                        <li key={r.id} className="flex items-center justify-between gap-2 font-mono">
-                          <span>{r.keyword}</span>
-                          <button
-                            type="button"
-                            className="text-red-500 shrink-0"
-                            title="Xóa keyword thị trường"
-                            onClick={() => deleteMarketRule(r.id).then(() => onAfterSaved(`Đã xóa keyword «${r.keyword}»`)).catch(onError)}
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
                 <table className="w-full text-xs">
-                  <thead><tr className="text-gray-500"><th className="text-left py-1">Tuyến</th><th className="text-left">Keywords</th><th /></tr></thead>
+                  <thead><tr className="text-gray-500"><th className="text-left py-1">Tuyến</th><th className="text-left">Keywords (AND trong dòng)</th><th /></tr></thead>
                   <tbody>
                     {rRules.map((r) => {
                       const dropKey = `route-${r.id}`;
@@ -258,16 +209,16 @@ export function ClassificationRulesTab({
         <table className="w-full text-sm">
           <thead className="bg-amber-50 sticky top-0 z-10">
             <tr>
-              <th className="px-2 py-2 text-left w-[28%]">Tour / trạng thái</th>
-              <th className="px-2 py-2 text-left">Thị trường</th>
-              <th className="px-2 py-2 text-left">Tuyến</th>
+              <th className="px-2 py-2 text-left w-[30%]">Tour chưa khớp tuyến</th>
+              <th className="px-2 py-2 text-left">Thị trường (nhóm)</th>
+              <th className="px-2 py-2 text-left">Tuyến tour</th>
               <th className="px-2 py-2 text-left">
                 <span className="inline-flex items-center gap-1">
-                  Điều kiện tuyến (dòng mới)
-                  <InfoTip text="Mỗi tour vàng: Gán = thêm một dòng rule (OR). Trong ô: dấu phẩy = AND trong cùng dòng." />
+                  Keyword tuyến (dòng mới)
+                  <InfoTip text="Gán = thêm dòng OR. Dấu phẩy = AND. TT lấy từ ô Thị trường." />
                 </span>
               </th>
-              <th className="px-2 py-2 w-24" />
+              <th className="px-2 py-2 w-20" />
             </tr>
           </thead>
           <tbody>
@@ -275,13 +226,13 @@ export function ClassificationRulesTab({
               <tr><td colSpan={5} className="px-3 py-6 text-center text-gray-400">Đang quét tour…</td></tr>
             )}
             {!gapLoading && gapItems.length === 0 && (
-              <tr><td colSpan={5} className="px-3 py-6 text-center text-green-700">Không còn tour thiếu thị trường/tuyến</td></tr>
+              <tr><td colSpan={5} className="px-3 py-6 text-center text-green-700">Mọi tour đã khớp ít nhất một rule tuyến</td></tr>
             )}
             {gapItems.map((item) => {
               const title = item.value;
               const p = pending[title];
               const market = p?.market ?? item.suggested_market ?? item.resolved_market ?? "";
-              const route = p?.route ?? item.suggested_route ?? market;
+              const route = p?.route ?? item.suggested_route ?? "";
               const routeKw = p?.routeKw ?? item.route_keywords ?? keywordForRouteDrop(title);
               const routesForMk = routesByMarket.get(market) ?? [];
               const rowConflict = conflictHintForKeyword(parseRouteKeywordList(routeKw)[0] ?? "", routeKeywordConflicts);
@@ -289,21 +240,18 @@ export function ClassificationRulesTab({
               return (
                 <tr key={title} className="border-t bg-amber-50/50 align-top">
                   <td className="px-2 py-2 text-xs">
-                    <div className="flex flex-wrap gap-1 mb-1">
-                      {item.needs_market && <span className="px-1 rounded bg-amber-200 text-amber-900">Thiếu TT</span>}
-                      {item.needs_route && <span className="px-1 rounded bg-orange-200 text-orange-900">Thiếu tuyến</span>}
-                      {item.count > 1 && <span className="text-gray-500">{item.count} tour</span>}
-                    </div>
+                    {item.count > 1 && <span className="text-gray-500 block mb-0.5">{item.count} tour</span>}
                     <span className="line-clamp-3" title={item.sample}>{item.sample || title}</span>
                   </td>
                   <td className="px-2 py-2">
                     <input
                       className="input text-xs py-1 w-full"
                       list="classify-market-list"
+                      placeholder="Nhóm TT"
                       value={market}
                       onChange={(e) => setPending((prev) => ({
                         ...prev,
-                        [title]: { market: e.target.value, route, routeKw, marketKw: p?.marketKw ?? routeKw, linkMarketKw: p?.linkMarketKw ?? true },
+                        [title]: { market: e.target.value, route, routeKw },
                       }))}
                     />
                   </td>
@@ -311,16 +259,15 @@ export function ClassificationRulesTab({
                     <input
                       className="input text-xs py-1 w-full"
                       list={market ? `classify-route-${encodeURIComponent(market)}` : undefined}
-                      placeholder={market ? `${market} (mặc định)` : "Nhập tên tuyến mới…"}
+                      placeholder="Tên tuyến"
                       value={route}
                       onChange={(e) => setPending((prev) => ({
                         ...prev,
-                        [title]: { market, route: e.target.value, routeKw, marketKw: p?.marketKw ?? routeKw, linkMarketKw: p?.linkMarketKw ?? true },
+                        [title]: { market, route: e.target.value, routeKw },
                       }))}
                     />
                     {market ? (
                       <datalist id={`classify-route-${encodeURIComponent(market)}`}>
-                        <option value={market} />
                         {routesForMk.map((r) => (
                           <option key={r.id} value={r.tuyen_tour} />
                         ))}
@@ -333,7 +280,7 @@ export function ClassificationRulesTab({
                       value={routeKw}
                       onChange={(e) => setPending((prev) => ({
                         ...prev,
-                        [title]: { market, route, routeKw: e.target.value, marketKw: p?.marketKw ?? e.target.value, linkMarketKw: false },
+                        [title]: { market, route, routeKw: e.target.value },
                       }))}
                     />
                     {rowConflict && <p className="text-[10px] text-red-700 mt-0.5">{rowConflict}</p>}
@@ -345,7 +292,7 @@ export function ClassificationRulesTab({
                     <button
                       type="button"
                       className="btn-primary text-[10px] py-1 px-2 w-full"
-                      disabled={!market.trim() || !routeKw.trim()}
+                      disabled={!market.trim() || !route.trim() || !routeKw.trim()}
                       onClick={() => assignOne(title, item).catch(onError)}
                     >
                       Gán
@@ -358,8 +305,7 @@ export function ClassificationRulesTab({
         </table>
         <datalist id="classify-market-list">{marketOptions.map((m) => <option key={m} value={m} />)}</datalist>
         <p className="text-xs text-gray-400 p-3">
-          {gapItems.length} tour cần xử lý
-          {gapItems.length > 0 && " — Gán thêm một dòng điều kiện (OR), không gộp vào dòng rule cũ"}
+          {gapItems.length} tour chưa khớp rule tuyến
         </p>
       </div>
     </div>

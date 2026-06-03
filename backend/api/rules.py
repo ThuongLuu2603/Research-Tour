@@ -808,21 +808,11 @@ def assign_classification(
     route = (body.tuyen_tour or mk).strip()
     route_kws = merge_keyword_csv("", body.route_keywords)
     if not mk or not route_kws:
-        raise HTTPException(400, "Cần thị trường và keyword tuyến")
-    parts = [p.strip().lower() for p in route_kws.split(",") if p.strip()]
-    market_kw = (body.market_keyword or parts[0] if parts else "").strip().lower()
-    if not market_kw:
-        raise HTTPException(400, "Cần keyword thị trường")
+        raise HTTPException(400, "Cần thị trường (nhóm) và keyword tuyến")
+    if not route:
+        raise HTTPException(400, "Cần tên tuyến tour")
 
-    existing_mk = (
-        db.query(MarketKeywordRule)
-        .filter(MarketKeywordRule.keyword == market_kw, MarketKeywordRule.active == True)
-        .first()
-    )
-    if not existing_mk:
-        db.add(MarketKeywordRule(market=mk, keyword=market_kw))
-    elif existing_mk.market.strip() != mk:
-        db.add(MarketKeywordRule(market=mk, keyword=market_kw))
+    # Route-first: thị trường gắn trên rule tuyến, không tạo keyword thị trường.
 
     # Mỗi lần Gán từ tour chưa khớp = thêm một dòng rule (OR). Không gộp vào dòng cũ.
     siblings = (
@@ -849,8 +839,9 @@ def assign_classification(
     invalidate_classification_cache()
     tours = _auto_apply_tours(db, body.auto_apply, scope="all")
     return {
-        "message": f"Đã gán {mk} / {route} — keyword tuyến: {route_kws}",
-        "market_keyword": market_kw,
+        "message": f"Đã gán tuyến {route} ({mk}) — keyword: {route_kws}",
+        "thi_truong": mk,
+        "tuyen_tour": route,
         "tours_apply": tours,
     }
 

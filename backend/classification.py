@@ -414,15 +414,14 @@ def is_market_rule_matched(
     market_pairs: tuple[tuple[str, str], ...] | None = None,
     route_rules: tuple[tuple[str, str, tuple[str, ...]], ...] | None = None,
 ) -> bool:
-    if resolve_thi_truong(ten_tour or "", lich_trinh or "", market_pairs=market_pairs) != "Khác":
-        return True
-    mkt, _, from_route = resolve_market_and_route(
+    """Đã khớp phân loại = có rule tuyến (thị trường suy ra từ rule, không dùng keyword TT)."""
+    _ = market_pairs  # legacy callers
+    _, _, from_route = resolve_market_and_route(
         ten_tour or "",
         lich_trinh or "",
         route_rules=route_rules,
-        market_pairs=market_pairs,
     )
-    return from_route and mkt not in ("", "Khác")
+    return from_route
 
 
 def is_route_rule_matched(thi_truong: str, ten_tour: str, lich_trinh: str = "") -> bool:
@@ -454,7 +453,6 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
     from data_sources import DB_CANONICAL_NGUON
     from tour_sources import is_vietravel_tab
 
-    market_pairs = _load_market_keyword_pairs()
     route_rules = _load_route_rules()
 
     cong_ty: dict[str, int] = {}
@@ -474,70 +472,42 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
         if is_stats_excluded_tour(t):
             continue
         title = _tour_title_hint(t)
-        if title and not is_market_rule_matched(
-            t.ten_tour or "",
-            t.lich_trinh or "",
-            market_pairs=market_pairs,
-            route_rules=route_rules,
-        ):
-            entry = _market_unmatched_entry(title)
-            if title not in thi_truong:
-                thi_truong[title] = {
-                    "count": 0,
-                    "sample": title,
-                    "keyword": entry.get("keyword") or "",
-                    "suggested_market": entry.get("suggested_market") or "",
-                    "grouped": False,
-                    "bucket_key": f"market:{title}",
-                }
-            _unmatched_add_member(thi_truong[title], title)
         market, route, from_route_rule = resolve_market_and_route(
             t.ten_tour or "",
             t.lich_trinh or "",
             route_rules=route_rules,
-            market_pairs=market_pairs,
         )
-        if title and market not in ("", "Khác") and not from_route_rule:
-            hint = _market_unmatched_entry(title)
-            if title not in tuyen_tour:
-                tuyen_tour[title] = {
-                    "count": 0,
-                    "thi_truong": market,
-                    "sample": title,
-                    "suggested_thi_truong": hint.get("suggested_market") or "",
-                    "bucket_key": f"route:{title}",
-                }
-            _unmatched_add_member(tuyen_tour[title], title)
-
-        needs_market = title and not is_market_rule_matched(
-            t.ten_tour or "",
-            t.lich_trinh or "",
-            market_pairs=market_pairs,
-            route_rules=route_rules,
-        )
-        needs_route = title and market not in ("", "Khác") and not from_route_rule
-        if title and (needs_market or needs_route):
-            entry = _market_unmatched_entry(title)
+        stored_mk = (t.thi_truong or "").strip()
+        if title and not from_route_rule:
             skw = suggest_keyword_from_title(title)
-            sug_mk = entry.get("suggested_market") or (market if market not in ("", "Khác") else "")
+            hint = _market_unmatched_entry(title)
+            sug_mk = (
+                stored_mk
+                if stored_mk and stored_mk not in ("Khác",)
+                else (hint.get("suggested_market") or "")
+            )
             if title not in classify_gaps:
                 classify_gaps[title] = {
                     "value": title,
                     "count": 0,
                     "sample": title,
-                    "needs_market": needs_market,
-                    "needs_route": needs_route,
+                    "needs_market": False,
+                    "needs_route": True,
                     "suggested_market": sug_mk,
-                    "suggested_route": (route if from_route_rule else sug_mk or market) or "",
-                    "market_keyword": skw,
+                    "suggested_route": route if route not in ("", "Khác") else sug_mk or "",
                     "route_keywords": skw,
-                    "resolved_market": market if market not in ("", "Khác") else "",
+                    "resolved_market": stored_mk if stored_mk not in ("", "Khác") else "",
                 }
-            else:
-                g = classify_gaps[title]
-                g["needs_market"] = g["needs_market"] or needs_market
-                g["needs_route"] = g["needs_route"] or needs_route
             classify_gaps[title]["count"] += 1
+            if title not in tuyen_tour:
+                tuyen_tour[title] = {
+                    "count": 0,
+                    "thi_truong": stored_mk or sug_mk or "Khác",
+                    "sample": title,
+                    "suggested_thi_truong": sug_mk,
+                    "bucket_key": f"route:{title}",
+                }
+            _unmatched_add_member(tuyen_tour[title], title)
 
         raw_co = (t.cong_ty or "").strip()
         if raw_co and not is_company_alias_matched(raw_co):
@@ -853,7 +823,6 @@ def apply_classification_rules_to_tours(db) -> dict:
     """Áp dụng lại rules Thị trường + Tuyến tour cho tour trong DB (đồng bộ cả hai cột)."""
     from link_utils import normalize_tour_link
 
-    market_pairs = _load_market_keyword_pairs()
     route_rules = _load_route_rules()
     market_n = route_n = link_n = 0
     for batch in _iter_canonical_tour_batches(db):
@@ -862,15 +831,16 @@ def apply_classification_rules_to_tours(db) -> dict:
                 t.ten_tour or "",
                 t.lich_trinh or "",
                 route_rules=route_rules,
-                market_pairs=market_pairs,
             )
-            if mk and mk != (t.thi_truong or ""):
-                t.thi_truong = mk[:128]
-                market_n += 1
-            current_route = (t.tuyen_tour or "").strip()
-            if rt and rt != current_route and (from_rule or rt.casefold() != (mk or "").casefold()):
-                t.tuyen_tour = rt[:256]
-                route_n += 1
+            if not from_rule:
+                pass
+            else:
+                if mk and mk != (t.thi_truong or ""):
+                    t.thi_truong = mk[:128]
+                    market_n += 1
+                if rt and rt != (t.tuyen_tour or "").strip():
+                    t.tuyen_tour = rt[:256]
+                    route_n += 1
             fixed_link = normalize_tour_link(t.link_url)
             if fixed_link != (t.link_url or ""):
                 t.link_url = fixed_link
@@ -933,8 +903,9 @@ def resolve_market_and_route(
 ) -> tuple[str, str, bool]:
     """
     (thị trường, tuyến, đã khớp rule tuyến).
-    Tuyến trùng tên thị trường (vd Đài Loan/Đài Loan) vẫn tính là đã khớp nếu có rule keyword.
+    Thị trường chỉ lấy từ rule tuyến — không dùng keyword thị trường riêng.
     """
+    _ = market_pairs  # legacy callers
     combined = f"{ten_tour or ''} {lich_trinh or ''}".lower().strip()
     if not combined:
         return "Khác", "Khác", False
@@ -942,8 +913,7 @@ def resolve_market_and_route(
     for mkt, route, kws in rules:
         if all(kw in combined for kw in kws):
             return mkt, route, True
-    mk = resolve_thi_truong(ten_tour, lich_trinh, market_pairs=market_pairs)
-    return mk, mk, False
+    return "Khác", "Khác", False
 
 
 def resolve_tuyen_tour(thi_truong: str, ten_tour: str, lich_trinh: str = "") -> str:

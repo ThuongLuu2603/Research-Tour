@@ -15,16 +15,14 @@ export function matchRulesSearch(q: string, ...parts: (string | number | undefin
   return parts.some((p) => foldSearchText(String(p ?? "")).includes(needle));
 }
 
-/** Thị trường hiện trong bảng quy tắc khi search khớp tên TT, keyword TT, hoặc bất kỳ tuyến nào. */
+/** Nhóm thị trường hiện khi search khớp tên nhóm hoặc rule tuyến bên trong. */
 export function marketVisibleInRulesSearch(
   q: string,
   market: string,
-  marketRules: { keyword: string }[],
   routeRules: { tuyen_tour: string; keywords: string }[],
 ) {
   if (!q.trim()) return true;
   if (matchRulesSearch(q, market)) return true;
-  if (marketRules.some((r) => matchRulesSearch(q, r.keyword))) return true;
   return routeRules.some((r) => matchRulesSearch(q, r.tuyen_tour, r.keywords));
 }
 
