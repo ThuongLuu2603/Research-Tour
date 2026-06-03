@@ -162,13 +162,15 @@ def _auto_apply_tours(
         try:
             result = apply_classification_for_keywords(db, keywords)
             invalidate_unmatched_cache()
-            scanned = int(result.get("tours_scanned") or 0)
-            routes = int(result.get("route_updated") or 0)
+            msg = result.get("message") or (
+                f"Đã cập nhật {int(result.get('route_updated') or 0)} tour "
+                f"(quét {int(result.get('tours_scanned') or 0)} tour có keyword)"
+            )
             return {
                 "started": False,
                 "applied": True,
                 "sync": True,
-                "message": f"Đã cập nhật {routes} tour (quét {scanned} tour khớp keyword)",
+                "message": msg,
                 "result": result,
             }
         except Exception as e:

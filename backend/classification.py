@@ -201,7 +201,36 @@ def _canonical_tour_query(db):
     return db.query(Tour).filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
 
 
-def _iter_canonical_tour_batches(db, batch_size: int = 1000, *, keyword_filter: list[str] | None = None):
+def _apply_route_state_filter(q, route_state: str | None):
+    """empty = chưa có tuyến (bảng vàng); filled = đã có tuyến — điều chỉnh lại."""
+    from sqlalchemy import func, or_
+
+    from models import Tour
+
+    if route_state == "empty":
+        return q.filter(
+            or_(
+                Tour.tuyen_tour.is_(None),
+                Tour.tuyen_tour == "",
+                func.trim(Tour.tuyen_tour) == "",
+            )
+        )
+    if route_state == "filled":
+        return q.filter(
+            Tour.tuyen_tour.isnot(None),
+            Tour.tuyen_tour != "",
+            func.trim(Tour.tuyen_tour) != "",
+        )
+    return q
+
+
+def _iter_canonical_tour_batches(
+    db,
+    batch_size: int = 1000,
+    *,
+    keyword_filter: list[str] | None = None,
+    route_state: str | None = None,
+):
     """Phân trang theo id — chỉ cột cần cho apply rule."""
     from sqlalchemy.orm import load_only
 
@@ -231,6 +260,7 @@ def _iter_canonical_tour_batches(db, batch_size: int = 1000, *, keyword_filter: 
             .filter(Tour.id > last_id)
             .order_by(Tour.id)
         )
+        q = _apply_route_state_filter(q, route_state)
         if keyword_filter:
             from tour_search import apply_keyword_prefilter
 
@@ -1048,12 +1078,14 @@ def apply_classification_rules_to_tours(
     db,
     *,
     keyword_filter: list[str] | None = None,
+    route_state: str | None = None,
     clear_unmatched: bool = True,
     progress_cb: callable | None = None,
 ) -> dict:
     """
     Áp dụng rule tuyến lên tour.
-    keyword_filter: chỉ quét tour có keyword trong tên/lịch trình (sau Gán — nhanh hơn full scan).
+    keyword_filter: chỉ quét tour có keyword trong tên/lịch trình (sau Gán).
+    route_state: empty | filled | None (tất cả).
     """
     from link_utils import normalize_tour_link
 
@@ -1061,7 +1093,9 @@ def apply_classification_rules_to_tours(
     market_n = route_n = link_n = 0
     processed = 0
 
-    for batch in _iter_canonical_tour_batches(db, keyword_filter=keyword_filter):
+    for batch in _iter_canonical_tour_batches(
+        db, keyword_filter=keyword_filter, route_state=route_state
+    ):
         for t in batch:
             mk, rt, from_rule, rule_id = matcher.resolve(t.ten_tour or "", t.lich_trinh or "")
             if from_rule:
@@ -1091,15 +1125,46 @@ def apply_classification_rules_to_tours(
 
 
 def apply_classification_for_keywords(db, keywords: list[str]) -> dict:
-    """Sau Gán rule — chỉ quét tour có thể khớp keyword mới."""
+    """
+    Sau Gán keyword → tuyến (2 bước):
+    1) Tour trống tuyến + tên chứa keyword → gán mới.
+    2) Tour đã có tuyến + tên chứa keyword → chạy lại matcher, điều chỉnh theo rule mới.
+    """
     kws = [k.strip().lower() for k in keywords if k and str(k).strip()]
     if not kws:
         return apply_classification_rules_to_tours(db, clear_unmatched=False)
-    return apply_classification_rules_to_tours(
+
+    phase_empty = apply_classification_rules_to_tours(
         db,
         keyword_filter=kws,
+        route_state="empty",
         clear_unmatched=False,
     )
+    phase_filled = apply_classification_rules_to_tours(
+        db,
+        keyword_filter=kws,
+        route_state="filled",
+        clear_unmatched=False,
+    )
+    empty_r = int(phase_empty.get("route_updated") or 0)
+    adj_r = int(phase_filled.get("route_updated") or 0)
+    empty_m = int(phase_empty.get("market_updated") or 0)
+    adj_m = int(phase_filled.get("market_updated") or 0)
+    scanned = int(phase_empty.get("tours_scanned") or 0) + int(phase_filled.get("tours_scanned") or 0)
+    return {
+        "phase_empty": phase_empty,
+        "phase_filled": phase_filled,
+        "tours_scanned": scanned,
+        "route_updated": empty_r + adj_r,
+        "market_updated": empty_m + adj_m,
+        "empty_route_updated": empty_r,
+        "filled_route_adjusted": adj_r,
+        "message": (
+            f"Tour trống: gán {empty_r} tuyến ({empty_m} TT); "
+            f"tour đã có tuyến: điều chỉnh {adj_r} ({adj_m} TT); "
+            f"quét {scanned} tour có keyword"
+        ),
+    }
 
 
 def resolve_thi_truong(
