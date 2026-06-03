@@ -989,7 +989,7 @@ export const applyClassificationToTours = async () => {
 
 export const getApplyClassificationStatus = async () => {
   const { data } = await api.get("/admin/rules/apply-classification-status");
-  return data as { running: boolean; message?: string; error?: string; last_result?: Record<string, unknown> };
+  return data as { running: boolean; message?: string; error?: string; progress?: number; last_result?: Record<string, unknown> };
 };
 
 export const assignMarketKeyword = async (market: string, keyword: string) => {
