@@ -358,16 +358,19 @@ def _run_vietravel(db: Session, job_id: int, job: ScrapeJob):
     from scrapers.vietravel_scraper import scrape_all_vietravel_tours
     from sheets_tour_sync import export_vietravel_tab_from_db, merge_dataframe_to_db
 
-    _emit(job_id, 15, "Đang tải trang travel.com.vn...")
-    df = scrape_all_vietravel_tours()
+    def _progress(pct: int, msg: str) -> None:
+        _emit(job_id, pct, msg)
+
+    _emit(job_id, 10, "Bắt đầu quét travel.com.vn...")
+    df = scrape_all_vietravel_tours(progress=_progress, classify=False)
     if df.empty:
         raise RuntimeError("Không quét được tour từ travel.com.vn — site có thể đổi cấu trúc hoặc chặn bot")
-    _emit(job_id, 55, f"Đã quét {len(df)} tour...")
+    _emit(job_id, 52, f"Đã quét {len(df)} tour — đang lưu DB…")
 
     job.tours_total = len(df)
     db.commit()
 
-    _emit(job_id, 65, "Đang lưu database (Supabase)...")
+    _emit(job_id, 65, f"Đang lưu {len(df)} tour vào database…")
     result = merge_dataframe_to_db(db, df, "Vietravel", mirror_delete=True)
 
     _emit(job_id, 82, "Đang xuất database → Google Sheet...")

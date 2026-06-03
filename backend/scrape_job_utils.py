@@ -19,6 +19,7 @@ _DEFAULT_STALE_HOURS = 2.0
 
 # 0% progress lâu = thread không chạy / chết ngay sau khi tạo job
 _ZERO_PROGRESS_STALE_MIN = 45
+_STUCK_PROGRESS_MIN = 25  # % > 0 nhưng không heartbeat — treo giữa scrape
 
 
 def _mark_stale(job: ScrapeJob, now: datetime, *, reason: str) -> None:
@@ -49,6 +50,14 @@ def _is_stale_job(job: ScrapeJob, now: datetime) -> str | None:
         return "Không có tiến độ — thread scraper có thể đã dừng (deploy/DB)"
 
     hb = job.heartbeat_at or job.started_at
+    if (
+        job.status == "running"
+        and 0 < pct < 100
+        and job.heartbeat_at
+        and (now - job.heartbeat_at) > timedelta(minutes=_STUCK_PROGRESS_MIN)
+    ):
+        return "Dừng giữa chừng — không cập nhật tiến độ (site chậm hoặc phân loại treo)"
+
     limit_h = _STALE_HOURS.get(job.scraper_name, _DEFAULT_STALE_HOURS)
     if job.status == "pending":
         limit_h = min(limit_h, 0.5)

@@ -63,6 +63,7 @@ def invalidate_classification_cache() -> None:
     _company_alias_pairs.cache_clear()
     _departure_alias_pairs.cache_clear()
     _duration_alias_pairs.cache_clear()
+    _load_route_rules.cache_clear()
     try:
         from rules_job_store import invalidate_unmatched_cache
         invalidate_unmatched_cache()
@@ -871,9 +872,10 @@ def resolve_thi_truong(
     return "Khác"
 
 
+@lru_cache(maxsize=1)
 def _load_route_rules() -> tuple[tuple[str, str, tuple[str, ...]], ...]:
     """
-    (thi_truong, tuyen_tour, keyword AND tuple) — đọc DB mỗi lần.
+    (thi_truong, tuyen_tour, keyword AND tuple) — cache process; gọi invalidate khi đổi rule.
     Ưu tiên: thị trường trên xuống (market order) → nhiều từ AND hơn trước → sort_order.
     """
     from classify_market_order import market_rank_map

@@ -8,7 +8,7 @@ import json
 import os
 import re
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 import requests
@@ -255,15 +255,28 @@ def scrape_listing_page(url: str) -> list[dict[str, Any]]:
     return tours
 
 
-def scrape_all_vietravel_tours() -> pd.DataFrame:
-    """Scrape domestic + international listings, then classify market & route."""
+def scrape_all_vietravel_tours(
+    progress: Callable[[int, str], None] | None = None,
+    *,
+    classify: bool = False,
+) -> pd.DataFrame:
+    """Scrape domestic + international listings. Phân loại TT/tuyến khi lưu DB (nhanh hơn)."""
     all_tours: list[dict[str, Any]] = []
-    for url in SOURCES:
+    n_src = len(SOURCES)
+    for i, url in enumerate(SOURCES):
+        if progress:
+            progress(12 + int(30 * i / max(n_src, 1)), f"Đang tải {url}…")
         all_tours.extend(scrape_listing_page(url))
+        if progress:
+            progress(28 + int(30 * (i + 1) / max(n_src, 1)), f"Đã quét {len(all_tours)} tour")
     if not all_tours:
         return pd.DataFrame()
     df = pd.DataFrame(all_tours)
-    return enrich_market_and_route(df)
+    if classify:
+        if progress:
+            progress(48, f"Phân loại {len(df)} tour…")
+        return enrich_market_and_route(df)
+    return df
 
 
 def _sheet_headers() -> list[str]:
