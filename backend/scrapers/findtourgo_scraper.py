@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 import re
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 import requests
@@ -602,13 +602,24 @@ def fetch_country_tours(
 
 def scrape_all_findtourgo_tours(
     country_codes: list[str] | None = None,
+    progress: Callable[[int, str], None] | None = None,
+    *,
+    classify: bool = True,
 ) -> pd.DataFrame:
     """Quét tour theo từng quốc gia trên FindTourGo; mặc định tất cả quốc gia có tour."""
+    import os
+
     sess = requests.Session()
+    if progress:
+        progress(12, "Đang tải danh sách quốc gia FindTourGo…")
     country_cache = _load_country_cache(sess)
     city_cache: dict[int, str] = {}
     rows: list[dict[str, Any]] = []
     seen_codes: set[str] = set()
+
+    env_codes = (os.getenv("FINDTOURGO_COUNTRY_CODES") or "").strip()
+    if country_codes is None and env_codes:
+        country_codes = [c.strip().upper() for c in env_codes.split(",") if c.strip()]
 
     if country_codes:
         sources = [
@@ -620,10 +631,12 @@ def scrape_all_findtourgo_tours(
             for c in country_codes
         ]
     else:
-        resp = sess.get(f"{API_BASE}/public/countries", headers=HEADERS, timeout=90)
+        resp = sess.get(f"{API_BASE}/public/countries", headers=HEADERS, timeout=60)
         resp.raise_for_status()
         payload = resp.json()
         all_countries = payload if isinstance(payload, list) else []
+        if progress:
+            progress(14, f"Có {len(all_countries)} quốc gia — bắt đầu quét tour…")
         sources = []
         for row in all_countries:
             code = (row.get("code") or "").upper()
@@ -641,10 +654,16 @@ def scrape_all_findtourgo_tours(
                 }
             )
 
-    for src in sources:
+    n_src = len(sources)
+    for i, src in enumerate(sources):
         code = src["code"]
         label = src["label_vi"]
         page_url = src["page_url"]
+        if progress:
+            progress(
+                15 + int(55 * i / max(n_src, 1)),
+                f"FindTourGo [{i + 1}/{n_src}] {label} ({code})…",
+            )
         raw_items = fetch_country_tours(code, session=sess)
         for item in raw_items:
             tour_code = (item.get("tourCode") or "").strip()
@@ -656,13 +675,22 @@ def scrape_all_findtourgo_tours(
             row["page_url"] = page_url
             row["listing_code"] = code
             rows.append(row)
+        if progress:
+            progress(
+                15 + int(55 * (i + 1) / max(n_src, 1)),
+                f"Đã {len(rows)} tour — xong {label}",
+            )
 
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
-    from vietravel_scraper import enrich_market_and_route
+    if classify:
+        if progress:
+            progress(72, f"Phân loại {len(df)} tour (chậm)…")
+        from vietravel_scraper import enrich_market_and_route
 
-    return enrich_market_and_route(df)
+        return enrich_market_and_route(df)
+    return df
 
 
 def _sheet_headers() -> list[str]:

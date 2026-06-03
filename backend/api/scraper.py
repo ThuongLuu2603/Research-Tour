@@ -370,10 +370,16 @@ def _run_vietravel(db: Session, job_id: int, job: ScrapeJob):
     job.tours_total = len(df)
     db.commit()
 
-    _emit(job_id, 65, f"Đang lưu {len(df)} tour vào database…")
-    result = merge_dataframe_to_db(db, df, "Vietravel", mirror_delete=True)
+    result = merge_dataframe_to_db(
+        db,
+        df,
+        "Vietravel",
+        mirror_delete=True,
+        recompute_segments=False,
+        progress=_progress,
+    )
 
-    _emit(job_id, 82, "Đang xuất database → Google Sheet...")
+    _emit(job_id, 84, "Đã lưu DB — đang ghi Google Sheet…")
     try:
         export_vietravel_tab_from_db(db)
     except Exception as e:
@@ -390,17 +396,20 @@ def _run_findtourgo(db: Session, job_id: int, job: ScrapeJob):
     sys.path.insert(0, "scrapers")
     from scrapers.findtourgo_scraper import scrape_all_findtourgo_tours, write_to_google_sheet
 
-    _emit(job_id, 15, "Đang kết nối FindTourGo API...")
-    df = scrape_all_findtourgo_tours()
+    def _progress(pct: int, msg: str) -> None:
+        _emit(job_id, pct, msg)
+
+    _emit(job_id, 8, "Bắt đầu quét FindTourGo API…")
+    df = scrape_all_findtourgo_tours(progress=_progress, classify=False)
     if df.empty:
         raise RuntimeError("FindTourGo không trả tour — kiểm tra API hoặc mạng")
     n_co = df["cong_ty"].nunique() if "cong_ty" in df.columns else len(df)
-    _emit(job_id, 65, f"Đã quét {len(df)} tour ({n_co} nguồn)...")
+    _emit(job_id, 72, f"Đã quét {len(df)} tour ({n_co} công ty) — ghi Sheet…")
 
     job.tours_total = len(df)
     db.commit()
 
-    _emit(job_id, 78, "Đang ghi Google Sheet (không lưu DB)...")
+    _emit(job_id, 85, f"Đang ghi {len(df)} tour lên tab FindTourGo…")
     write_to_google_sheet(df)
     _emit(job_id, 95, f"Đã ghi {len(df)} tour lên tab FindTourGo")
     return 0, len(df), 0

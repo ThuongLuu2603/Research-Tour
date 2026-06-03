@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from datetime import datetime
 
 from config import settings
@@ -235,8 +236,11 @@ def _apply_fields_to_tour(
     tour.cong_ty = resolve_company_name(fields["cong_ty"])[:256]
     tour.ten_tour = fields["ten_tour"][:512]
     tour.lich_trinh = fields["lich_trinh"]
-    if nguon == "Main":
-        mk, rt = classify_route_fields(tour.ten_tour, tour.lich_trinh)
+    if nguon in ("Main", "Vietravel"):
+        mk = (fields.get("thi_truong") or "").strip()
+        rt = (fields.get("tuyen_tour") or "").strip()
+        if not mk and not rt:
+            mk, rt = classify_route_fields(tour.ten_tour, tour.lich_trinh)
         tour.thi_truong = mk[:128]
         tour.tuyen_tour = rt[:256]
         fields = {**fields, "thi_truong": tour.thi_truong, "tuyen_tour": tour.tuyen_tour}
@@ -336,8 +340,11 @@ def merge_dataframe_to_db(
     *,
     mirror_delete: bool | None = None,
     recompute_segments: bool = True,
+    progress: Callable[[int, str], None] | None = None,
+    commit_batch: int = 80,
 ) -> dict:
     """Scraper → DB trước (Vietravel). Tour.id giữ nguyên khi match external_id."""
+    from classification import _load_route_rules, resolve_market_and_route
     from data_sources import is_db_canonical_source, should_mirror_prune
 
     if not is_db_canonical_source(nguon):
@@ -345,10 +352,12 @@ def merge_dataframe_to_db(
     if mirror_delete is None:
         mirror_delete = should_mirror_prune(nguon)
 
+    route_rules = _load_route_rules() if nguon in ("Vietravel", "Main") else None
+    total = len(df)
     updated = inserted = skipped = unchanged = 0
     synced_tour_ids: set[int] = set()
     now = datetime.utcnow()
-    for _, row in df.iterrows():
+    for idx, (_, row) in enumerate(df.iterrows()):
         fields = _scrape_row_to_fields(row)
         if not fields:
             skipped += 1
@@ -356,6 +365,16 @@ def merge_dataframe_to_db(
         if not fields.get("gia"):
             skipped += 1
             continue
+        if route_rules:
+            mk, rt, matched = resolve_market_and_route(
+                fields["ten_tour"],
+                fields["lich_trinh"],
+                route_rules=route_rules,
+            )
+            if matched:
+                fields["thi_truong"] = mk
+                fields["tuyen_tour"] = rt
+
         external_id = compute_external_id(
             nguon,
             ma_tour=fields.get("ma_tour", ""),
@@ -366,6 +385,7 @@ def merge_dataframe_to_db(
         is_new = tour is None
         if is_new:
             tour = _create_tour_from_fields(fields, nguon, now)
+            tour.external_id = external_id[:128]
             db.add(tour)
             db.flush()
             synced_tour_ids.add(tour.id)
@@ -386,6 +406,12 @@ def merge_dataframe_to_db(
             preserve_nguon=(not is_new and tour.nguon not in ("", nguon)),
             external_id=external_id,
         )
+
+        if progress and (idx % 15 == 0 or idx + 1 == total):
+            pct = 65 + int(17 * (idx + 1) / max(total, 1))
+            progress(pct, f"Đang lưu DB {idx + 1}/{total} (+{inserted} mới, ~{updated} cập nhật)")
+        if commit_batch > 0 and (idx + 1) % commit_batch == 0:
+            db.commit()
 
     db.commit()
 
