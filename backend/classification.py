@@ -504,7 +504,7 @@ def collect_classify_gaps(db) -> list[dict]:
     from tour_stats_exclusions import apply_stats_exclusion_query
 
     q = (
-        db.query(Tour.ten_tour, Tour.thi_truong, Tour.lich_trinh)
+        db.query(Tour.id, Tour.ten_tour, Tour.thi_truong, Tour.lich_trinh)
         .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
         .filter(
             or_(
@@ -516,10 +516,22 @@ def collect_classify_gaps(db) -> list[dict]:
     )
     q = apply_stats_exclusion_query(q)
 
+    matcher = get_route_rule_matcher()
+    healed_ids: list[int] = []
     classify_gaps: dict[str, dict] = {}
-    for ten_tour, thi_truong, lich_trinh in q.yield_per(1000):
+    for tour_id, ten_tour, thi_truong, lich_trinh in q.yield_per(500):
+        if len(healed_ids) >= 800:
+            break
         title = re.sub(r"\s+", " ", (ten_tour or "").strip())[:120]
         if not title:
+            continue
+        mk, rt, from_rule, rule_id = matcher.resolve(ten_tour or "", lich_trinh or "")
+        if from_rule:
+            tour = db.query(Tour).filter(Tour.id == tour_id).first()
+            if tour:
+                m_delta, r_delta = _apply_rule_result_to_tour(tour, mk, rt, True, rule_id)
+                if m_delta or r_delta:
+                    healed_ids.append(tour_id)
             continue
         stored_mk = (thi_truong or "").strip()
         if stored_mk in ("Khác",):
@@ -540,6 +552,12 @@ def collect_classify_gaps(db) -> list[dict]:
                 "resolved_market": stored_mk,
             }
         classify_gaps[title]["count"] += 1
+
+    if healed_ids:
+        db.commit()
+        from tour_search import sync_search_tsv_for_ids
+
+        sync_search_tsv_for_ids(healed_ids)
 
     return sorted(
         [

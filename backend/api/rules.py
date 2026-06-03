@@ -147,9 +147,36 @@ def _auto_apply_tours(
     *,
     keywords: list[str] | None = None,
 ) -> dict | None:
-    """Áp dụng quy tắc lên tour — chạy nền. keywords → chỉ quét tour liên quan (sau Gán)."""
+    """
+    Áp dụng quy tắc lên tour.
+    Có keywords (sau Gán / sửa rule) → chạy đồng bộ trên tour liên quan, trả kết quả ngay.
+    Không keywords → chạy nền (full scan).
+    """
     if not enabled:
         return None
+
+    if keywords and scope in ("market", "route", "all"):
+        from classification import apply_classification_for_keywords
+        from rules_job_store import invalidate_unmatched_cache
+
+        try:
+            result = apply_classification_for_keywords(db, keywords)
+            invalidate_unmatched_cache()
+            scanned = int(result.get("tours_scanned") or 0)
+            routes = int(result.get("route_updated") or 0)
+            return {
+                "started": False,
+                "applied": True,
+                "sync": True,
+                "message": f"Đã cập nhật {routes} tour (quét {scanned} tour khớp keyword)",
+                "result": result,
+            }
+        except Exception as e:
+            import logging
+
+            logging.getLogger(__name__).exception("sync apply after assign failed: %s", e)
+            raise HTTPException(500, f"Gán rule xong nhưng áp dụng tour thất bại: {e}") from e
+
     import logging
     import threading
 
@@ -161,12 +188,9 @@ def _auto_apply_tours(
         session = SessionLocal()
         try:
             if scope in ("market", "route", "all"):
-                from classification import apply_classification_for_keywords, apply_classification_rules_to_tours
+                from classification import apply_classification_rules_to_tours
 
-                if keywords:
-                    apply_classification_for_keywords(session, keywords)
-                else:
-                    apply_classification_rules_to_tours(session)
+                apply_classification_rules_to_tours(session)
             elif scope == "company":
                 apply_company_aliases_to_tours(session)
             elif scope == "departure":
@@ -180,15 +204,15 @@ def _auto_apply_tours(
         finally:
             try:
                 invalidate_classification_cache()
+                from rules_job_store import invalidate_unmatched_cache
+
+                invalidate_unmatched_cache()
             except Exception:
                 pass
             session.close()
 
     threading.Thread(target=_work, daemon=True, name=f"apply-rules-{scope}").start()
-    msg = "Đang áp dụng quy tắc lên tour (chạy nền)…"
-    if keywords:
-        msg = f"Đang áp dụng {len(keywords)} keyword lên tour liên quan…"
-    return {"started": True, "message": msg}
+    return {"started": True, "message": "Đang áp dụng quy tắc lên tour (chạy nền)…"}
 
 
 def _start_apply_all_rules_background(*, recompute_phan_khuc: bool = False) -> dict:
@@ -354,7 +378,8 @@ def create_route_rule(
     invalidate_classification_cache()
     if push_sheet:
         _try_push_route(db)
-    _auto_apply_tours(db, auto_apply, scope="route")
+    kws = [k.strip().lower() for k in rule.keywords.split(",") if k.strip()]
+    _auto_apply_tours(db, auto_apply, scope="route", keywords=kws or None)
     return rule
 
 
@@ -377,7 +402,8 @@ def update_route_rule(
     invalidate_classification_cache()
     if push_sheet:
         _try_push_route(db)
-    _auto_apply_tours(db, auto_apply, scope="route")
+    kws = [k.strip().lower() for k in rule.keywords.split(",") if k.strip()]
+    _auto_apply_tours(db, auto_apply, scope="route", keywords=kws or None)
     return rule
 
 

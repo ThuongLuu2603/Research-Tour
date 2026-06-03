@@ -203,7 +203,7 @@ export function ClassificationRulesTab({
         delete n[title];
         return n;
       });
-      onAfterSaved(`Đã gán ${d.route} (${d.market})`, { skipPoll: true });
+      onAfterSaved(`Đã gán ${d.route} (${d.market})`, { gapValues: [title] });
     } catch (e) {
       onGapAssignFailed([title]);
       throw e;
@@ -237,7 +237,7 @@ export function ClassificationRulesTab({
         for (const t of titles) delete n[t];
         return n;
       });
-      onAfterSaved(r.message || `Đã gán ${titles.length} tour`, { skipPoll: true });
+      onAfterSaved(r.message || `Đã gán ${titles.length} tour`, { gapValues: titles });
     } catch (e) {
       onGapAssignFailed(titles);
       throw e;
