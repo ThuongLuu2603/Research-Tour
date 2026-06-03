@@ -169,7 +169,7 @@ export default function RulesAdminPage() {
   const pollApplyStatus = (attempt = 0) => {
     getApplyClassificationStatus()
       .then((st) => {
-        if st.running && attempt < 120) {
+        if (st.running && attempt < 120) {
           setSyncMsg(st.message || (st.progress ? `Đang áp dụng… ${st.progress} tour` : "Đang áp dụng quy tắc…"));
           window.setTimeout(() => pollApplyStatus(attempt + 1), 2000);
           return;
