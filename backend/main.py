@@ -181,7 +181,15 @@ def health(request: Request):
     if request.method == "HEAD":
         return Response(status_code=200)
     ready = bool(getattr(request.app.state, "db_ready", False))
-    return {"status": "ok", "db_ready": ready}
+    out: dict = {"status": "ok", "db_ready": ready}
+    if request.method == "GET":
+        try:
+            from tour_search import is_postgres
+
+            out["search"] = {"postgres_fts": is_postgres()}
+        except Exception:
+            pass
+    return out
 
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend" / "dist"

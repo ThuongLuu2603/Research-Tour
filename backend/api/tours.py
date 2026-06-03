@@ -7,12 +7,12 @@ import pandas as pd
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
 from database import get_db
 from models import Tour, User
+from tour_search import apply_search_filter, touch_tour_search
 
 router = APIRouter(prefix="/api/tours", tags=["tours"])
 
@@ -92,35 +92,20 @@ def list_tours(
     _: User = Depends(get_current_user),
 ):
     q = db.query(Tour)
-
-    if search:
-        like = f"%{search}%"
-        q = q.filter(
-            or_(
-                Tour.ten_tour.ilike(like),
-                Tour.cong_ty.ilike(like),
-                Tour.ma_tour.ilike(like),
-                Tour.lich_trinh.ilike(like),
-            )
-        )
-    if thi_truong:
-        q = q.filter(Tour.thi_truong.in_(thi_truong))
-    if tuyen_tour:
-        q = q.filter(Tour.tuyen_tour.in_(tuyen_tour))
-    if cong_ty:
-        q = q.filter(Tour.cong_ty.in_(cong_ty))
-    if diem_kh:
-        q = q.filter(Tour.diem_kh.in_(diem_kh))
-    if nguon:
-        q = q.filter(Tour.nguon.in_(nguon))
-    if phan_khuc:
-        q = q.filter(Tour.phan_khuc.in_(phan_khuc))
-    if flagged is not None:
-        q = q.filter(Tour.flagged == flagged)
-    if gia_min is not None:
-        q = q.filter(Tour.gia >= gia_min)
-    if gia_max is not None:
-        q = q.filter(Tour.gia <= gia_max)
+    q = _apply_list_filters(
+        q,
+        search=search,
+        thi_truong=thi_truong,
+        tuyen_tour=tuyen_tour,
+        cong_ty=cong_ty,
+        diem_kh=diem_kh,
+        nguon=nguon,
+        phan_khuc=phan_khuc,
+        flagged=flagged,
+        gia_min=gia_min,
+        gia_max=gia_max,
+        use_search_rank=bool(search.strip()) and sort_by == "id",
+    )
 
     total = q.count()
 
@@ -153,6 +138,7 @@ def patch_tour(
 ):
     from classification import resolve_company_name
     from fastapi import HTTPException
+    from tour_search import after_tours_persisted
 
     if user.role != "admin":
         raise HTTPException(
@@ -172,8 +158,10 @@ def patch_tour(
     sheet_fields_changed = any(k in data for k in ("thi_truong", "tuyen_tour", "cong_ty"))
     for field, value in data.items():
         setattr(tour, field, value)
+    touch_tour_search(tour, db)
     db.commit()
     db.refresh(tour)
+    after_tours_persisted(db, [tour.id])
 
     sheet_sync = None
     if sync_sheet and sheet_fields_changed:
@@ -236,10 +224,47 @@ def export_excel(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _apply_list_filters(
+    q,
+    *,
+    search: str,
+    thi_truong: list[str],
+    tuyen_tour: list[str],
+    cong_ty: list[str],
+    diem_kh: list[str],
+    nguon: list[str],
+    phan_khuc: list[str],
+    flagged: bool | None,
+    gia_min: float | None,
+    gia_max: float | None,
+    use_search_rank: bool,
+):
+    if search:
+        q = apply_search_filter(q, search, use_rank=use_search_rank)
+    if thi_truong:
+        q = q.filter(Tour.thi_truong.in_(thi_truong))
+    if tuyen_tour:
+        q = q.filter(Tour.tuyen_tour.in_(tuyen_tour))
+    if cong_ty:
+        q = q.filter(Tour.cong_ty.in_(cong_ty))
+    if diem_kh:
+        q = q.filter(Tour.diem_kh.in_(diem_kh))
+    if nguon:
+        q = q.filter(Tour.nguon.in_(nguon))
+    if phan_khuc:
+        q = q.filter(Tour.phan_khuc.in_(phan_khuc))
+    if flagged is not None:
+        q = q.filter(Tour.flagged == flagged)
+    if gia_min is not None:
+        q = q.filter(Tour.gia >= gia_min)
+    if gia_max is not None:
+        q = q.filter(Tour.gia <= gia_max)
+    return q
+
+
 def _apply_filters(q, search, thi_truong, tuyen_tour, cong_ty, nguon):
     if search:
-        like = f"%{search}%"
-        q = q.filter(or_(Tour.ten_tour.ilike(like), Tour.cong_ty.ilike(like)))
+        q = apply_search_filter(q, search)
     if thi_truong:
         q = q.filter(Tour.thi_truong.in_(thi_truong))
     if tuyen_tour:

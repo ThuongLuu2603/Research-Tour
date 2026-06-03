@@ -85,7 +85,14 @@ def _phan_khuc_absolute_fallback(gia: float | None) -> str:
 
 
 def recompute_all_phan_khuc(db: Session) -> dict:
-    tours = db.query(Tour).all()
+    from data_sources import DB_CANONICAL_NGUON
+
+    tours = (
+        db.query(Tour)
+        .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
+        .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+        .all()
+    )
     route_avg = build_route_market_avg_price_day(tours)
     updated = 0
     for t in tours:

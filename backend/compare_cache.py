@@ -7,7 +7,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from compare_engine import SegmentStats, build_segment_stats, deduplicate_tours
@@ -127,9 +127,21 @@ def load_tours(
     if thi_truong:
         q = q.filter(Tour.thi_truong.in_(thi_truong))
     if tuyen_tour:
-        q = q.filter(Tour.tuyen_tour.ilike(f"%{tuyen_tour}%"))
+        needle = tuyen_tour.strip()
+        q = q.filter(
+            or_(
+                Tour.tuyen_tour == needle,
+                Tour.tuyen_tour.ilike(f"%{needle}%"),
+            )
+        )
     if diem_kh:
-        q = q.filter(Tour.diem_kh.ilike(f"%{diem_kh}%"))
+        needle = diem_kh.strip()
+        q = q.filter(
+            or_(
+                Tour.diem_kh == needle,
+                Tour.diem_kh.ilike(f"%{needle}%"),
+            )
+        )
     return filter_tours_for_market_compare(q.all())
 
 

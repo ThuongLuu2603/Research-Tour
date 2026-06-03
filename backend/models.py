@@ -65,6 +65,14 @@ class Tour(Base):
     # Derived/computed
     so_ngay: Mapped[float | None] = mapped_column(Float, nullable=True)
     phan_khuc: Mapped[str] = mapped_column(String(64), default="")
+    search_text: Mapped[str] = mapped_column(Text, default="")
+    segment_key: Mapped[str] = mapped_column(String(512), default="", index=True)
+    classification_rule_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("route_keyword_rules.id"), nullable=True, index=True
+    )
+    classified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # PostgreSQL: cột search_tsv (tsvector) thêm qua migration — không map ORM
 
     # Source tracking
     nguon: Mapped[str] = mapped_column(String(64), default="", index=True)  # Main|Vietravel|Manual (FindTourGo chỉ Sheet)
@@ -285,6 +293,17 @@ class TourOverride(Base):
     workspace: Mapped[Workspace] = relationship("Workspace", back_populates="overrides")
     tour: Mapped[Tour] = relationship("Tour", back_populates="overrides")
     editor: Mapped[User] = relationship("User", foreign_keys=[updated_by])
+
+
+class RouteRuleToken(Base):
+    """Inverted index token → rule (lọc incremental nhanh)."""
+
+    __tablename__ = "route_rule_tokens"
+    __table_args__ = (UniqueConstraint("rule_id", "token", name="uq_rule_token"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    rule_id: Mapped[int] = mapped_column(Integer, ForeignKey("route_keyword_rules.id", ondelete="CASCADE"), index=True)
+    token: Mapped[str] = mapped_column(String(128), index=True)
 
 
 class AppKv(Base):

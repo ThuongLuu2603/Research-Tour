@@ -273,6 +273,9 @@ def _apply_fields_to_tour(
         tour.analyst_note = note
         tour.flagged = flagged
     tour.updated_at = now
+    from tour_search import update_tour_derived_fields
+
+    update_tour_derived_fields(tour)
 
 
 def _create_tour_from_fields(fields: dict, nguon: str, now: datetime) -> Tour:
@@ -290,6 +293,12 @@ def _delete_tour_ids(db, tour_ids: list[int]) -> int:
         synchronize_session=False
     )
     db.query(Tour).filter(Tour.id.in_(tour_ids)).delete(synchronize_session=False)
+    try:
+        from tour_search import after_tours_persisted
+
+        after_tours_persisted(db, tour_ids, deleted=True)
+    except Exception:
+        pass
     return len(tour_ids)
 
 
@@ -368,7 +377,7 @@ def merge_dataframe_to_db(
             skipped += 1
             continue
         if matcher:
-            mk, rt, matched = matcher.resolve(
+            mk, rt, matched, _rid = matcher.resolve(
                 fields["ten_tour"],
                 fields["lich_trinh"],
             )
@@ -415,6 +424,7 @@ def merge_dataframe_to_db(
             db.commit()
 
     db.commit()
+    _flush_search_after_commit(db, synced_tour_ids)
 
     deleted = 0
     if mirror_delete:
@@ -533,6 +543,7 @@ def merge_sheet_source_to_db(
         )
 
     db.commit()
+    _flush_search_after_commit(db, synced_tour_ids)
 
     deleted = 0
     if mirror_delete:
@@ -577,11 +588,24 @@ def merge_sheet_source_to_db(
     return out
 
 
+def _flush_search_after_commit(db, tour_ids: set[int] | list[int]) -> None:
+    """Sau commit — cập nhật tsvector GIN (PostgreSQL)."""
+    from tour_search import sync_search_tsv_for_ids
+
+    _ = db
+    ids = [int(i) for i in tour_ids if i]
+    if ids:
+        sync_search_tsv_for_ids(ids)
+
+
 def _post_sync_cache(db) -> None:
     try:
         from compare_cache import invalidate_compare_cache, prewarm_compare_cache
+        from segment_mv import refresh_segment_mv
+
         invalidate_compare_cache()
         prewarm_compare_cache(db)
+        refresh_segment_mv()
     except Exception as e:
         logger.warning("post-sync cache refresh failed: %s", e)
 

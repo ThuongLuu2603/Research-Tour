@@ -67,6 +67,17 @@ def invalidate_classification_cache() -> None:
     global _route_matcher
     _route_matcher = None
     try:
+        from database import SessionLocal
+        from route_rule_tokens import rebuild_route_rule_tokens
+
+        db = SessionLocal()
+        try:
+            rebuild_route_rule_tokens(db)
+        finally:
+            db.close()
+    except Exception:
+        pass
+    try:
         from rules_job_store import invalidate_unmatched_cache
         invalidate_unmatched_cache()
     except Exception:
@@ -192,7 +203,6 @@ def _canonical_tour_query(db):
 
 def _iter_canonical_tour_batches(db, batch_size: int = 1000, *, keyword_filter: list[str] | None = None):
     """Phân trang theo id — chỉ cột cần cho apply rule."""
-    from sqlalchemy import or_
     from sqlalchemy.orm import load_only
 
     from models import Tour
@@ -208,6 +218,10 @@ def _iter_canonical_tour_batches(db, batch_size: int = 1000, *, keyword_filter: 
         Tour.thoi_gian,
         Tour.so_ngay,
         Tour.link_url,
+        Tour.classification_rule_id,
+        Tour.classified_at,
+        Tour.segment_key,
+        Tour.search_text,
     )
     last_id = 0
     while True:
@@ -218,14 +232,9 @@ def _iter_canonical_tour_batches(db, batch_size: int = 1000, *, keyword_filter: 
             .order_by(Tour.id)
         )
         if keyword_filter:
-            kws = [k.strip().lower() for k in keyword_filter if k and k.strip()][:48]
-            if kws:
-                clauses = []
-                for kw in kws:
-                    pat = f"%{kw}%"
-                    clauses.append(Tour.ten_tour.ilike(pat))
-                    clauses.append(Tour.lich_trinh.ilike(pat))
-                q = q.filter(or_(*clauses))
+            from tour_search import apply_keyword_prefilter
+
+            q = apply_keyword_prefilter(q, keyword_filter)
         rows = q.limit(batch_size).all()
         if not rows:
             break
@@ -574,7 +583,7 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
         if is_stats_excluded_tour(t):
             continue
         title = _tour_title_hint(t)
-        market, route, from_route_rule = matcher.resolve(
+        market, route, from_route_rule, _rule_id = matcher.resolve(
             t.ten_tour or "",
             t.lich_trinh or "",
         )
@@ -895,6 +904,45 @@ def apply_departure_aliases_to_tours(db) -> int:
     return count
 
 
+def _apply_rule_result_to_tour(t, mk: str, rt: str, from_rule: bool, rule_id: int | None) -> tuple[int, int]:
+    """Cập nhật thị trường/tuyến + metadata classify. Trả (market_n, route_n)."""
+    from datetime import datetime
+
+    from tour_search import update_tour_derived_fields
+
+    market_n = route_n = 0
+    if from_rule:
+        if mk != (t.thi_truong or ""):
+            t.thi_truong = mk[:128]
+            market_n += 1
+        if rt != (t.tuyen_tour or "").strip():
+            t.tuyen_tour = rt[:256]
+            route_n += 1
+        if rule_id and t.classification_rule_id != rule_id:
+            t.classification_rule_id = rule_id
+        t.classified_at = datetime.utcnow()
+    else:
+        if (t.thi_truong or "").strip():
+            t.thi_truong = ""
+            market_n += 1
+        if (t.tuyen_tour or "").strip():
+            t.tuyen_tour = ""
+            route_n += 1
+        if t.classification_rule_id is not None:
+            t.classification_rule_id = None
+    update_tour_derived_fields(t)
+    return market_n, route_n
+
+
+def _commit_tour_batch(db, batch) -> None:
+    from tour_search import sync_search_tsv_for_ids
+
+    ids = [t.id for t in batch if t.id]
+    db.commit()
+    if ids:
+        sync_search_tsv_for_ids(ids)
+
+
 def apply_all_rules_to_tours(
     db,
     *,
@@ -911,21 +959,10 @@ def apply_all_rules_to_tours(
 
     for batch in _iter_canonical_tour_batches(db):
         for t in batch:
-            mk, rt, from_rule = matcher.resolve(t.ten_tour or "", t.lich_trinh or "")
-            if from_rule:
-                if mk != (t.thi_truong or ""):
-                    t.thi_truong = mk[:128]
-                    market_n += 1
-                if rt != (t.tuyen_tour or "").strip():
-                    t.tuyen_tour = rt[:256]
-                    route_n += 1
-            else:
-                if (t.thi_truong or "").strip():
-                    t.thi_truong = ""
-                    market_n += 1
-                if (t.tuyen_tour or "").strip():
-                    t.tuyen_tour = ""
-                    route_n += 1
+            mk, rt, from_rule, rule_id = matcher.resolve(t.ten_tour or "", t.lich_trinh or "")
+            m_delta, r_delta = _apply_rule_result_to_tour(t, mk, rt, from_rule, rule_id)
+            market_n += m_delta
+            route_n += r_delta
 
             fixed_link = normalize_tour_link(t.link_url)
             if fixed_link != (t.link_url or ""):
@@ -947,7 +984,7 @@ def apply_all_rules_to_tours(
                 t.so_ngay = days
                 dur_n += 1
 
-        db.commit()
+        _commit_tour_batch(db, batch)
         processed += len(batch)
         if progress_cb:
             progress_cb(processed, f"Đã áp dụng {processed} tour…")
@@ -960,6 +997,12 @@ def apply_all_rules_to_tours(
         "departure_updated": dep_n,
         "duration_updated": dur_n,
     }
+    try:
+        from segment_mv import refresh_segment_mv
+
+        refresh_segment_mv()
+    except Exception:
+        pass
     if recompute_phan_khuc:
         try:
             from pricing_segments import recompute_all_phan_khuc
@@ -1002,26 +1045,20 @@ def apply_classification_rules_to_tours(
 
     for batch in _iter_canonical_tour_batches(db, keyword_filter=keyword_filter):
         for t in batch:
-            mk, rt, from_rule = matcher.resolve(t.ten_tour or "", t.lich_trinh or "")
+            mk, rt, from_rule, rule_id = matcher.resolve(t.ten_tour or "", t.lich_trinh or "")
             if from_rule:
-                if mk != (t.thi_truong or ""):
-                    t.thi_truong = mk[:128]
-                    market_n += 1
-                if rt != (t.tuyen_tour or "").strip():
-                    t.tuyen_tour = rt[:256]
-                    route_n += 1
+                m_delta, r_delta = _apply_rule_result_to_tour(t, mk, rt, True, rule_id)
+                market_n += m_delta
+                route_n += r_delta
             elif clear_unmatched:
-                if (t.thi_truong or "").strip():
-                    t.thi_truong = ""
-                    market_n += 1
-                if (t.tuyen_tour or "").strip():
-                    t.tuyen_tour = ""
-                    route_n += 1
+                m_delta, r_delta = _apply_rule_result_to_tour(t, "", "", False, None)
+                market_n += m_delta
+                route_n += r_delta
             fixed_link = normalize_tour_link(t.link_url)
             if fixed_link != (t.link_url or ""):
                 t.link_url = fixed_link
                 link_n += 1
-        db.commit()
+        _commit_tour_batch(db, batch)
         processed += len(batch)
         if progress_cb:
             progress_cb(processed, f"Phân loại {processed} tour…")
@@ -1064,7 +1101,7 @@ def resolve_thi_truong(
 
 
 @lru_cache(maxsize=1)
-def _load_route_rules() -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+def _load_route_rules() -> tuple[tuple[int, str, str, tuple[str, ...]], ...]:
     """
     (thi_truong, tuyen_tour, keyword AND tuple) — cache process; gọi invalidate khi đổi rule.
     Ưu tiên: thị trường trên xuống (market order) → nhiều từ AND hơn trước → sort_order.
@@ -1090,13 +1127,13 @@ def _load_route_rules() -> tuple[tuple[str, str, tuple[str, ...]], ...]:
         for r in sorted_rows:
             kws = tuple(k.strip().lower() for k in r.keywords.split(",") if k.strip())
             if kws:
-                out.append((r.thi_truong.strip(), r.tuyen_tour.strip(), kws))
+                out.append((r.id, r.thi_truong.strip(), r.tuyen_tour.strip(), kws))
         return tuple(out)
     finally:
         db.close()
 
 
-def _route_rules_from_db() -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+def _route_rules_from_db() -> tuple[tuple[int, str, str, tuple[str, ...]], ...]:
     return _load_route_rules()
 
 
@@ -1104,7 +1141,7 @@ def resolve_market_and_route(
     ten_tour: str,
     lich_trinh: str = "",
     *,
-    route_rules: tuple[tuple[str, str, tuple[str, ...]], ...] | None = None,
+    route_rules: tuple[tuple[int, str, str, tuple[str, ...]], ...] | None = None,
     market_pairs: tuple[tuple[str, str], ...] | None = None,
 ) -> tuple[str, str, bool]:
     """
@@ -1115,8 +1152,10 @@ def resolve_market_and_route(
     if route_rules is not None:
         from route_rule_matcher import RouteRuleMatcher
 
-        return RouteRuleMatcher(route_rules).resolve(ten_tour, lich_trinh)
-    return get_route_rule_matcher().resolve(ten_tour, lich_trinh)
+        m, r, ok, _ = RouteRuleMatcher(route_rules).resolve(ten_tour, lich_trinh)
+        return m, r, ok
+    m, r, ok, _ = get_route_rule_matcher().resolve(ten_tour, lich_trinh)
+    return m, r, ok
 
 
 def classify_route_fields(ten_tour: str, lich_trinh: str = "") -> tuple[str, str]:
@@ -1168,6 +1207,12 @@ def seed_route_rules_from_bundle(db=None, *, force: bool = False) -> int:
             count += 1
         db.commit()
         invalidate_classification_cache()
+        try:
+            from route_rule_tokens import rebuild_route_rule_tokens
+
+            rebuild_route_rule_tokens(db)
+        except Exception:
+            pass
         logger.info("Seeded %s route rules from bundle", count)
         return count
     finally:

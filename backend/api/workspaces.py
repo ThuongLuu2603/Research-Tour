@@ -112,12 +112,9 @@ def _upsert_override(db: Session, workspace_id: int, tour_id: int, user_id: int,
 
 def _apply_tour_filters(q, search, thi_truong, tuyen_tour, cong_ty, nguon, flagged):
     if search:
-        like = f"%{search}%"
-        q = q.filter(or_(
-            Tour.ten_tour.ilike(like),
-            Tour.cong_ty.ilike(like),
-            Tour.ma_tour.ilike(like),
-        ))
+        from tour_search import apply_search_filter
+
+        q = apply_search_filter(q, search)
     if thi_truong:
         q = q.filter(Tour.thi_truong.in_(thi_truong))
     if tuyen_tour:
