@@ -38,9 +38,9 @@ def all_exclusion_substrings() -> tuple[str, ...]:
 
 
 def _fold_vi(s: str) -> str:
-    s = unicodedata.normalize("NFC", (s or "").lower().strip())
-    s = re.sub(r"\s+", " ", s)
-    return s
+    from text_fold import fold_vi
+
+    return fold_vi(s)
 
 
 def is_fit_placeholder_title(title: str) -> bool:

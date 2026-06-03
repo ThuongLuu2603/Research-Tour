@@ -3,23 +3,29 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from text_fold import fold_vi
+
 
 class RouteRuleMatcher:
     """
     Thay vì thử 600+ rule/tour, chỉ thử rule có keyword neo xuất hiện trong tên+lịch trình.
-    Rule tuple: (rule_id, thi_truong, tuyen_tour, keywords...).
+    So khớp trên bản đã bỏ dấu (côn đảo = con dao).
     """
 
     __slots__ = ("_rules", "_anchors")
 
     def __init__(self, rules: tuple[tuple[int, str, str, tuple[str, ...]], ...]):
-        self._rules = rules
+        folded_rules: list[tuple[int, str, str, tuple[str, ...]]] = []
         by_anchor: dict[str, list[int]] = defaultdict(list)
-        for i, (_rid, _mkt, _route, kws) in enumerate(rules):
-            if not kws:
+        for rid, mkt, route, kws in rules:
+            fkws = tuple(fold_vi(k) for k in kws if k and str(k).strip())
+            if not fkws:
                 continue
-            anchor = max(kws, key=len)
-            by_anchor[anchor].append(i)
+            idx = len(folded_rules)
+            folded_rules.append((rid, mkt.strip(), route.strip(), fkws))
+            anchor = max(fkws, key=len)
+            by_anchor[anchor].append(idx)
+        self._rules = tuple(folded_rules)
         self._anchors = tuple(by_anchor.items())
 
     @classmethod
@@ -27,7 +33,7 @@ class RouteRuleMatcher:
         return cls(rules)
 
     def resolve(self, ten_tour: str, lich_trinh: str = "") -> tuple[str, str, bool, int | None]:
-        combined = f"{ten_tour or ''} {lich_trinh or ''}".lower().strip()
+        combined = fold_vi(f"{ten_tour or ''} {lich_trinh or ''}")
         if not combined:
             return "", "", False, None
 

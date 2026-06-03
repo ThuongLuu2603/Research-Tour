@@ -134,6 +134,8 @@ def _migrate_tour_search_columns():
     alters = []
     if "search_text" not in cols:
         alters.append("ADD COLUMN search_text TEXT DEFAULT ''")
+    if "search_text_folded" not in cols:
+        alters.append("ADD COLUMN search_text_folded TEXT DEFAULT ''")
     if "segment_key" not in cols:
         alters.append("ADD COLUMN segment_key VARCHAR(512) DEFAULT ''")
     if "classification_rule_id" not in cols:

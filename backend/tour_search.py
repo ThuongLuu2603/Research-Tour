@@ -10,6 +10,7 @@ from sqlalchemy.orm import Query, Session
 
 from config import settings
 from database import SessionLocal, engine
+from text_fold import fold_vi
 
 if TYPE_CHECKING:
     from models import Tour
@@ -35,6 +36,21 @@ def build_search_text(
     return _WHITESPACE.sub(" ", joined.lower())[:8000]
 
 
+def build_search_text_folded(
+    *,
+    ten_tour: str = "",
+    lich_trinh: str = "",
+    cong_ty: str = "",
+    ma_tour: str = "",
+) -> str:
+    return fold_vi(build_search_text(
+        ten_tour=ten_tour,
+        lich_trinh=lich_trinh,
+        cong_ty=cong_ty,
+        ma_tour=ma_tour,
+    ))
+
+
 def compute_segment_key(tour: Tour) -> str:
     try:
         from pricing_segments import bucket_key_for_tour
@@ -45,8 +61,14 @@ def compute_segment_key(tour: Tour) -> str:
 
 
 def update_tour_derived_fields(tour: Tour) -> None:
-    """Cập nhật search_text + segment_key (tsvector qua SQL batch)."""
+    """Cập nhật search_text, search_text_folded, segment_key."""
     tour.search_text = build_search_text(
+        ten_tour=tour.ten_tour or "",
+        lich_trinh=tour.lich_trinh or "",
+        cong_ty=tour.cong_ty or "",
+        ma_tour=tour.ma_tour or "",
+    )
+    tour.search_text_folded = build_search_text_folded(
         ten_tour=tour.ten_tour or "",
         lich_trinh=tour.lich_trinh or "",
         cong_ty=tour.cong_ty or "",
@@ -56,7 +78,7 @@ def update_tour_derived_fields(tour: Tour) -> None:
 
 
 def sync_search_tsv_for_ids(tour_ids: list[int]) -> None:
-    """PostgreSQL: cập nhật search_tsv từ search_text."""
+    """PostgreSQL: tsvector từ bản đã bỏ dấu (tìm không dấu vẫn ra)."""
     if not tour_ids or not is_postgres():
         return
     ids = list({int(i) for i in tour_ids if i})
@@ -71,7 +93,10 @@ def sync_search_tsv_for_ids(tour_ids: list[int]) -> None:
                     text(
                         f"""
                         UPDATE tours
-                        SET search_tsv = to_tsvector('simple', coalesce(search_text, ''))
+                        SET search_tsv = to_tsvector(
+                            'simple',
+                            coalesce(nullif(search_text_folded, ''), search_text, '')
+                        )
                         WHERE id IN ({placeholders})
                         """
                     )
@@ -94,7 +119,7 @@ def touch_tour_search(tour: Tour, db: Session | None = None) -> None:
 
 
 def backfill_search_columns(batch_size: int = 500) -> dict:
-    """Lần đầu deploy — search_text, segment_key, search_tsv."""
+    """Lần đầu deploy — search_text, search_text_folded, segment_key, search_tsv."""
     from models import Tour
 
     db = SessionLocal()
@@ -125,37 +150,46 @@ def backfill_search_columns(batch_size: int = 500) -> dict:
 
 
 def apply_search_filter(q: Query, search: str, *, use_rank: bool = False) -> Query:
-    """Thay ILIKE full scan — FTS (PG) hoặc LIKE trên search_text (SQLite dev)."""
+    """FTS + ILIKE — có dấu và không dấu (search_text_folded)."""
     from models import Tour
 
     term = (search or "").strip()
     if not term:
         return q
+    folded = fold_vi(term)
     if is_postgres():
         try:
-            tsq = func.plainto_tsquery("simple", term)
-            q = q.filter(text("tours.search_tsv @@ plainto_tsquery('simple', :q)").bindparams(q=term))
-            if use_rank:
-                q = q.order_by(func.ts_rank(text("tours.search_tsv"), tsq).desc())
-            return q
+            for fts_q in dict.fromkeys([folded, term]):
+                if not fts_q:
+                    continue
+                tsq = func.plainto_tsquery("simple", fts_q)
+                q_try = q.filter(
+                    text("tours.search_tsv @@ plainto_tsquery('simple', :q)").bindparams(q=fts_q)
+                )
+                if use_rank:
+                    q_try = q_try.order_by(func.ts_rank(text("tours.search_tsv"), tsq).desc())
+                return q_try
         except Exception:
             pass
     like = f"%{term}%"
-    return q.filter(
-        or_(
-            Tour.search_text.ilike(like),
-            Tour.ten_tour.ilike(like),
-            Tour.cong_ty.ilike(like),
-            Tour.ma_tour.ilike(like),
-        )
-    )
+    like_fold = f"%{folded}%" if folded != term else None
+    clauses = [
+        Tour.search_text.ilike(like),
+        Tour.ten_tour.ilike(like),
+        Tour.cong_ty.ilike(like),
+        Tour.ma_tour.ilike(like),
+    ]
+    if like_fold:
+        clauses.append(Tour.search_text_folded.ilike(like_fold))
+    return q.filter(or_(*clauses))
 
 
 def apply_keyword_prefilter(q: Query, keywords: list[str]) -> Query:
-    """Lọc tour có thể khớp rule — FTS / search_text."""
+    """Lọc tour có thể khớp rule — dùng bản bỏ dấu."""
     from models import Tour
 
-    kws = [k.strip().lower() for k in keywords if k and str(k).strip()][:48]
+    kws = [fold_vi(k) for k in keywords if k and str(k).strip()][:48]
+    kws = [k for k in kws if k]
     if not kws:
         return q
     if is_postgres():
@@ -169,6 +203,7 @@ def apply_keyword_prefilter(q: Query, keywords: list[str]) -> Query:
     clauses = []
     for kw in kws:
         pat = f"%{kw}%"
+        clauses.append(Tour.search_text_folded.ilike(pat))
         clauses.append(Tour.search_text.ilike(pat))
         clauses.append(Tour.ten_tour.ilike(pat))
         clauses.append(Tour.lich_trinh.ilike(pat))

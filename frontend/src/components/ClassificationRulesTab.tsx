@@ -510,7 +510,7 @@ export function ClassificationRulesTab({
               <th className="px-2 py-2 text-left">
                 <span className="inline-flex items-center gap-1">
                   Keyword tuyến (dòng mới)
-                  <InfoTip text="Gán = thêm rule OR + áp dụng: (1) tour trống tuyến có keyword trong tên, (2) tour đã có tuyến có keyword — điều chỉnh theo rule mới. Dấu phẩy = AND." />
+                  <InfoTip text="Gán = thêm rule OR + áp dụng (1) tour trống tuyến, (2) tour đã có tuyến. Khớp keyword không phân biệt dấu (chùa = chua). Dấu phẩy = AND." />
                 </span>
               </th>
               <th className="px-2 py-2 w-20" />

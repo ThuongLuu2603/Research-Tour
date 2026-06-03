@@ -6,6 +6,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from models import RouteKeywordRule, RouteRuleToken
+from text_fold import fold_vi
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +19,9 @@ def rebuild_route_rule_tokens(db: Session) -> int:
         kws = [k.strip().lower() for k in (r.keywords or "").split(",") if k.strip()]
         if not kws:
             continue
-        anchor = max(kws, key=len)
-        for tok in {anchor, *kws}:
+        folded = [fold_vi(k) for k in kws]
+        anchor = max(folded, key=len)
+        for tok in {anchor, *folded}:
             if len(tok) < 2:
                 continue
             db.add(RouteRuleToken(rule_id=r.id, token=tok[:128]))

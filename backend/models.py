@@ -66,6 +66,7 @@ class Tour(Base):
     so_ngay: Mapped[float | None] = mapped_column(Float, nullable=True)
     phan_khuc: Mapped[str] = mapped_column(String(64), default="")
     search_text: Mapped[str] = mapped_column(Text, default="")
+    search_text_folded: Mapped[str] = mapped_column(Text, default="")
     segment_key: Mapped[str] = mapped_column(String(512), default="", index=True)
     classification_rule_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("route_keyword_rules.id"), nullable=True, index=True
