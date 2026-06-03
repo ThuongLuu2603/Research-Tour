@@ -1,6 +1,25 @@
 import type React from "react";
 import { buildRouteKeywordConflicts, conflictHintForKeyword, parseRouteKeywordList } from "@/lib/rulesUnmatched";
 
+export function matchRulesSearch(q: string, ...parts: (string | number | undefined | null)[]) {
+  if (!q.trim()) return true;
+  const needle = q.trim().toLowerCase();
+  return parts.some((p) => String(p ?? "").toLowerCase().includes(needle));
+}
+
+/** Thị trường hiện trong bảng quy tắc khi search khớp tên TT, keyword TT, hoặc bất kỳ tuyến nào. */
+export function marketVisibleInRulesSearch(
+  q: string,
+  market: string,
+  marketRules: { keyword: string }[],
+  routeRules: { tuyen_tour: string; keywords: string }[],
+) {
+  if (!q.trim()) return true;
+  if (matchRulesSearch(q, market)) return true;
+  if (marketRules.some((r) => matchRulesSearch(q, r.keyword))) return true;
+  return routeRules.some((r) => matchRulesSearch(q, r.tuyen_tour, r.keywords));
+}
+
 export const ROUTE_DROP_KEYWORDS = [
   "bangkok", "pattaya", "phuket", "chiang mai", "thái lan", "thailand",
   "nhật bản", "tokyo", "osaka", "đài loan", "taiwan", "singapore", "malaysia",

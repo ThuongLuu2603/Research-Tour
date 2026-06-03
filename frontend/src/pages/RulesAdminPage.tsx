@@ -19,16 +19,12 @@ import { InfoTip } from "@/components/InfoTip";
 import { cn } from "@/lib/utils";
 import { formatDurationLabel, parseDurationInput } from "@/lib/durationFormat";
 import { buildRouteKeywordConflicts, mergeRouteKeywordLists, parseRouteKeywordList } from "@/lib/rulesUnmatched";
-import { dropHandlers, dragAliasProps, keywordForRouteDrop } from "@/lib/rulesAdminUi";
+import { dropHandlers, dragAliasProps, keywordForRouteDrop, matchRulesSearch } from "@/lib/rulesAdminUi";
 import { ClassificationRulesTab } from "@/components/ClassificationRulesTab";
 import { Plus, Trash2, RefreshCw, Database, Search, Pencil, Check, X, GripVertical } from "lucide-react";
 
 type Tab = "classify" | "company" | "departure" | "duration";
-function matchSearch(q: string, ...parts: (string | number | undefined | null)[]) {
-  if (!q.trim()) return true;
-  const needle = q.trim().toLowerCase();
-  return parts.some((p) => String(p ?? "").toLowerCase().includes(needle));
-}
+const matchSearch = matchRulesSearch;
 
 function RuleSearchBar({ value, onChange, total, filtered }: { value: string; onChange: (v: string) => void; total: number; filtered: number }) {
   return (
@@ -37,7 +33,7 @@ function RuleSearchBar({ value, onChange, total, filtered }: { value: string; on
         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
         <input
           className="input pl-9 text-sm w-full"
-          placeholder="Tìm alias, tên chuẩn, keyword..."
+          placeholder="Tìm thị trường, tuyến, keyword, tên tour..."
           value={value}
           onChange={(e) => onChange(e.target.value)}
         />
@@ -236,6 +232,19 @@ export default function RulesAdminPage() {
     return base;
   }, [unmatched, search]);
 
+  const classifySearchCounts = useMemo(() => {
+    const routes = (routeRules ?? []).filter((r) =>
+      matchSearch(search, r.thi_truong, r.tuyen_tour, r.keywords),
+    );
+    const markets = (marketRules ?? []).filter((r) =>
+      matchSearch(search, r.market, r.keyword),
+    );
+    return {
+      filtered: routes.length + markets.length + filteredUnmatched.length,
+      total: (routeRules?.length ?? 0) + (marketRules?.length ?? 0) + (unmatched?.items?.length ?? 0),
+    };
+  }, [routeRules, marketRules, unmatched, search, filteredUnmatched.length]);
+
   const canonicalOptions = useMemo(() => {
     if (tab === "company") return [...new Set((companyRules ?? []).map((r) => r.canonical_name))];
     if (tab === "departure") return [...new Set((departureRules ?? []).map((r) => r.canonical_name))];
@@ -312,15 +321,14 @@ export default function RulesAdminPage() {
         value={search}
         onChange={setSearch}
         total={
-          tab === "classify"
-            ? (marketRules?.length ?? 0) + (routeRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
+          tab === "classify" ? classifySearchCounts.total
             : tab === "company" ? (companyRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
             : tab === "departure" ? (departureRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
             : tab === "duration" ? (durationRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
             : (durationRules?.length ?? 0)
         }
         filtered={
-          tab === "classify" ? filteredUnmatched.length
+          tab === "classify" ? classifySearchCounts.filtered
             : tab === "company" ? filteredCompany.length + filteredUnmatched.length
             : tab === "departure" ? filteredDeparture.length + filteredUnmatched.length
             : tab === "duration" ? filteredDuration.length + filteredUnmatched.length
@@ -332,6 +340,7 @@ export default function RulesAdminPage() {
         <ClassificationRulesTab
           marketRules={marketRules}
           routeRules={routeRules}
+          searchQuery={search}
           gapItems={filteredUnmatched}
           gapLoading={unmatchedLoading}
           marketOptions={marketOptions}

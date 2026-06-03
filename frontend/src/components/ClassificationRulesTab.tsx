@@ -5,11 +5,19 @@ import { buildRouteKeywordConflicts, conflictHintForKeyword, parseRouteKeywordLi
 import { InfoTip } from "@/components/InfoTip";
 import { cn } from "@/lib/utils";
 import { Database, GripVertical, Plus } from "lucide-react";
-import { dropHandlers, dragAliasProps, keywordForRouteDrop, RouteKeywordsCell } from "@/lib/rulesAdminUi";
+import {
+  dropHandlers,
+  dragAliasProps,
+  keywordForRouteDrop,
+  marketVisibleInRulesSearch,
+  matchRulesSearch,
+  RouteKeywordsCell,
+} from "@/lib/rulesAdminUi";
 
 type Props = {
   marketRules: MarketRule[] | undefined;
   routeRules: RouteRule[] | undefined;
+  searchQuery: string;
   gapItems: UnmatchedItem[];
   gapLoading: boolean;
   marketOptions: string[];
@@ -27,6 +35,7 @@ type Props = {
 export function ClassificationRulesTab({
   marketRules,
   routeRules,
+  searchQuery,
   gapItems,
   gapLoading,
   marketOptions,
@@ -145,9 +154,19 @@ export function ClassificationRulesTab({
       <div className="card overflow-auto max-h-[320px]">
         <p className="px-3 py-2 text-xs font-semibold text-gray-600 bg-gray-50 sticky top-0 z-10 border-b">Quy tắc theo thị trường</p>
         <div className="divide-y text-sm">
+          {rulesByMarket.length === 0 && searchQuery.trim() && (
+            <p className="p-4 text-sm text-gray-500">Không có quy tắc khớp «{searchQuery.trim()}»</p>
+          )}
           {rulesByMarket.map((mk) => {
-            const mRules = (marketRules ?? []).filter((r) => r.market === mk);
-            const rRules = routesByMarket.get(mk) ?? [];
+            const mRulesAll = (marketRules ?? []).filter((r) => r.market === mk);
+            const rRulesAll = routesByMarket.get(mk) ?? [];
+            const showAllRoutes = matchRulesSearch(searchQuery, mk);
+            const mRules = showAllRoutes || !searchQuery.trim()
+              ? mRulesAll
+              : mRulesAll.filter((r) => matchRulesSearch(searchQuery, r.keyword));
+            const rRules = showAllRoutes || !searchQuery.trim()
+              ? rRulesAll
+              : rRulesAll.filter((r) => matchRulesSearch(searchQuery, r.tuyen_tour, r.keywords));
             return (
               <div key={mk} className="p-3">
                 <div className="font-medium text-gray-900 mb-1">{mk}</div>
@@ -232,19 +251,24 @@ export function ClassificationRulesTab({
                     />
                   </td>
                   <td className="px-2 py-2">
-                    <select
-                      className="input text-xs py-1 w-full mb-1"
+                    <input
+                      className="input text-xs py-1 w-full"
+                      list={market ? `classify-route-${encodeURIComponent(market)}` : undefined}
+                      placeholder={market ? `${market} (mặc định)` : "Nhập tên tuyến mới…"}
                       value={route}
                       onChange={(e) => setPending((prev) => ({
                         ...prev,
                         [title]: { market, route: e.target.value, routeKw, marketKw: p?.marketKw ?? routeKw, linkMarketKw: p?.linkMarketKw ?? true },
                       }))}
-                    >
-                      <option value={market}>{market} (mặc định)</option>
-                      {routesForMk.map((r) => (
-                        <option key={r.id} value={r.tuyen_tour}>{r.tuyen_tour}</option>
-                      ))}
-                    </select>
+                    />
+                    {market ? (
+                      <datalist id={`classify-route-${encodeURIComponent(market)}`}>
+                        <option value={market} />
+                        {routesForMk.map((r) => (
+                          <option key={r.id} value={r.tuyen_tour} />
+                        ))}
+                      </datalist>
+                    ) : null}
                   </td>
                   <td className="px-2 py-2">
                     <input
