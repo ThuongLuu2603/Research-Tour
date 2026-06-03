@@ -35,6 +35,7 @@ class ScrapeJob(Base):
     tours_total: Mapped[int] = mapped_column(Integer, default=0)
     triggered_by: Mapped[str] = mapped_column(String(64), default="manual")  # manual | scheduler
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     tours: Mapped[list[Tour]] = relationship("Tour", back_populates="scrape_job")

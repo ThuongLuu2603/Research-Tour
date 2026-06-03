@@ -58,10 +58,7 @@ def create_access_token(data: dict) -> str:
     return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
 
 
-def get_current_user(
-    token: str = Depends(oauth2_scheme),
-    db: Session = Depends(get_db),
-) -> User:
+def user_from_access_token(token: str, db: Session) -> User:
     credentials_exc = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Token không hợp lệ hoặc đã hết hạn",
@@ -79,6 +76,13 @@ def get_current_user(
     if not user:
         raise credentials_exc
     return user
+
+
+def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    return user_from_access_token(token, db)
 
 
 def require_admin(current_user: User = Depends(get_current_user)) -> User:

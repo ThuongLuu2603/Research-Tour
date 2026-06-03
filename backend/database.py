@@ -68,9 +68,10 @@ def init_db():
     from models import DailySnapshot, SegmentSnapshot, RouteDailyMetrics, IntelAlert, SavedView, Workspace, WorkspaceMember, TourOverride, AppKv  # noqa: F401
     Base.metadata.create_all(bind=engine)
     _migrate_users_columns()
-    from migrations import _migrate_tour_columns, _migrate_saved_views
+    from migrations import _migrate_scrape_jobs_columns, _migrate_tour_columns, _migrate_saved_views
     _migrate_tour_columns()
     _migrate_saved_views()
+    _migrate_scrape_jobs_columns()
 
 
 def run_deferred_db_maintenance() -> None:

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  triggerScrape, getScrapeJobs, getSchedule, updateSchedule, getDataStatus, syncSheetData,
+  triggerScrape, getScrapeJobs, getScrapeJob, getSchedule, updateSchedule, getDataStatus, syncSheetData,
   cancelScrapeJob, ScrapeJob,
 } from "@/lib/api";
 import { fmtDate, statusColor, cn } from "@/lib/utils";
@@ -29,31 +29,77 @@ function ScraperCard({ scraper, label, desc }: { scraper: "vietravel" | "findtou
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
   const [activeJobId, setActiveJobId] = useState<number | null>(null);
   const esRef = useRef<EventSource | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopWatchers = () => {
+    esRef.current?.close();
+    esRef.current = null;
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
+
+  const pollJobStatus = (jobId: number) => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      try {
+        const job = await getScrapeJob(jobId);
+        const running = job.status === "running" || job.status === "pending";
+        setProgress({
+          pct: job.progress_pct,
+          msg: job.message || (running ? "Đang chạy…" : job.status),
+          done: !running,
+          error: job.status === "failed",
+          added: job.tours_added,
+          updated: job.tours_updated,
+        });
+        if (!running) {
+          stopWatchers();
+          qc.invalidateQueries({ queryKey: ["scrape-jobs"] });
+          qc.invalidateQueries({ queryKey: ["kpi"] });
+          qc.invalidateQueries({ queryKey: ["tours"] });
+        }
+      } catch {
+        /* retry */
+      }
+    }, 3000);
+  };
 
   const trigger = useMutation({
     mutationFn: () => triggerScrape(scraper),
     onSuccess: (job) => {
+      stopWatchers();
       setActiveJobId(job.id);
       setProgress({ pct: 0, msg: "Đang khởi động...", done: false });
-      const token = localStorage.getItem("access_token");
-      const es = new EventSource(`/api/scraper/jobs/${job.id}/stream?token=${token}`);
+      const token = localStorage.getItem("access_token") || "";
+      const es = new EventSource(
+        `/api/scraper/jobs/${job.id}/stream?token=${encodeURIComponent(token)}`,
+      );
       esRef.current = es;
       es.onmessage = (e) => {
         try {
           const ev: ProgressEvent = JSON.parse(e.data);
           setProgress(ev);
           if (ev.done) {
-            es.close();
+            stopWatchers();
             qc.invalidateQueries({ queryKey: ["scrape-jobs"] });
             qc.invalidateQueries({ queryKey: ["kpi"] });
             qc.invalidateQueries({ queryKey: ["tours"] });
           }
-        } catch {}
+        } catch { /* ping */ }
       };
       es.onerror = () => {
-        setProgress((p) => p ? { ...p, msg: "Kết nối bị gián đoạn — kiểm tra Job History", done: true } : p);
         es.close();
+        esRef.current = null;
+        setProgress((p) => ({
+          pct: p?.pct ?? 0,
+          msg: "Theo dõi tiến độ qua polling (SSE không kết nối được)…",
+          done: false,
+        }));
+        pollJobStatus(job.id);
       };
+      pollJobStatus(job.id);
     },
     onError: (err: any) => {
       setProgress({ pct: 0, msg: err.response?.data?.detail ?? "Lỗi không xác định", done: true, error: true });
@@ -350,9 +396,9 @@ export default function ScraperHub() {
                 <td className="px-4 py-2.5 text-xs text-gray-400">{job.id}</td>
                 <td className="px-4 py-2.5 text-xs font-medium text-gray-700 capitalize">{job.scraper_name}</td>
                 <td className="px-4 py-2.5">
-                  <JobStatusBadge status={stale ? "failed" : job.status} />
-                  {stale && (
-                    <span className="block text-[10px] text-amber-700 mt-0.5">treo {fmtRunningDuration(job)}</span>
+                  <JobStatusBadge status={job.status} />
+                  {stale && job.status === "running" && (
+                    <span className="block text-[10px] text-amber-700 mt-0.5">có thể treo {fmtRunningDuration(job)}</span>
                   )}
                 </td>
                 <td className="px-4 py-2.5 text-xs text-green-600 font-medium">+{job.tours_added}</td>

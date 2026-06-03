@@ -10,10 +10,10 @@ from models import ScrapeJob
 
 logger = logging.getLogger(__name__)
 
-# Vietravel: quét + merge DB + ghi Sheet — thường < 90 phút
+# Chỉ đánh failed khi không có heartbeat (job thật sự chết, không phải đang quét lâu)
 _STALE_HOURS: dict[str, float] = {
-    "vietravel": 3.0,
-    "findtourgo": 2.0,
+    "vietravel": 4.0,
+    "findtourgo": 3.0,
 }
 _DEFAULT_STALE_HOURS = 2.0
 
@@ -32,11 +32,13 @@ def reconcile_stale_scrape_jobs(db: Session, *, now: datetime | None = None) -> 
         .all()
     )
     for job in rows:
-        ref = job.started_at or now
+        ref = job.heartbeat_at or job.started_at or now
         limit_h = _STALE_HOURS.get(job.scraper_name, _DEFAULT_STALE_HOURS)
         if job.status == "pending" and not job.started_at:
             limit_h = min(limit_h, 0.5)
-        if now - ref < timedelta(hours=limit_h):
+        if job.heartbeat_at and (now - job.heartbeat_at) < timedelta(hours=limit_h):
+            continue
+        if not job.heartbeat_at and (now - ref) < timedelta(hours=limit_h):
             continue
         age_h = (now - ref).total_seconds() / 3600
         was = job.status

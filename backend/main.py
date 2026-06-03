@@ -118,6 +118,9 @@ def _bootstrap_database(app: FastAPI) -> None:
         create_default_users()
         start_import_background()
         app.state.db_ready = True
+        from runtime_state import set_db_ready
+
+        set_db_ready()
         threading.Thread(target=_run_startup_maintenance, daemon=True, name="startup-maintenance").start()
         threading.Thread(target=_run_snapshot_bg, daemon=True, name="daily-snapshot").start()
         start_scheduler()

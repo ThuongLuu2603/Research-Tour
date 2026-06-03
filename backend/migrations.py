@@ -35,6 +35,20 @@ def _migrate_tour_columns():
                 logger.warning("tour migration skipped (%s): %s", stmt, e)
 
 
+def _migrate_scrape_jobs_columns():
+    insp = inspect(engine)
+    if "scrape_jobs" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("scrape_jobs")}
+    if "heartbeat_at" in cols:
+        return
+    with engine.begin() as conn:
+        try:
+            conn.execute(text("ALTER TABLE scrape_jobs ADD COLUMN heartbeat_at TIMESTAMP"))
+        except Exception as e:
+            logger.warning("scrape_jobs heartbeat_at migration skipped: %s", e)
+
+
 def _migrate_saved_views():
     insp = inspect(engine)
     if "saved_views" not in insp.get_table_names():

@@ -7,12 +7,12 @@ import threading
 from datetime import datetime
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from api.auth import get_current_user
+from api.auth import get_current_user, user_from_access_token
 from database import get_db, SessionLocal
 from models import ScrapeJob, Tour, User
 
@@ -136,8 +136,19 @@ def get_job(
 
 
 @router.get("/jobs/{job_id}/stream")
-async def stream_job(job_id: int, _: User = Depends(get_current_user)):
+async def stream_job(
+    job_id: int,
+    token: str | None = Query(None, description="JWT (EventSource không gửi được header Authorization)"),
+    authorization: str | None = Header(None),
+    db: Session = Depends(get_db),
+):
     """SSE stream: client receives progress events until job completes."""
+    raw = (token or "").strip()
+    if not raw and authorization and authorization.lower().startswith("bearer "):
+        raw = authorization.split(" ", 1)[1].strip()
+    if not raw:
+        raise HTTPException(status_code=401, detail="Thiếu token — đăng nhập lại")
+    user_from_access_token(raw, db)
 
     async def event_gen() -> AsyncGenerator[str, None]:
         queue: asyncio.Queue = asyncio.Queue()
@@ -182,12 +193,40 @@ def update_schedule(
 
 # ── Background worker ─────────────────────────────────────────────────────────
 
+_SCRAPE_TIMEOUT_SEC = {
+    "vietravel": 3600,
+    "findtourgo": 2700,
+}
+
+
+def _persist_job_progress(job_id: int, pct: int, msg: str) -> None:
+    db = SessionLocal()
+    try:
+        job = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
+        if job and job.status in ("pending", "running"):
+            job.progress_pct = max(0, min(100, pct))
+            job.message = (msg or "")[:512]
+            job.heartbeat_at = datetime.utcnow()
+            if job.status == "pending":
+                job.status = "running"
+            db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
 def _emit(job_id: int, pct: int, msg: str):
     import json
+
+    _persist_job_progress(job_id, pct, msg)
     payload = json.dumps({"pct": pct, "msg": msg, "done": False}, ensure_ascii=False)
     q = _progress_queues.get(job_id)
     if q:
-        asyncio.run_coroutine_threadsafe(q.put(payload), _get_event_loop())
+        try:
+            asyncio.run_coroutine_threadsafe(q.put(payload), _get_event_loop())
+        except Exception:
+            pass
 
 
 def _emit_done(job_id: int, added: int, updated: int, deleted: int = 0):
@@ -229,6 +268,23 @@ def set_event_loop(loop: asyncio.AbstractEventLoop):
 
 
 def _run_job(job_id: int, scraper_name: str):
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+    from runtime_state import wait_db_ready
+
+    if not wait_db_ready(timeout=300):
+        db = SessionLocal()
+        try:
+            job = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
+            if job:
+                job.status = "failed"
+                job.message = "Database chưa sẵn sàng sau 5 phút — thử lại sau khi deploy xong"
+                job.finished_at = datetime.utcnow()
+                db.commit()
+        finally:
+            db.close()
+        _emit_error(job_id, "Database chưa sẵn sàng")
+        return
+
     db = SessionLocal()
     try:
         job = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
@@ -236,14 +292,26 @@ def _run_job(job_id: int, scraper_name: str):
             return
         job.status = "running"
         job.started_at = datetime.utcnow()
+        job.heartbeat_at = datetime.utcnow()
         db.commit()
 
         _emit(job_id, 5, f"Bắt đầu quét {scraper_name}...")
 
-        if scraper_name == "vietravel":
-            added, updated, deleted = _run_vietravel(db, job_id, job)
-        else:
-            added, updated, deleted = _run_findtourgo(db, job_id, job)
+        timeout = _SCRAPE_TIMEOUT_SEC.get(scraper_name, 3600)
+
+        def _work():
+            if scraper_name == "vietravel":
+                return _run_vietravel(db, job_id, job)
+            return _run_findtourgo(db, job_id, job)
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            fut = pool.submit(_work)
+            try:
+                added, updated, deleted = fut.result(timeout=timeout)
+            except FuturesTimeout:
+                raise TimeoutError(
+                    f"Scraper {scraper_name} quá {timeout // 60} phút — hủy để tránh job treo"
+                ) from None
 
         job.status = "success"
         job.progress_pct = 100
@@ -280,6 +348,8 @@ def _run_vietravel(db: Session, job_id: int, job: ScrapeJob):
 
     _emit(job_id, 15, "Đang tải trang travel.com.vn...")
     df = scrape_all_vietravel_tours()
+    if df.empty:
+        raise RuntimeError("Không quét được tour từ travel.com.vn — site có thể đổi cấu trúc hoặc chặn bot")
     _emit(job_id, 55, f"Đã quét {len(df)} tour...")
 
     job.tours_total = len(df)
@@ -307,7 +377,10 @@ def _run_findtourgo(db: Session, job_id: int, job: ScrapeJob):
 
     _emit(job_id, 15, "Đang kết nối FindTourGo API...")
     df = scrape_all_findtourgo_tours()
-    _emit(job_id, 65, f"Đã quét {len(df)} tour từ {df['cong_ty'].nunique() if 'cong_ty' in df.columns else '?'} công ty...")
+    if df.empty:
+        raise RuntimeError("FindTourGo không trả tour — kiểm tra API hoặc mạng")
+    n_co = df["cong_ty"].nunique() if "cong_ty" in df.columns else len(df)
+    _emit(job_id, 65, f"Đã quét {len(df)} tour ({n_co} nguồn)...")
 
     job.tours_total = len(df)
     db.commit()
