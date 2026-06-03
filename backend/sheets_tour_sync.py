@@ -344,7 +344,7 @@ def merge_dataframe_to_db(
     commit_batch: int = 80,
 ) -> dict:
     """Scraper → DB trước (Vietravel). Tour.id giữ nguyên khi match external_id."""
-    from classification import _load_route_rules, resolve_market_and_route
+    from classification import _load_route_rules
     from data_sources import is_db_canonical_source, should_mirror_prune
 
     if not is_db_canonical_source(nguon):
@@ -352,7 +352,9 @@ def merge_dataframe_to_db(
     if mirror_delete is None:
         mirror_delete = should_mirror_prune(nguon)
 
-    route_rules = _load_route_rules() if nguon in ("Vietravel", "Main") else None
+    from route_rule_matcher import RouteRuleMatcher
+
+    matcher = RouteRuleMatcher(_load_route_rules()) if nguon in ("Vietravel", "Main") else None
     total = len(df)
     updated = inserted = skipped = unchanged = 0
     synced_tour_ids: set[int] = set()
@@ -365,11 +367,10 @@ def merge_dataframe_to_db(
         if not fields.get("gia"):
             skipped += 1
             continue
-        if route_rules:
-            mk, rt, matched = resolve_market_and_route(
+        if matcher:
+            mk, rt, matched = matcher.resolve(
                 fields["ten_tour"],
                 fields["lich_trinh"],
-                route_rules=route_rules,
             )
             if matched:
                 fields["thi_truong"] = mk

@@ -64,11 +64,25 @@ def invalidate_classification_cache() -> None:
     _departure_alias_pairs.cache_clear()
     _duration_alias_pairs.cache_clear()
     _load_route_rules.cache_clear()
+    global _route_matcher
+    _route_matcher = None
     try:
         from rules_job_store import invalidate_unmatched_cache
         invalidate_unmatched_cache()
     except Exception:
         pass
+
+
+_route_matcher = None
+
+
+def get_route_rule_matcher() -> "RouteRuleMatcher":
+    from route_rule_matcher import RouteRuleMatcher
+
+    global _route_matcher
+    if _route_matcher is None:
+        _route_matcher = RouteRuleMatcher(_load_route_rules())
+    return _route_matcher
 
 
 DEFAULT_DURATION_ALIASES: list[tuple[float, list[str]]] = [
@@ -176,19 +190,43 @@ def _canonical_tour_query(db):
     return db.query(Tour).filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
 
 
-def _iter_canonical_tour_batches(db, batch_size: int = 500):
-    """Phân trang theo id — tránh yield_per + commit (đóng cursor trên Postgres)."""
+def _iter_canonical_tour_batches(db, batch_size: int = 1000, *, keyword_filter: list[str] | None = None):
+    """Phân trang theo id — chỉ cột cần cho apply rule."""
+    from sqlalchemy import or_
+    from sqlalchemy.orm import load_only
+
     from models import Tour
 
+    cols = load_only(
+        Tour.id,
+        Tour.ten_tour,
+        Tour.lich_trinh,
+        Tour.thi_truong,
+        Tour.tuyen_tour,
+        Tour.cong_ty,
+        Tour.diem_kh,
+        Tour.thoi_gian,
+        Tour.so_ngay,
+        Tour.link_url,
+    )
     last_id = 0
     while True:
-        rows = (
+        q = (
             _canonical_tour_query(db)
+            .options(cols)
             .filter(Tour.id > last_id)
             .order_by(Tour.id)
-            .limit(batch_size)
-            .all()
         )
+        if keyword_filter:
+            kws = [k.strip().lower() for k in keyword_filter if k and k.strip()][:48]
+            if kws:
+                clauses = []
+                for kw in kws:
+                    pat = f"%{kw}%"
+                    clauses.append(Tour.ten_tour.ilike(pat))
+                    clauses.append(Tour.lich_trinh.ilike(pat))
+                q = q.filter(or_(*clauses))
+        rows = q.limit(batch_size).all()
         if not rows:
             break
         yield rows
@@ -518,8 +556,7 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
     """Giá trị tour chưa khớp quy tắc — dùng gán keyword/alias trên UI admin."""
     from data_sources import DB_CANONICAL_NGUON
     from tour_sources import is_vietravel_tab
-
-    route_rules = _load_route_rules()
+    from tour_stats_exclusions import is_stats_excluded_tour
 
     cong_ty: dict[str, int] = {}
     diem_kh: dict[str, int] = {}
@@ -528,8 +565,7 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
     tuyen_tour: dict[str, dict] = {}
     classify_gaps: dict[str, dict] = {}
 
-    from tour_stats_exclusions import is_stats_excluded_tour
-
+    matcher = get_route_rule_matcher()
     for t in tours:
         if vtr_only and not is_vietravel_tab(t):
             continue
@@ -538,10 +574,9 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
         if is_stats_excluded_tour(t):
             continue
         title = _tour_title_hint(t)
-        market, route, from_route_rule = resolve_market_and_route(
+        market, route, from_route_rule = matcher.resolve(
             t.ten_tour or "",
             t.lich_trinh or "",
-            route_rules=route_rules,
         )
         stored_mk = (t.thi_truong or "").strip()
         if title and not from_route_rule:
@@ -860,44 +895,23 @@ def apply_departure_aliases_to_tours(db) -> int:
     return count
 
 
-def apply_all_rules_to_tours(db, *, recompute_phan_khuc: bool = False) -> dict:
-    """Áp dụng toàn bộ quy tắc DB lên tour (Main + Vietravel)."""
+def apply_all_rules_to_tours(
+    db,
+    *,
+    recompute_phan_khuc: bool = False,
+    progress_cb: callable | None = None,
+) -> dict:
+    """Một lượt quét tour — classification + alias công ty/KH/thời gian."""
     invalidate_classification_cache()
-    result = apply_classification_rules_to_tours(db)
-    result["company_updated"] = apply_company_aliases_to_tours(db)
-    result["departure_updated"] = apply_departure_aliases_to_tours(db)
-    result["duration_updated"] = apply_duration_aliases_to_tours(db)
-    if recompute_phan_khuc:
-        try:
-            from pricing_segments import recompute_all_phan_khuc
-
-            result["phan_khuc"] = recompute_all_phan_khuc(db)
-        except Exception as e:
-            logger.warning("recompute phan_khuc after rules apply failed: %s", e)
-            result["phan_khuc"] = {"error": str(e)}
-    else:
-        result["phan_khuc"] = {"skipped": True}
-    result["message"] = (
-        f"Thị trường {result.get('market_updated', 0)}, tuyến {result.get('route_updated', 0)}, "
-        f"công ty {result.get('company_updated', 0)}, điểm KH {result.get('departure_updated', 0)}, "
-        f"thời gian {result.get('duration_updated', 0)} tour"
-    )
-    return result
-
-
-def apply_classification_rules_to_tours(db) -> dict:
-    """Áp dụng lại rules Thị trường + Tuyến tour cho tour trong DB (đồng bộ cả hai cột)."""
+    matcher = get_route_rule_matcher()
     from link_utils import normalize_tour_link
 
-    route_rules = _load_route_rules()
-    market_n = route_n = link_n = 0
+    market_n = route_n = link_n = company_n = dep_n = dur_n = 0
+    processed = 0
+
     for batch in _iter_canonical_tour_batches(db):
         for t in batch:
-            mk, rt, from_rule = resolve_market_and_route(
-                t.ten_tour or "",
-                t.lich_trinh or "",
-                route_rules=route_rules,
-            )
+            mk, rt, from_rule = matcher.resolve(t.ten_tour or "", t.lich_trinh or "")
             if from_rule:
                 if mk != (t.thi_truong or ""):
                     t.thi_truong = mk[:128]
@@ -912,17 +926,125 @@ def apply_classification_rules_to_tours(db) -> dict:
                 if (t.tuyen_tour or "").strip():
                     t.tuyen_tour = ""
                     route_n += 1
+
+            fixed_link = normalize_tour_link(t.link_url)
+            if fixed_link != (t.link_url or ""):
+                t.link_url = fixed_link
+                link_n += 1
+
+            resolved_co = resolve_company_name(t.cong_ty)
+            if resolved_co and resolved_co != (t.cong_ty or ""):
+                t.cong_ty = resolved_co[:256]
+                company_n += 1
+
+            resolved_dep = resolve_departure_point(t.diem_kh)
+            if resolved_dep and resolved_dep != (t.diem_kh or ""):
+                t.diem_kh = resolved_dep[:256]
+                dep_n += 1
+
+            days, matched = resolve_duration_days(t.thoi_gian, t.so_ngay)
+            if days is not None and matched and (not t.so_ngay or float(t.so_ngay) != days):
+                t.so_ngay = days
+                dur_n += 1
+
+        db.commit()
+        processed += len(batch)
+        if progress_cb:
+            progress_cb(processed, f"Đã áp dụng {processed} tour…")
+
+    result = {
+        "market_updated": market_n,
+        "route_updated": route_n,
+        "links_repaired": link_n,
+        "company_updated": company_n,
+        "departure_updated": dep_n,
+        "duration_updated": dur_n,
+    }
+    if recompute_phan_khuc:
+        try:
+            from pricing_segments import recompute_all_phan_khuc
+
+            result["phan_khuc"] = recompute_all_phan_khuc(db)
+        except Exception as e:
+            logger.warning("recompute phan_khuc after rules apply failed: %s", e)
+            result["phan_khuc"] = {"error": str(e)}
+    else:
+        result["phan_khuc"] = {"skipped": True}
+    result["message"] = (
+        f"Thị trường {market_n}, tuyến {route_n}, "
+        f"công ty {company_n}, điểm KH {dep_n}, thời gian {dur_n} tour"
+    )
+    try:
+        from compare_cache import invalidate_compare_cache
+
+        invalidate_compare_cache()
+    except Exception:
+        pass
+    return result
+
+
+def apply_classification_rules_to_tours(
+    db,
+    *,
+    keyword_filter: list[str] | None = None,
+    clear_unmatched: bool = True,
+    progress_cb: callable | None = None,
+) -> dict:
+    """
+    Áp dụng rule tuyến lên tour.
+    keyword_filter: chỉ quét tour có keyword trong tên/lịch trình (sau Gán — nhanh hơn full scan).
+    """
+    from link_utils import normalize_tour_link
+
+    matcher = get_route_rule_matcher()
+    market_n = route_n = link_n = 0
+    processed = 0
+
+    for batch in _iter_canonical_tour_batches(db, keyword_filter=keyword_filter):
+        for t in batch:
+            mk, rt, from_rule = matcher.resolve(t.ten_tour or "", t.lich_trinh or "")
+            if from_rule:
+                if mk != (t.thi_truong or ""):
+                    t.thi_truong = mk[:128]
+                    market_n += 1
+                if rt != (t.tuyen_tour or "").strip():
+                    t.tuyen_tour = rt[:256]
+                    route_n += 1
+            elif clear_unmatched:
+                if (t.thi_truong or "").strip():
+                    t.thi_truong = ""
+                    market_n += 1
+                if (t.tuyen_tour or "").strip():
+                    t.tuyen_tour = ""
+                    route_n += 1
             fixed_link = normalize_tour_link(t.link_url)
             if fixed_link != (t.link_url or ""):
                 t.link_url = fixed_link
                 link_n += 1
         db.commit()
+        processed += len(batch)
+        if progress_cb:
+            progress_cb(processed, f"Phân loại {processed} tour…")
+
     try:
         from compare_cache import invalidate_compare_cache
+
         invalidate_compare_cache()
     except Exception:
         pass
-    return {"market_updated": market_n, "route_updated": route_n, "links_repaired": link_n}
+    return {"market_updated": market_n, "route_updated": route_n, "links_repaired": link_n, "tours_scanned": processed}
+
+
+def apply_classification_for_keywords(db, keywords: list[str]) -> dict:
+    """Sau Gán rule — chỉ quét tour có thể khớp keyword mới."""
+    kws = [k.strip().lower() for k in keywords if k and str(k).strip()]
+    if not kws:
+        return apply_classification_rules_to_tours(db, clear_unmatched=False)
+    return apply_classification_rules_to_tours(
+        db,
+        keyword_filter=kws,
+        clear_unmatched=False,
+    )
 
 
 def resolve_thi_truong(
@@ -990,14 +1112,11 @@ def resolve_market_and_route(
     Thị trường chỉ lấy từ rule tuyến — không dùng keyword thị trường riêng.
     """
     _ = market_pairs  # legacy callers
-    combined = f"{ten_tour or ''} {lich_trinh or ''}".lower().strip()
-    if not combined:
-        return "", "", False
-    rules = route_rules if route_rules is not None else _load_route_rules()
-    for mkt, route, kws in rules:
-        if all(kw in combined for kw in kws):
-            return mkt, route, True
-    return "", "", False
+    if route_rules is not None:
+        from route_rule_matcher import RouteRuleMatcher
+
+        return RouteRuleMatcher(route_rules).resolve(ten_tour, lich_trinh)
+    return get_route_rule_matcher().resolve(ten_tour, lich_trinh)
 
 
 def classify_route_fields(ten_tour: str, lich_trinh: str = "") -> tuple[str, str]:

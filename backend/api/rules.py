@@ -140,8 +140,14 @@ def _try_push_route(db: Session) -> str | None:
         return f"Cảnh báo: không ghi được Sheet tuyến tour — {e}"
 
 
-def _auto_apply_tours(db: Session, enabled: bool, scope: str = "all") -> dict | None:
-    """Áp dụng quy tắc lên tour — chạy nền (~8k tour, tránh timeout HTTP)."""
+def _auto_apply_tours(
+    db: Session,
+    enabled: bool,
+    scope: str = "all",
+    *,
+    keywords: list[str] | None = None,
+) -> dict | None:
+    """Áp dụng quy tắc lên tour — chạy nền. keywords → chỉ quét tour liên quan (sau Gán)."""
     if not enabled:
         return None
     import logging
@@ -155,7 +161,12 @@ def _auto_apply_tours(db: Session, enabled: bool, scope: str = "all") -> dict | 
         session = SessionLocal()
         try:
             if scope in ("market", "route", "all"):
-                apply_classification_rules_to_tours(session)
+                from classification import apply_classification_for_keywords, apply_classification_rules_to_tours
+
+                if keywords:
+                    apply_classification_for_keywords(session, keywords)
+                else:
+                    apply_classification_rules_to_tours(session)
             elif scope == "company":
                 apply_company_aliases_to_tours(session)
             elif scope == "departure":
@@ -174,7 +185,10 @@ def _auto_apply_tours(db: Session, enabled: bool, scope: str = "all") -> dict | 
             session.close()
 
     threading.Thread(target=_work, daemon=True, name=f"apply-rules-{scope}").start()
-    return {"started": True, "message": "Đang áp dụng quy tắc lên tour (chạy nền)…"}
+    msg = "Đang áp dụng quy tắc lên tour (chạy nền)…"
+    if keywords:
+        msg = f"Đang áp dụng {len(keywords)} keyword lên tour liên quan…"
+    return {"started": True, "message": msg}
 
 
 def _start_apply_all_rules_background(*, recompute_phan_khuc: bool = False) -> dict:
@@ -193,9 +207,10 @@ def _start_apply_all_rules_background(*, recompute_phan_khuc: bool = False) -> d
             "message": "Đang áp dụng quy tắc lên tour (job trước chưa xong)…",
         }
 
+    started_at = datetime.now(timezone.utc).isoformat()
     set_apply_status({
         "running": True,
-        "started_at": datetime.now(timezone.utc).isoformat(),
+        "started_at": started_at,
         "message": "Đang áp dụng quy tắc…",
     })
 
@@ -203,8 +218,21 @@ def _start_apply_all_rules_background(*, recompute_phan_khuc: bool = False) -> d
         from database import SessionLocal
 
         session = SessionLocal()
+
+        def _progress(n: int, msg: str) -> None:
+            set_apply_status({
+                "running": True,
+                "started_at": started_at,
+                "progress": n,
+                "message": msg,
+            })
+
         try:
-            result = apply_all_rules_to_tours(session, recompute_phan_khuc=recompute_phan_khuc)
+            result = apply_all_rules_to_tours(
+                session,
+                recompute_phan_khuc=recompute_phan_khuc,
+                progress_cb=_progress,
+            )
             log.info("apply_all_rules_to_tours finished: %s", result.get("message"))
             set_apply_status({
                 "running": False,
@@ -225,7 +253,7 @@ def _start_apply_all_rules_background(*, recompute_phan_khuc: bool = False) -> d
     return {
         "started": True,
         "running": True,
-        "message": "Đã bắt đầu áp dụng quy tắc lên tour (chạy nền, ~1–3 phút). Refresh trang sau khi xong.",
+        "message": "Đã bắt đầu áp dụng quy tắc lên tour (một lượt quét, ~30s–2 phút).",
     }
 
 
@@ -895,7 +923,8 @@ def assign_classification(
 
     db.commit()
     invalidate_classification_cache()
-    tours = _auto_apply_tours(db, body.auto_apply, scope="all")
+    kws = [k.strip().lower() for k in route_kws.split(",") if k.strip()]
+    tours = _auto_apply_tours(db, body.auto_apply, scope="all", keywords=kws)
     return {
         "message": f"Đã gán tuyến {route} ({mk}) — keyword: {route_kws}",
         "thi_truong": mk,
@@ -914,6 +943,7 @@ def assign_classification_bulk(
     from classification import merge_keyword_csv
 
     added = 0
+    all_kws: list[str] = []
     for item in body.items:
         mk = item.thi_truong.strip()
         route = (item.tuyen_tour or mk).strip()
@@ -922,10 +952,11 @@ def assign_classification_bulk(
             raise HTTPException(400, "Mỗi dòng cần thị trường, tuyến và keyword tuyến")
         if _add_route_rule_row(db, mk, route, route_kws):
             added += 1
+        all_kws.extend(k.strip().lower() for k in route_kws.split(",") if k.strip())
 
     db.commit()
     invalidate_classification_cache()
-    tours = _auto_apply_tours(db, body.auto_apply, scope="all")
+    tours = _auto_apply_tours(db, body.auto_apply, scope="all", keywords=list(dict.fromkeys(all_kws)))
     n = len(body.items)
     return {
         "message": f"Đã gán {n} rule tuyến ({added} dòng mới)",
