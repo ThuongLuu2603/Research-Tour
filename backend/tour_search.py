@@ -185,26 +185,34 @@ def apply_search_filter(q: Query, search: str, *, use_rank: bool = False) -> Que
 
 
 def apply_keyword_prefilter(q: Query, keywords: list[str]) -> Query:
-    """Lọc tour có thể khớp rule — dùng bản bỏ dấu."""
+    """
+    Lọc tour có thể khớp rule.
+    ILIKE trên tên tour: keyword gốc (cô tô khớp «Cô Tô»).
+    ILIKE folded + FTS: keyword bỏ dấu (co to) khi đã backfill search_text_folded.
+    """
     from models import Tour
 
-    kws = [fold_vi(k) for k in keywords if k and str(k).strip()][:48]
-    kws = [k for k in kws if k]
-    if not kws:
+    raw_kws = [k.strip().lower() for k in keywords if k and str(k).strip()][:48]
+    if not raw_kws:
         return q
-    if is_postgres():
-        try:
-            combined = " ".join(kws)
-            return q.filter(
-                text("tours.search_tsv @@ plainto_tsquery('simple', :q)").bindparams(q=combined)
-            )
-        except Exception:
-            pass
+    folded_kws = list(dict.fromkeys(fold_vi(k) for k in raw_kws if fold_vi(k)))
+
     clauses = []
-    for kw in kws:
+    if is_postgres():
+        for fts_q in dict.fromkeys([" ".join(folded_kws), " ".join(raw_kws)]):
+            if fts_q.strip():
+                clauses.append(
+                    text("tours.search_tsv @@ plainto_tsquery('simple', :q)").bindparams(q=fts_q)
+                )
+    for kw in raw_kws:
         pat = f"%{kw}%"
-        clauses.append(Tour.search_text_folded.ilike(pat))
-        clauses.append(Tour.search_text.ilike(pat))
         clauses.append(Tour.ten_tour.ilike(pat))
         clauses.append(Tour.lich_trinh.ilike(pat))
+        clauses.append(Tour.search_text.ilike(pat))
+    for fk in folded_kws:
+        pat = f"%{fk}%"
+        clauses.append(Tour.search_text_folded.ilike(pat))
+        if fk not in raw_kws:
+            clauses.append(Tour.ten_tour.ilike(pat))
+            clauses.append(Tour.lich_trinh.ilike(pat))
     return q.filter(or_(*clauses))
