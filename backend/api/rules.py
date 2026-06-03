@@ -740,6 +740,17 @@ def apply_duration_rules_to_tours(_: User = Depends(require_admin), db: Session 
     return {"updated": updated, "message": f"Đã chuẩn hóa số ngày cho {updated} tour"}
 
 
+@router.get("/stats-exclusions")
+def list_stats_exclusions(_: User = Depends(require_admin)):
+    """Pattern tên tour bị loại khỏi KPI / compare (FIT placeholder)."""
+    from tour_stats_exclusions import all_exclusion_substrings
+
+    return {
+        "patterns": list(all_exclusion_substrings()),
+        "note": "Tour khớp bất kỳ pattern → không tính thống kê; vẫn hiện trên grid.",
+    }
+
+
 @router.get("/unmatched")
 def list_unmatched_rules(
     scope: str = Query(

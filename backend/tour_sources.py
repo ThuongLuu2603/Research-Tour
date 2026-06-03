@@ -38,5 +38,16 @@ def is_phantom_vietravel_on_catalog(t: Tour) -> bool:
 
 
 def filter_tours_for_market_compare(tours: list[Tour]) -> list[Tour]:
-    """Dataset compare: không FTG, không 'Vietravel' ảo trên catalog Main."""
-    return [t for t in tours if not is_phantom_vietravel_on_catalog(t)]
+    """Dataset compare: không FTG, không VTR ảo trên Main, không tour placeholder FIT."""
+    from tour_stats_exclusions import filter_tours_for_statistics
+
+    return filter_tours_for_statistics(
+        [t for t in tours if not is_phantom_vietravel_on_catalog(t)]
+    )
+
+
+def apply_analytics_tour_filters(q: Query) -> Query:
+    """Nguồn compare + loại tour placeholder FIT (SQL)."""
+    from tour_stats_exclusions import apply_stats_exclusion_query
+
+    return apply_stats_exclusion_query(apply_market_compare_source_filter(q))

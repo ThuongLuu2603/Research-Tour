@@ -464,10 +464,14 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
     tuyen_tour: dict[str, dict] = {}
     classify_gaps: dict[str, dict] = {}
 
+    from tour_stats_exclusions import is_stats_excluded_tour
+
     for t in tours:
         if vtr_only and not is_vietravel_tab(t):
             continue
         if getattr(t, "nguon", None) not in DB_CANONICAL_NGUON:
+            continue
+        if is_stats_excluded_tour(t):
             continue
         title = _tour_title_hint(t)
         if title and not is_market_rule_matched(

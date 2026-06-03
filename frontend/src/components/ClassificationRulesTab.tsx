@@ -121,6 +121,10 @@ export function ClassificationRulesTab({
 
   return (
     <div className="space-y-4">
+      <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+        Tour placeholder FIT (vd. «TẠM CHƯA CÓ GIÁ», «Đoàn Riêng») tự loại khỏi thống kê / so sánh — không cần gán quy tắc.
+      </p>
+
       <div className="card p-4 space-y-3 bg-primary-50/40 border-primary-100">
         <p className="text-sm font-medium text-primary-900">
           Gán một lần — thị trường + tuyến + keyword

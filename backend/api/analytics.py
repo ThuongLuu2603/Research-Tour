@@ -179,13 +179,13 @@ def price_stats(
 ):
     from market_analytics import build_price_analysis
 
-    from tour_sources import apply_market_compare_source_filter
+    from tour_sources import apply_analytics_tour_filters
 
     q = db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)
     if nguon:
         q = q.filter(Tour.nguon.in_(nguon))
     else:
-        q = apply_market_compare_source_filter(q)
+        q = apply_analytics_tour_filters(q)
     rows = build_price_analysis(q.all(), group_by)[:limit]
     return [PriceStatsItem(**r) for r in rows]
 
@@ -232,14 +232,16 @@ def market_intelligence(
 ):
     from market_analytics import build_market_intelligence
 
-    from tour_sources import apply_market_compare_source_filter
+    from tour_sources import apply_analytics_tour_filters, filter_tours_for_market_compare
 
     q = db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
     if nguon:
         q = q.filter(Tour.nguon.in_(nguon))
+        tours = filter_tours_for_market_compare(q.all())
     else:
-        q = apply_market_compare_source_filter(q)
-    return build_market_intelligence(q.all())
+        q = apply_analytics_tour_filters(q)
+        tours = q.all()
+    return build_market_intelligence(tours)
 
 
 @router.get("/competitor/{company}", response_model=dict)

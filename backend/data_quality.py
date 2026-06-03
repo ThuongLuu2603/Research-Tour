@@ -5,12 +5,14 @@ from sqlalchemy.orm import Session
 
 from compare_engine import deduplicate_tours, is_vietravel
 from models import ScrapeJob, Tour
+from tour_stats_exclusions import is_stats_excluded_tour
 
 
 def compute_data_quality(db: Session, tours: list[Tour] | None = None) -> dict:
     if tours is None:
         tours = db.query(Tour).all()
-    tours = deduplicate_tours(tours)
+    stats_excluded = sum(1 for t in tours if is_stats_excluded_tour(t))
+    tours = deduplicate_tours([t for t in tours if not is_stats_excluded_tour(t)])
     total = len(tours) or 1
 
     unclassified = sum(
@@ -34,6 +36,7 @@ def compute_data_quality(db: Session, tours: list[Tour] | None = None) -> dict:
 
     return {
         "total_tours": len(tours),
+        "stats_excluded_count": stats_excluded,
         "vtr_tours": vtr,
         "unclassified_count": unclassified,
         "unclassified_pct": round(unclassified / total * 100, 1),
