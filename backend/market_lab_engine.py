@@ -337,6 +337,14 @@ def build_weekly_brief(
             "phase": r.phase,
             "avg_gap_pct": r.avg_gap_pct,
             "freq_gap_pct": r.avg_freq_gap_pct,
+            # Số liệu đầy đủ cho weekly brief card
+            "vtr_tour_count": r.vtr_tour_count,
+            "market_tour_count": r.market_tour_count,
+            "market_departures_monthly": round(r.market_departures_monthly, 1),
+            "vtr_departures_monthly": round(r.vtr_departures_monthly, 1),
+            "market_price_day": r.market_price_day,
+            "competitor_count": r.competitor_count,
+            "opportunity_score": round(r.opportunity_score, 1),
         })
 
     return {

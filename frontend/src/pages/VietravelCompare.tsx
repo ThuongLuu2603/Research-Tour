@@ -4,20 +4,76 @@ import { useQuery } from "@tanstack/react-query";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine,
   ScatterChart, Scatter, ZAxis, Legend, CartesianGrid,
+  LineChart, Line,
 } from "recharts";
 import {
   getCompareSummary, getCompareSegments, getSegmentDetail,
   getCompareCompetitors, getCompareCompetitorDetail,
   getCompareFilterOptions, getCompareClassificationGaps, getCompareWeekdayDistribution,
   getCoverageMap, getMatcherSuggest, getMatcherDetail,
+  getCompareSegmentHistory,
   CompareSegment,
 } from "@/lib/api";
 import { fmtVND, cn } from "@/lib/utils";
 import { COL, GLOSSARY } from "@/lib/glossary";
 import { InfoTip, PageTitle, ThTip } from "@/components/InfoTip";
 import {
-  TrendingDown, TrendingUp, Minus, ExternalLink, Calendar, Building2, ArrowUpDown,
+  TrendingDown, TrendingUp, Minus, ExternalLink, Calendar, Building2, ArrowUpDown, Download,
 } from "lucide-react";
+
+// ── CSV export helper ────────────────────────────────────────────────────────
+function exportSegmentsCsv(items: CompareSegment[]) {
+  const header = [
+    "Thị trường","Tuyến tour","Điểm KH","Số ngày","Giai đoạn VTR",
+    "Giá TB VTR","Giá rẻ nhất VTR","Giá TT","Giá so sánh","Giá rẻ nhất TT",
+    "Chênh %","Vị thế",
+  ].join(",");
+  const rows = items.map((s) => [
+    s.thi_truong, s.tuyen_tour, s.diem_kh,
+    s.so_ngay, s.vtr_comparison_period ?? "",
+    s.vietravel_avg_price ?? "", s.vietravel_min_price ?? "",
+    s.market_total_price ?? "", s.comparison_price ?? "", s.market_min_price ?? "",
+    s.gap_pct ?? "", s.position ?? "",
+  ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","));
+  const csv = [header, ...rows].join("\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `so-sanh-vtr-${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// ── Mini chart lịch sử gap_pct ────────────────────────────────────────────────
+function SegmentHistoryMini({ segmentKey }: { segmentKey: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["segment-history", segmentKey],
+    queryFn: () => getCompareSegmentHistory(segmentKey, 30),
+    staleTime: 300_000,
+    enabled: !!segmentKey,
+  });
+  if (isLoading) return <div className="h-20 flex items-center justify-center text-xs text-gray-400">Đang tải…</div>;
+  if (!data?.points?.length) return <div className="h-10 flex items-center text-xs text-gray-400">Chưa có lịch sử (cần ≥2 snapshot hàng ngày)</div>;
+  return (
+    <div>
+      <p className="text-xs font-medium text-gray-600 mb-1 flex items-center gap-1">
+        <Calendar size={11} /> Biến động chênh giá (%) — {data.points.length} ngày
+      </p>
+      <ResponsiveContainer width="100%" height={80}>
+        <LineChart data={data.points} margin={{ top: 2, right: 4, bottom: 0, left: 0 }}>
+          <XAxis dataKey="date" tick={false} />
+          <YAxis tick={{ fontSize: 9 }} width={30} tickFormatter={(v) => `${v}%`} />
+          <Tooltip labelFormatter={(v) => `Ngày ${v}`} formatter={(v: number) => [`${v}%`, "Chênh giá"]} />
+          <ReferenceLine y={0} stroke="#94a3b8" strokeDasharray="3 3" />
+          <Line type="monotone" dataKey="gap_pct" stroke="#dc2626" strokeWidth={1.5} dot={false} />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
 
 type Tab = "overview" | "price" | "frequency" | "competitors" | "coverage" | "matcher";
 
@@ -696,10 +752,20 @@ export default function VietravelCompare() {
       {tab === "price" && (
         <div className="space-y-3">
           <SegmentsErrorBanner />
-          <h3 className="font-semibold mb-2 text-sm inline-flex items-center">
-            Bảng so sánh giá ({segmentsLoading ? "…" : segments?.total ?? summary?.segments_with_vietravel ?? 0} nhóm)
-            <InfoTip text={GLOSSARY.giaSoSanh} />
-          </h3>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h3 className="font-semibold text-sm inline-flex items-center">
+              Bảng so sánh giá ({segmentsLoading ? "…" : segments?.total ?? summary?.segments_with_vietravel ?? 0} nhóm)
+              <InfoTip text={GLOSSARY.giaSoSanh} />
+            </h3>
+            <button
+              type="button"
+              className="btn-secondary text-xs flex items-center gap-1"
+              disabled={!segments?.items?.length}
+              onClick={() => exportSegmentsCsv(segments?.items ?? [])}
+            >
+              <Download size={13} /> Xuất CSV
+            </button>
+          </div>
           <PriceTable />
           <UnmatchedPanel />
         </div>
@@ -797,22 +863,32 @@ export default function VietravelCompare() {
                 {[
                   [COL.congTy, GLOSSARY.congTy], ["Nhóm trùng", GLOSSARY.segment], [COL.sanPham, GLOSSARY.tenTour],
                   [COL.tbDoanThang, GLOSSARY.tbDoanThang], [COL.giaTbNgay, GLOSSARY.giaTbNgay],
+                  ["Xu hướng TT", "Avg supply_delta_pct tuyến đối thủ tham gia — TT đang tăng hay giảm cung"],
                 ].map(([h, tip]) => (
                   <th key={h} className="px-2 py-2 text-left"><ThTip label={h} tip={tip} /></th>
                 ))}
               </tr></thead>
               <tbody>
-                {(competitors?.items ?? []).map((c) => (
-                  <tr key={c.cong_ty}
-                    className={cn("border-t cursor-pointer hover:bg-blue-50", selectedCompetitor === c.cong_ty && "bg-blue-50")}
-                    onClick={() => setSelectedCompetitor(c.cong_ty)}>
-                    <td className="px-2 py-2 font-medium">{c.cong_ty}</td>
-                    <td className="px-2 py-2">{c.overlap_segments}</td>
-                    <td className="px-2 py-2">{c.tour_count}</td>
-                    <td className="px-2 py-2">{Math.round(c.freq_monthly / Math.max(c.tour_count, 1))}</td>
-                    <td className="px-2 py-2">{fmtVND(c.avg_price_day)}</td>
-                  </tr>
-                ))}
+                {(competitors?.items ?? []).map((c: any) => {
+                  const trend: number | null = c.market_trend ?? null;
+                  return (
+                    <tr key={c.cong_ty}
+                      className={cn("border-t cursor-pointer hover:bg-blue-50", selectedCompetitor === c.cong_ty && "bg-blue-50")}
+                      onClick={() => setSelectedCompetitor(c.cong_ty)}>
+                      <td className="px-2 py-2 font-medium">{c.cong_ty}</td>
+                      <td className="px-2 py-2">{c.overlap_segments}</td>
+                      <td className="px-2 py-2">{c.tour_count}</td>
+                      <td className="px-2 py-2">{Math.round(c.freq_monthly / Math.max(c.tour_count, 1))}</td>
+                      <td className="px-2 py-2">{fmtVND(c.avg_price_day)}</td>
+                      <td className="px-2 py-2">
+                        {trend == null ? <span className="text-gray-400 text-xs">—</span>
+                          : trend >= 5 ? <span className="text-emerald-600 text-xs flex items-center gap-0.5"><TrendingUp size={11} />+{trend}%</span>
+                          : trend <= -5 ? <span className="text-red-600 text-xs flex items-center gap-0.5"><TrendingDown size={11} />{trend}%</span>
+                          : <span className="text-gray-500 text-xs flex items-center gap-0.5"><Minus size={11} />{trend}%</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -908,24 +984,34 @@ export default function VietravelCompare() {
               </table>
             </div>
             <div className="card overflow-auto max-h-[420px]">
-              <div className="px-4 py-3 border-b font-semibold text-sm text-amber-800">Cơ hội khoảng trống — VTR chưa có SP</div>
+              <div className="px-4 py-3 border-b font-semibold text-sm text-amber-800">
+                Cơ hội khoảng trống — VTR chưa có SP
+                <span className="ml-2 text-[10px] font-normal text-amber-600">(sort theo Score cơ hội)</span>
+              </div>
               <table className="w-full text-xs">
                 <thead className="bg-amber-50 sticky top-0"><tr>
-                  {[COL.thiTruong, COL.tuyenTour, "SP đối thủ", "Số ĐT"].map((h) => (
+                  {[COL.thiTruong, COL.tuyenTour, "Đoàn TT/tháng", "SP ĐT", "Số ĐT", "Score", "Giá/ngày TT"].map((h) => (
                     <th key={h} className="px-2 py-2 text-left">{h}</th>
                   ))}
                 </tr></thead>
                 <tbody>
                   {(coverage?.gaps ?? []).map((g: any) => (
-                    <tr key={`${g.thi_truong}-${g.tuyen_tour}`} className="border-t">
+                    <tr key={`${g.thi_truong}-${g.tuyen_tour}`} className="border-t hover:bg-amber-50/50">
                       <td className="px-2 py-2">{g.thi_truong}</td>
                       <td className="px-2 py-2 font-medium">{g.tuyen_tour}</td>
+                      <td className="px-2 py-2 font-semibold text-emerald-700">{g.market_departures_monthly ?? "—"}</td>
                       <td className="px-2 py-2">{g.market_tours}</td>
                       <td className="px-2 py-2">{g.companies}</td>
+                      <td className="px-2 py-2">
+                        {g.opportunity_score != null
+                          ? <span className="font-bold text-amber-800">{g.opportunity_score}</span>
+                          : "—"}
+                      </td>
+                      <td className="px-2 py-2">{g.market_price_day ? fmtVND(g.market_price_day) : "—"}</td>
                     </tr>
                   ))}
                   {!(coverage?.gaps?.length) && (
-                    <tr><td colSpan={4} className="px-4 py-8 text-center text-gray-400">Không có khoảng trống lớn</td></tr>
+                    <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">Không có khoảng trống lớn</td></tr>
                   )}
                 </tbody>
               </table>
@@ -1022,6 +1108,10 @@ export default function VietravelCompare() {
             <div className="bg-gray-50 rounded-lg p-3"><span className="text-xs text-gray-600 inline-flex items-center">{COL.giaSoSanh}<InfoTip text={GLOSSARY.giaSoSanh} /></span><p className="font-bold">{fmtVND(detail.segment?.comparison_price)}</p></div>
             <div className="bg-blue-50 rounded-lg p-3"><span className="text-xs text-blue-600 inline-flex items-center">VTR {COL.tbDoanThang}<InfoTip text={GLOSSARY.tbDoanThang} /></span><p className="font-bold">{detail.segment?.vtr_avg_departures_per_month ?? detail.segment?.vietravel_freq_monthly}</p></div>
             <div className="bg-gray-50 rounded-lg p-3"><span className="text-xs text-gray-600 inline-flex items-center">{COL.chenhPct}<InfoTip text={GLOSSARY.chenhGia} /></span><p className="font-bold"><GapBadge pct={detail.segment?.gap_pct} /></p></div>
+          </div>
+          {/* Mini chart lịch sử chênh giá */}
+          <div className="bg-gray-50 rounded-lg p-3 mb-4">
+            <SegmentHistoryMini segmentKey={selectedKey} />
           </div>
           {(detail.companies ?? []).map((co: any) => (
             <div key={co.cong_ty} className="mb-4">

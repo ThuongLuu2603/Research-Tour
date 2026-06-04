@@ -934,6 +934,39 @@ export const getMarketLabSupplyCalendar = async (thi_truong: string, tuyen_tour:
   };
 };
 
+export interface RouteHistoryPoint {
+  date: string;
+  market_dep: number;
+  vtr_dep: number;
+  gap_pct: number | null;
+  freq_gap_pct: number | null;
+  market_price_day: number | null;
+  phase: string;
+  opportunity_score: number;
+}
+
+export const getMarketLabRouteHistory = async (route_key: string, days = 30) => {
+  const p = new URLSearchParams({ route_key, days: String(days) });
+  const { data } = await marketLabApi.get(`/market-lab/route-history?${p}`);
+  return data as { route_key: string; days: number; points: RouteHistoryPoint[] };
+};
+
+export interface SegmentHistoryPoint {
+  date: string;
+  gap_pct: number | null;
+  freq_gap_pct: number | null;
+  vtr_price: number | null;
+  market_price: number | null;
+  vtr_dep: number | null;
+  market_dep: number | null;
+}
+
+export const getCompareSegmentHistory = async (segment_key: string, days = 30) => {
+  const p = new URLSearchParams({ segment_key, days: String(days) });
+  const { data } = await compareApi.get(`/compare/segment-history?${p}`);
+  return data as { segment_key: string; points: SegmentHistoryPoint[] };
+};
+
 // ── Workspaces ────────────────────────────────────────────────────────────────
 
 export interface WorkspaceInfo {

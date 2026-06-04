@@ -349,6 +349,7 @@ def list_competitors(
     ctx = get_compare_context(db, thi_truong)
     segments = ctx.segments
     stats: dict[str, dict] = {}
+    company_routes: dict[str, set] = defaultdict(set)
 
     for seg in segments:
         for e in seg.market_entries:
@@ -371,7 +372,23 @@ def list_competitors(
     for seg in segments:
         for e in seg.entries:
             if not e.is_vietravel:
-                seg_companies[resolve_company_name(e.cong_ty)].add(seg.key)
+                co = resolve_company_name(e.cong_ty)
+                seg_companies[co].add(seg.key)
+                # Route key cho momentum lookup
+                from market_lab_engine import make_route_key
+                company_routes[co].add(make_route_key(seg.thi_truong, seg.tuyen_tour))
+
+    # Market trend cho mỗi đối thủ — avg supply_delta_pct của các tuyến họ tham gia
+    market_trend: dict[str, float | None] = {}
+    try:
+        from market_lab_cache import load_momentum_map
+        momentum_map = load_momentum_map(db)
+        for co, routes_set in company_routes.items():
+            deltas = [momentum_map.get(rk, {}).get("supply_delta_pct") for rk in routes_set]
+            deltas = [d for d in deltas if d is not None]
+            market_trend[co] = round(sum(deltas) / len(deltas), 1) if deltas else None
+    except Exception:
+        pass
 
     rows = []
     for co, s in stats.items():
@@ -382,6 +399,7 @@ def list_competitors(
             "overlap_segments": len(seg_companies.get(co, set())),
             "freq_monthly": round(s["freq_monthly"], 1),
             "avg_price_day": avg_day,
+            "market_trend": market_trend.get(co),  # avg supply_delta_pct tuyến đang cạnh tranh
         })
     rows.sort(key=lambda x: (-x["overlap_segments"], -x["tour_count"]))
     return {"items": rows[:limit], "total": len(rows)}
