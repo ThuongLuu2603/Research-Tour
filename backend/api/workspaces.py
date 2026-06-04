@@ -359,12 +359,20 @@ def copy_overrides_from_workspace(
 def export_workspace_csv(
     workspace_id: int,
     search: str = Query(""),
+    thi_truong: list[str] = Query([]),
+    tuyen_tour: list[str] = Query([]),
+    cong_ty: list[str] = Query([]),
+    nguon: list[str] = Query([]),
+    flagged: bool | None = Query(None),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     ws = get_workspace_or_404(db, workspace_id)
     require_permission(db, ws, user, "view")
-    q = _apply_tour_filters(db.query(Tour), search, [], [], [], [], None)
+    from data_sources import DB_CANONICAL_NGUON
+
+    q = _apply_tour_filters(db.query(Tour), search, thi_truong, tuyen_tour, cong_ty, nguon, flagged)
+    q = q.filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
     tours = q.limit(5000).all()
     overrides = _override_map(db, workspace_id, [t.id for t in tours])
     rows = [merge_tour(t, overrides.get(t.id)).to_dict() for t in tours]

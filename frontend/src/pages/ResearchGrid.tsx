@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getFilterOptions, Tour,
-  listWorkspaces, getWorkspaceTours, patchWorkspaceTour, bulkPatchWorkspaceTours,
+  listWorkspaces, getWorkspaceTours, downloadWorkspaceCsv, patchWorkspaceTour, bulkPatchWorkspaceTours,
   shareWorkspace, listWorkspaceMembers, revokeWorkspaceShare, copyWorkspaceOverrides,
   WorkspaceInfo,
 } from "@/lib/api";
@@ -67,6 +67,7 @@ export default function ResearchGrid() {
   const [shareUsername, setShareUsername] = useState("");
   const [sharePerm, setSharePerm] = useState<"view" | "edit" | "copy">("view");
   const [copyFromId, setCopyFromId] = useState("");
+  const [exporting, setExporting] = useState(false);
 
   const { data: workspaces } = useQuery({ queryKey: ["workspaces"], queryFn: listWorkspaces, staleTime: 60000 });
   const activeWs = workspaces?.find((w) => w.id === workspaceId) ?? workspaces?.[0];
@@ -152,9 +153,23 @@ export default function ResearchGrid() {
 
   const totalPages = Math.ceil((data?.total ?? 0) / PAGE_SIZE);
 
-  const handleExport = () => {
-    const token = localStorage.getItem("access_token");
-    window.open(`/api/workspaces/${workspaceId}/export/csv?search=${encodeURIComponent(search)}&access_token=${token}`, "_blank");
+  const handleExport = async () => {
+    if (!workspaceId || exporting) return;
+    setExporting(true);
+    try {
+      await downloadWorkspaceCsv(workspaceId, {
+        search,
+        thi_truong: selMarkets,
+        cong_ty: selCompanies,
+        nguon: selNguon,
+        flagged: onlyFlagged || undefined,
+      });
+      setToast("Đã tải CSV");
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : "Lỗi tải CSV");
+    } finally {
+      setExporting(false);
+    }
   };
 
   const toggleFilter = useCallback((arr: string[], set: (v: string[]) => void, val: string) => {
@@ -195,8 +210,8 @@ export default function ResearchGrid() {
               <Users size={14} /> Chia sẻ
             </button>
           )}
-          <button onClick={handleExport} className="btn-secondary text-xs">
-            <Download size={14} /> CSV
+          <button onClick={handleExport} disabled={!workspaceId || exporting} className="btn-secondary text-xs">
+            <Download size={14} /> {exporting ? "Đang tải…" : "CSV"}
           </button>
         </div>
       </div>

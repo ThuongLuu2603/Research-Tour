@@ -948,15 +948,39 @@ export const listWorkspaces = async (): Promise<WorkspaceInfo[]> => {
   return data;
 };
 
-export const getWorkspaceTours = async (workspaceId: number, filters: WorkspaceTourFilters = {}) => {
+function workspaceTourQueryParams(filters: WorkspaceTourFilters = {}) {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([k, v]) => {
     if (v === undefined || v === null) return;
     if (Array.isArray(v)) v.forEach((item) => params.append(k, item));
     else params.append(k, String(v));
   });
-  const { data } = await api.get(`/workspaces/${workspaceId}/tours?${params}`);
+  return params;
+}
+
+export const getWorkspaceTours = async (workspaceId: number, filters: WorkspaceTourFilters = {}) => {
+  const { data } = await api.get(`/workspaces/${workspaceId}/tours?${workspaceTourQueryParams(filters)}`);
   return data as { items: Tour[]; total: number; page: number; page_size: number; workspace_id: number };
+};
+
+export const downloadWorkspaceCsv = async (workspaceId: number, filters: WorkspaceTourFilters = {}) => {
+  const { page: _p, page_size: _ps, sort_by: _sb, sort_dir: _sd, ...exportFilters } = filters;
+  const response = await api.get(`/workspaces/${workspaceId}/export/csv?${workspaceTourQueryParams(exportFilters)}`, {
+    responseType: "blob",
+  });
+  const blob = response.data as Blob;
+  if (blob.type.includes("json")) {
+    const err = JSON.parse(await blob.text()) as { detail?: string };
+    throw new Error(err.detail || "Lỗi tải CSV");
+  }
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `workspace_${workspaceId}_tours.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
 };
 
 export const patchWorkspaceTour = async (workspaceId: number, tourId: number, patch: Partial<Tour>) => {
