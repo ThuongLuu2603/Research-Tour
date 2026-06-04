@@ -343,20 +343,73 @@ export function ClassificationRulesTab({
   return (
     <div className="grid lg:grid-cols-[3fr_2fr] gap-4 items-start">
 
-      {/* ════════════════ LEFT — Bảng quy tắc tuyến ════════════════════════ */}
+      {/* ══════ LEFT — Thêm rule + Preview + Bảng rules hiện có ══════════════ */}
       <div className="space-y-3">
-        <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-          <strong>Ưu tiên khớp:</strong> (1) thị trường <strong>trên xuống</strong> — kéo thả để sắp xếp;
-          (2) trong mỗi TT, dòng có <strong>nhiều từ AND</strong> hơn được thử trước;
-          (3) cùng tuyến, nhiều dòng = OR. Bấm tên TT để mở/đóng danh sách tuyến.
-        </p>
 
-        {routeKeywordConflicts.size > 0 && (
-          <p className="text-sm text-red-800 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-            {routeKeywordConflicts.size} từ keyword trùng nhiều tuyến (đỏ) — sort_order nhỏ hơn thắng.
+        {/* 1. Quick-add form — việc đầu tiên khi muốn tạo rule mới */}
+        <div className="card p-4 space-y-3 bg-primary-50/40 border-primary-100">
+          <p className="text-sm font-medium text-primary-900">
+            Thêm rule tuyến mới
+            <InfoTip text="Mỗi dòng = một điều kiện (OR). Trong dòng: dấu phẩy = AND. Thị trường chỉ là nhóm lưu trữ, không cần keyword TT." />
           </p>
-        )}
+          <div className="space-y-2">
+            <input className="input text-sm w-full" placeholder="Thị trường (nhóm)" value={qMarket} onChange={(e) => setQMarket(e.target.value)} onKeyDown={keepInputKeys} list="classify-market-list" />
+            <input className="input text-sm w-full" placeholder="Tên tuyến tour" value={qRoute} onChange={(e) => setQRoute(e.target.value)} onKeyDown={keepInputKeys} list={qMarket.trim() ? routeDatalistId(qMarket.trim()) : undefined} />
+            <input className="input text-sm font-mono w-full" placeholder="Keyword tuyến (vd: kanazawa, osaka)" value={qRouteKw} onChange={(e) => setQRouteKw(e.target.value)} onKeyDown={keepInputKeys} />
+          </div>
+          <div className="flex flex-wrap gap-2 items-center">
+            <button type="button" onClick={() => void quickAdd()} disabled={!qMarket.trim() || !qRouteKw.trim() || quickAdding || assigning} className="btn-primary text-sm disabled:opacity-60">
+              <Plus size={14} className={quickAdding ? "animate-pulse" : ""} />
+              {quickAdding ? "Đang áp dụng…" : "Thêm & áp dụng"}
+            </button>
+            <button type="button" onClick={() => seedRouteDefaults().then((r) => onAfterSaved(r.message || "Đã import tuyến")).catch(onError)} className="btn-secondary text-sm">
+              <Database size={14} /> Import mặc định
+            </button>
+          </div>
+          {actionFeedback && (
+            <p className={cn("text-sm px-3 py-2 rounded-lg border",
+              actionFeedback.kind === "loading" && "text-amber-900 bg-amber-50 border-amber-200",
+              actionFeedback.kind === "ok" && "text-green-800 bg-green-50 border-green-200",
+              actionFeedback.kind === "err" && "text-red-800 bg-red-50 border-red-200",
+            )} role="status">{actionFeedback.text}</p>
+          )}
+        </div>
 
+        {/* 2. Preview keyword — test ngay sau khi nhập keyword */}
+        <div className="card p-4 border-dashed border-2 border-blue-200 bg-blue-50/40">
+          <p className="text-sm font-medium text-blue-900 mb-2 flex items-center gap-2">
+            <Search size={14} /> Test keyword trước khi lưu
+          </p>
+          <div className="flex gap-2 items-center flex-wrap">
+            <input className="input text-sm font-mono flex-1 min-w-[160px]" placeholder="bangkok, osaka — phẩy = AND"
+              value={previewKw} onChange={(e) => setPreviewKw(e.target.value)} />
+            {previewFetching && <span className="text-xs text-blue-600 animate-pulse">Đang tìm…</span>}
+            {previewResult && !previewFetching && (
+              <span className={cn("text-sm font-bold", previewResult.tour_count > 0 ? "text-blue-900" : "text-gray-500")}>
+                {previewResult.tour_count} tour match
+              </span>
+            )}
+          </div>
+          {previewResult && previewResult.samples.length > 0 && (
+            <div className="mt-2 max-h-32 overflow-auto space-y-1">
+              {previewResult.samples.map((t) => (
+                <div key={t.id} className="text-xs bg-white rounded px-2 py-1 border border-blue-100 flex items-start gap-2">
+                  <span className="text-blue-700 shrink-0 font-mono">{t.thi_truong || "?"}</span>
+                  <span className="flex-1 truncate text-gray-800" title={t.ten_tour}>{t.ten_tour}</span>
+                  {t.tuyen_tour && <span className="text-gray-400 shrink-0 text-[10px]">{t.tuyen_tour}</span>}
+                </div>
+              ))}
+              {previewResult.tour_count > previewResult.samples.length && (
+                <p className="text-[10px] text-blue-600 px-1">…và {previewResult.tour_count - previewResult.samples.length} tour khác</p>
+              )}
+            </div>
+          )}
+          {previewResult && previewResult.tour_count === 0 && previewDebouncedKw.length >= 2 && (
+            <p className="text-xs text-gray-400 mt-1">Không có tour nào chứa tất cả keyword này.</p>
+          )}
+        </div>
+
+        {/* 3. Route rules table — tham chiếu rules đang có */}
         <div className="card overflow-auto" style={{ maxHeight: "calc(100vh - 260px)" }}>
           <p className="px-3 py-2 text-xs font-semibold text-gray-600 bg-gray-50 sticky top-0 z-10 border-b flex items-center justify-between gap-2">
             <span className="inline-flex items-center gap-1">
@@ -490,89 +543,19 @@ export function ClassificationRulesTab({
       </div>
       {/* ════ END LEFT ════ */}
 
-      {/* ════════════════ RIGHT — Thêm rule + Preview + Chưa khớp ══════════ */}
+      {/* ══════ RIGHT — Giải quyết Tour Chưa Khớp ══════════════════════════ */}
       <div className="space-y-3">
 
-        {/* Preview keyword */}
-        <div className="card p-4 border-dashed border-2 border-blue-200 bg-blue-50/40">
-          <p className="text-sm font-medium text-blue-900 mb-2 flex items-center gap-2">
-            <Search size={14} /> Test keyword trước khi lưu rule
-          </p>
-          <div className="flex gap-2 items-center flex-wrap">
-            <input
-              className="input text-sm font-mono flex-1 min-w-[160px]"
-              placeholder="bangkok, osaka — phẩy = AND"
-              value={previewKw}
-              onChange={(e) => setPreviewKw(e.target.value)}
-            />
-            {previewFetching && <span className="text-xs text-blue-600 animate-pulse">Đang tìm…</span>}
-            {previewResult && !previewFetching && (
-              <span className={cn("text-sm font-bold", previewResult.tour_count > 0 ? "text-blue-900" : "text-gray-500")}>
-                {previewResult.tour_count} tour match
-              </span>
-            )}
-          </div>
-          {previewResult && previewResult.samples.length > 0 && (
-            <div className="mt-2 max-h-36 overflow-auto space-y-1">
-              {previewResult.samples.map((t) => (
-                <div key={t.id} className="text-xs bg-white rounded px-2 py-1 border border-blue-100 flex items-start gap-2">
-                  <span className="text-blue-700 shrink-0 font-mono">{t.thi_truong || "?"}</span>
-                  <span className="flex-1 truncate text-gray-800" title={t.ten_tour}>{t.ten_tour}</span>
-                  {t.tuyen_tour && <span className="text-gray-400 shrink-0 text-[10px]">{t.tuyen_tour}</span>}
-                </div>
-              ))}
-              {previewResult.tour_count > previewResult.samples.length && (
-                <p className="text-[10px] text-blue-600 px-1">…và {previewResult.tour_count - previewResult.samples.length} tour khác</p>
-              )}
-            </div>
-          )}
-          {previewResult && previewResult.tour_count === 0 && previewDebouncedKw.length >= 2 && (
-            <p className="text-xs text-gray-400 mt-1">Không có tour nào chứa tất cả keyword này.</p>
+        {/* Ghi chú ưu tiên + conflict (nhỏ gọn, không chiếm nhiều chỗ) */}
+        <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 leading-relaxed">
+          Ưu tiên: <strong>thị trường trên xuống</strong> → nhiều từ AND hơn ưu tiên → cùng tuyến = OR.
+          {routeKeywordConflicts.size > 0 && (
+            <span className="ml-1 text-red-700 font-medium">⚠ {routeKeywordConflicts.size} keyword trùng tuyến</span>
           )}
         </div>
 
-        {/* Quick-add form */}
-        <div className="card p-4 space-y-3 bg-primary-50/40 border-primary-100">
-          <p className="text-sm font-medium text-primary-900">
-            Thêm rule tuyến
-            <InfoTip text="Mỗi dòng = một điều kiện (OR). Trong dòng: dấu phẩy = AND. Thị trường chỉ là nhóm lưu trữ, không cần keyword TT." />
-          </p>
-          <div className="space-y-2">
-            <input className="input text-sm w-full" placeholder="Thị trường (nhóm)" value={qMarket} onChange={(e) => setQMarket(e.target.value)} onKeyDown={keepInputKeys} list="classify-market-list" />
-            <input className="input text-sm w-full" placeholder="Tên tuyến tour" value={qRoute} onChange={(e) => setQRoute(e.target.value)} onKeyDown={keepInputKeys} list={qMarket.trim() ? routeDatalistId(qMarket.trim()) : undefined} />
-            <input className="input text-sm font-mono w-full" placeholder="Keyword tuyến (vd: kanazawa)" value={qRouteKw} onChange={(e) => setQRouteKw(e.target.value)} onKeyDown={keepInputKeys} />
-          </div>
-          <div className="flex flex-wrap gap-2 items-center">
-            <button
-              type="button"
-              onClick={() => void quickAdd()}
-              disabled={!qMarket.trim() || !qRouteKw.trim() || quickAdding || assigning}
-              className="btn-primary text-sm disabled:opacity-60"
-            >
-              <Plus size={14} className={quickAdding ? "animate-pulse" : ""} />
-              {quickAdding ? "Đang áp dụng…" : "Thêm & áp dụng"}
-            </button>
-            <button type="button" onClick={() => seedRouteDefaults().then((r) => onAfterSaved(r.message || "Đã import tuyến")).catch(onError)} className="btn-secondary text-sm">
-              <Database size={14} /> Import mặc định
-            </button>
-          </div>
-          {actionFeedback && (
-            <p
-              className={cn(
-                "text-sm px-3 py-2 rounded-lg border",
-                actionFeedback.kind === "loading" && "text-amber-900 bg-amber-50 border-amber-200",
-                actionFeedback.kind === "ok" && "text-green-800 bg-green-50 border-green-200",
-                actionFeedback.kind === "err" && "text-red-800 bg-red-50 border-red-200",
-              )}
-              role="status"
-            >
-              {actionFeedback.text}
-            </p>
-          )}
-        </div>
-
-        {/* Chưa khớp tuyến */}
-        <div className="card overflow-auto" style={{ maxHeight: "calc(100vh - 260px)" }}>
+        {/* Unmatched gaps — chiếm toàn bộ chiều cao còn lại */}
+        <div className="card overflow-auto" style={{ maxHeight: "calc(100vh - 200px)" }}>
           <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b bg-amber-50/80 sticky top-0 z-20">
             <span className="text-xs font-semibold text-amber-900">
               Chưa khớp tuyến {gapItems.length > 0 && `(${gapItems.length})`}
