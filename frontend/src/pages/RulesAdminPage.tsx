@@ -151,8 +151,12 @@ export default function RulesAdminPage() {
   const showErr = (e: unknown) =>
     setSyncMsg(String((e as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail || (e as Error)?.message || e));
 
-  const finishApplyPoll = (st: { running?: boolean; error?: string; message?: string; last_result?: unknown }) => {
+  const finishApplyPoll = (st: { running?: boolean; error?: string; message?: string; stale?: boolean; last_result?: unknown }) => {
     setApplying(false);
+    if (st.stale) {
+      setSyncMsg(st.message || "Job trước có thể đã treo — thử bấm lại.");
+      return;
+    }
     if (st.error) {
       setSyncMsg(st.error);
       return;
@@ -327,7 +331,7 @@ export default function RulesAdminPage() {
 
       <div className="card p-4 space-y-3 bg-slate-50">
         <p className="text-sm text-gray-600">
-          Mặc định chỉ quét <strong>tour mới</strong> hoặc tour <strong>đã đổi sau lần phân loại</strong> (nhanh hơn ~9k tour).
+          Mặc định quét tour mới hoặc tour đã đổi sau lần phân loại.
           Bật «Quét toàn bộ» khi đổi quy tắc lớn và cần áp lại mọi tour.
         </p>
         <div className="flex flex-wrap items-center justify-between gap-2">

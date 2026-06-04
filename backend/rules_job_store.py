@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 APPLY_STATUS_KEY = "rules_apply_status"
 APPLY_STALE_SECONDS = 45 * 60
+APPLY_PROGRESS_STALE_SECONDS = 12 * 60
 _lock = threading.Lock()
 _unmatched_cache: dict[tuple, tuple[float, Any]] = {}
 
@@ -34,26 +35,42 @@ def set_apply_status(data: dict) -> None:
         db.close()
 
 
+def _parse_iso_utc(value: str):
+    from datetime import datetime, timezone
+
+    t0 = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if t0.tzinfo is None:
+        t0 = t0.replace(tzinfo=timezone.utc)
+    return t0
+
+
 def _normalize_apply_status(raw: dict) -> dict:
     if not raw.get("running"):
-        return raw
-    started = raw.get("started_at")
-    if not started:
         return raw
     try:
         from datetime import datetime, timezone
 
-        t0 = datetime.fromisoformat(str(started).replace("Z", "+00:00"))
-        if t0.tzinfo is None:
-            t0 = t0.replace(tzinfo=timezone.utc)
-        age = (datetime.now(timezone.utc) - t0).total_seconds()
-        if age > APPLY_STALE_SECONDS:
-            return {
-                "running": False,
-                "stale": True,
-                "message": "Job áp dụng trước đó quá lâu (có thể treo) — bạn có thể chạy lại.",
-                "last_result": raw.get("last_result"),
-            }
+        now = datetime.now(timezone.utc)
+        progress_at = raw.get("progress_at")
+        if progress_at:
+            age = (now - _parse_iso_utc(progress_at)).total_seconds()
+            if age > APPLY_PROGRESS_STALE_SECONDS:
+                return {
+                    "running": False,
+                    "stale": True,
+                    "message": "Job áp dụng không cập nhật tiến độ >12 phút — có thể treo. Bấm «Áp dụng ngay» để chạy lại.",
+                    "last_result": raw.get("last_result"),
+                }
+        started = raw.get("started_at")
+        if started:
+            age = (now - _parse_iso_utc(started)).total_seconds()
+            if age > APPLY_STALE_SECONDS:
+                return {
+                    "running": False,
+                    "stale": True,
+                    "message": "Job áp dụng trước đó quá lâu — bạn có thể chạy lại.",
+                    "last_result": raw.get("last_result"),
+                }
     except Exception:
         pass
     return raw

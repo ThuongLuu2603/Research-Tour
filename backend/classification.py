@@ -225,16 +225,21 @@ def _apply_route_state_filter(q, route_state: str | None):
 
 
 def _apply_incremental_filter(q):
-    """Chỉ tour chưa phân loại ổn định hoặc dữ liệu đổi sau lần classify."""
-    from sqlalchemy import and_, func, or_
+    """Chỉ tour chưa qua «Áp dụng ngay» hoặc dữ liệu đổi sau lần đó (± vài giây commit)."""
+    from datetime import timedelta
+
+    from sqlalchemy import and_, or_
 
     from models import Tour
 
+    slack = timedelta(seconds=10)
     return q.filter(
         or_(
-            Tour.classification_rule_id.is_(None),
-            func.coalesce(func.trim(Tour.tuyen_tour), "") == "",
-            and_(Tour.classified_at.isnot(None), Tour.updated_at > Tour.classified_at),
+            Tour.classified_at.is_(None),
+            and_(
+                Tour.classified_at.isnot(None),
+                Tour.updated_at > Tour.classified_at + slack,
+            ),
         )
     )
 
@@ -977,6 +982,15 @@ def apply_departure_aliases_to_tours(db) -> int:
     return count
 
 
+def _stamp_tour_classified(t) -> None:
+    """Đánh dấu tour đã qua lượt apply — dùng cho incremental lần sau."""
+    from datetime import datetime
+
+    now = datetime.utcnow()
+    t.classified_at = now
+    t.updated_at = now
+
+
 def _apply_rule_result_to_tour(t, mk: str, rt: str, from_rule: bool, rule_id: int | None) -> tuple[int, int]:
     """Cập nhật thị trường/tuyến + metadata classify. Trả (market_n, route_n)."""
     from datetime import datetime
@@ -993,7 +1007,6 @@ def _apply_rule_result_to_tour(t, mk: str, rt: str, from_rule: bool, rule_id: in
             route_n += 1
         if rule_id and t.classification_rule_id != rule_id:
             t.classification_rule_id = rule_id
-        t.classified_at = datetime.utcnow()
     else:
         if (t.thi_truong or "").strip():
             t.thi_truong = ""
@@ -1033,7 +1046,7 @@ def apply_all_rules_to_tours(
     total = count_canonical_tours(db, incremental=incremental)
 
     for batch in _iter_canonical_tour_batches(db, incremental=incremental):
-        for t in batch:
+        for i, t in enumerate(batch):
             mk, rt, from_rule, rule_id = matcher.resolve(t.ten_tour or "", t.lich_trinh or "")
             m_delta, r_delta = _apply_rule_result_to_tour(t, mk, rt, from_rule, rule_id)
             market_n += m_delta
@@ -1058,6 +1071,15 @@ def apply_all_rules_to_tours(
             if days is not None and matched and (not t.so_ngay or float(t.so_ngay) != days):
                 t.so_ngay = days
                 dur_n += 1
+
+            _stamp_tour_classified(t)
+
+            if progress_cb and total and (i % 200 == 0 or i + 1 == len(batch)):
+                progress_cb(
+                    processed + i + 1,
+                    total,
+                    f"Đang quét {processed + i + 1}/{total} tour…",
+                )
 
         _commit_tour_batch(db, batch)
         processed += len(batch)
@@ -1148,6 +1170,7 @@ def apply_classification_rules_to_tours(
             if fixed_link != (t.link_url or ""):
                 t.link_url = fixed_link
                 link_n += 1
+            _stamp_tour_classified(t)
         _commit_tour_batch(db, batch)
         processed += len(batch)
         if progress_cb:

@@ -252,9 +252,12 @@ def _start_apply_all_rules_background(*, recompute_phan_khuc: bool = False, incr
         session = SessionLocal()
 
         def _progress(n: int, total: int, msg: str) -> None:
+            from datetime import datetime, timezone
+
             set_apply_status({
                 "running": True,
                 "started_at": started_at,
+                "progress_at": datetime.now(timezone.utc).isoformat(),
                 "progress": n,
                 "total": total,
                 "message": msg,

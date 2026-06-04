@@ -85,9 +85,10 @@ def enrich_market_and_route(
     progress: Callable[[int, str], None] | None = None,
 ) -> pd.DataFrame:
     """Phân loại thị trường + tuyến từ quy tắc DB (cùng Main/Vietravel); không khớp → để trống."""
-    from classification import _load_route_rules, resolve_market_and_route
+    from classification import _load_route_rules
+    from route_rule_matcher import RouteRuleMatcher
 
-    rules = _load_route_rules()
+    matcher = RouteRuleMatcher(_load_route_rules())
     out = df.copy()
     mk_list: list[str] = []
     rt_list: list[str] = []
@@ -95,10 +96,10 @@ def enrich_market_and_route(
     for i, (_, row) in enumerate(out.iterrows()):
         ten = str(row.get("ten_tour") or "")
         lich = str(row.get("lich_trinh") or "")
-        mk, rt, matched = resolve_market_and_route(ten, lich, route_rules=rules)
+        mk, rt, matched, _rid = matcher.resolve(ten, lich)
         mk_list.append(mk if matched else "")
         rt_list.append(rt if matched else "")
-        if progress and n and (i % 200 == 0 or i + 1 == n):
+        if progress and n and (i % 50 == 0 or i + 1 == n):
             pct = 70 + int(8 * (i + 1) / n)
             progress(pct, f"Phân loại thị trường/tuyến {i + 1}/{n}…")
     out["thi_truong"] = mk_list
