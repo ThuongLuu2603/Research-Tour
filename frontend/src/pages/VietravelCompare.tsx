@@ -411,21 +411,29 @@ export default function VietravelCompare() {
       .slice(0, 12);
   }, [segments?.items]);
 
-  // ── Chart 3: Scatter tần suất VTR vs TT (Tab Tần Suất KH) ─────────────────
+  // ── Scatter tần suất: VTR vs đối thủ có avg cao nhất (trừ VTR) ─────────────
   const MARKET_COLORS = ["#003580","#0057b8","#e53935","#00897b","#f57c00","#8e24aa","#43a047","#1565c0"];
   const freqScatter = useMemo(() => {
     const markets = Array.from(new Set((segments?.items ?? []).map((s) => s.thi_truong)));
     const colorMap = Object.fromEntries(markets.map((m, i) => [m, MARKET_COLORS[i % MARKET_COLORS.length]]));
     return (segments?.items ?? [])
-      .filter((s) => s.vietravel_freq_monthly != null && s.market_freq_monthly != null)
+      .filter((s) => s.vietravel_freq_monthly != null && (s.top_freq_competitor_departures ?? 0) > 0)
       .map((s) => ({
-        x: parseFloat((s.market_freq_monthly ?? 0).toFixed(1)),
+        // X = đoàn/tháng của đối thủ AVG cao nhất (top_freq_competitor), không phải tổng TT
+        x: parseFloat((s.top_freq_competitor_departures ?? 0).toFixed(1)),
         y: parseFloat(((s.vtr_avg_departures_per_month ?? s.vietravel_freq_monthly) || 0).toFixed(1)),
         label: s.tuyen_tour,
         diem_kh: s.diem_kh,
         thi_truong: s.thi_truong,
         segment_key: s.segment_key,
         fill: colorMap[s.thi_truong] ?? "#64748b",
+        // Thông tin thêm cho tooltip
+        competitorName: s.top_freq_competitor ?? "Đối thủ mạnh nhất",
+        vtrCount: (s as any).vietravel_count ?? (s as any).vtr_tour_count ?? "—",
+        vtrFreq: parseFloat((s.vietravel_freq_monthly || 0).toFixed(1)),
+        mktCount: (s as any).market_tour_count ?? "—",
+        mktFreq: parseFloat((s.market_freq_monthly || 0).toFixed(1)),
+        freqGap: s.freq_gap_pct,
       }));
   }, [segments?.items]);
 
@@ -1032,151 +1040,177 @@ export default function VietravelCompare() {
         <div className="space-y-4">
           <SegmentsErrorBanner />
 
-          {/* Chart 3: Scatter tần suất VTR (y) vs TT (x) */}
-          {freqScatter.length > 0 && (
+          {/* Layout 2 cột: Scatter (trái) + Bar gap % compact (phải) */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+            {/* Scatter: VTR vs đối thủ AVG cao nhất */}
+            {freqScatter.length > 0 && (
+              <div className="card p-5">
+                <h3 className="font-semibold mb-1 text-sm inline-flex items-center gap-1.5">
+                  VTR vs Đối thủ mạnh nhất (đoàn/tháng)
+                  <InfoTip text="Mỗi điểm = 1 tuyến. Trục X = đoàn/tháng của đối thủ có avg cao nhất (trừ VTR). Trục Y = đoàn/tháng VTR. Đường chéo = ngang bằng. Dưới đường = VTR ít lịch hơn đối thủ mạnh nhất." />
+                </h3>
+                <p className="text-xs text-gray-500 mb-3">
+                  So sánh 1-vs-1 với đối thủ avg cao nhất · Click điểm để drill-down
+                </p>
+                <ResponsiveContainer width="100%" height={260}>
+                  <ScatterChart margin={{ top: 8, right: 12, bottom: 24, left: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis
+                      type="number" dataKey="x"
+                      domain={[0, freqScatterMax]}
+                      label={{ value: "Đối thủ mạnh nhất (đoàn/tháng)", position: "insideBottom", offset: -12, fontSize: 10, fill: "#64748b" }}
+                      tick={{ fontSize: 9 }}
+                    />
+                    <YAxis
+                      type="number" dataKey="y"
+                      domain={[0, freqScatterMax]}
+                      label={{ value: "VTR (đoàn/tháng)", angle: -90, position: "insideLeft", offset: 8, fontSize: 10, fill: "#64748b" }}
+                      tick={{ fontSize: 9 }}
+                      width={40}
+                    />
+                    <Tooltip
+                      cursor={{ strokeDasharray: "3 3" }}
+                      content={({ active, payload }) => {
+                        if (!active || !payload?.length) return null;
+                        const p = payload[0].payload;
+                        const ahead = p.y >= p.x;
+                        return (
+                          <div className="bg-white border border-gray-200 rounded-lg shadow p-3 text-xs max-w-[240px]">
+                            <p className="font-semibold truncate">{p.label}</p>
+                            <p className="text-gray-500 mb-2">{p.thi_truong} · {p.diem_kh}</p>
+                            <div className="space-y-1 border-t pt-2">
+                              <p className="text-blue-900 font-medium">
+                                VTR: <strong>{p.y} đoàn/tháng</strong>
+                                {p.vtrCount !== "—" && <span className="text-gray-400 ml-1">({p.vtrCount} SP)</span>}
+                              </p>
+                              <p className="text-gray-600">
+                                {p.competitorName}: <strong>{p.x} đoàn/tháng</strong>
+                              </p>
+                              <p className={ahead ? "text-emerald-700 font-semibold" : "text-amber-700 font-semibold"}>
+                                {ahead
+                                  ? `VTR dẫn trước +${Math.round((p.y / p.x - 1) * 100)}%`
+                                  : `VTR kém ${Math.round((1 - p.y / p.x) * 100)}% so với ${p.competitorName}`}
+                              </p>
+                              {p.freqGap != null && (
+                                <p className="text-gray-400 text-[10px]">
+                                  Gap TS tổng thể: {p.freqGap > 0 ? "+" : ""}{p.freqGap}% (avg toàn thị trường)
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      }}
+                    />
+                    <ReferenceLine
+                      segment={[{ x: 0, y: 0 }, { x: freqScatterMax, y: freqScatterMax }]}
+                      stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="6 4"
+                      label={{ value: "Ngang bằng đối thủ", position: "insideTopLeft", fontSize: 9, fill: "#64748b" }}
+                    />
+                    <Scatter
+                      data={freqScatter}
+                      onClick={(p) => setSelectedKey(p.segment_key)}
+                      shape={(props: any) => {
+                        const { cx, cy, payload } = props;
+                        if (cx == null || cy == null) return null;
+                        const isLagging = payload.y < payload.x;
+                        return (
+                          <circle cx={cx} cy={cy} r={6}
+                            fill={payload.fill} fillOpacity={0.82}
+                            stroke={isLagging ? "#fff" : "transparent"}
+                            strokeWidth={isLagging ? 2 : 0}
+                            style={{ cursor: "pointer" }}
+                          />
+                        );
+                      }}
+                    />
+                  </ScatterChart>
+                </ResponsiveContainer>
+                <p className="text-xs text-gray-400 mt-1">· Viền trắng = VTR kém đối thủ mạnh nhất</p>
+              </div>
+            )}
+
+            {/* Bar gap % — compact */}
             <div className="card p-5">
-              <h3 className="font-semibold mb-1 text-sm inline-flex items-center gap-1.5">
-                Bản đồ tần suất — VTR vs Thị trường (đoàn/tháng)
-                <InfoTip text="Mỗi điểm = 1 tuyến. Trục X = cung TT, trục Y = cung VTR. Đường chéo = VTR ngang bằng TT. Điểm dưới đường = VTR ít lịch hơn TT — cần bổ sung." />
+              <h3 className="font-semibold mb-1 text-sm flex items-center gap-2">
+                <Calendar size={15} /> Gap tần suất VTR vs avg đối thủ (%)
+                <InfoTip text={GLOSSARY.tanSuat} />
               </h3>
               <p className="text-xs text-gray-500 mb-3">
-                Dưới đường chéo = VTR kém TT về lịch KH · Click điểm để xem chi tiết
+                Dương = VTR nhiều lịch hơn avg đối thủ · Âm = cần bổ sung lịch KH
               </p>
-              <ResponsiveContainer width="100%" height={280}>
-                <ScatterChart margin={{ top: 8, right: 16, bottom: 24, left: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                  <XAxis
-                    type="number" dataKey="x" name="TT đoàn/tháng"
-                    domain={[0, freqScatterMax]}
-                    label={{ value: "TT đoàn/tháng", position: "insideBottom", offset: -12, fontSize: 11, fill: "#64748b" }}
-                    tick={{ fontSize: 10 }}
-                  />
-                  <YAxis
-                    type="number" dataKey="y" name="VTR đoàn/tháng"
-                    domain={[0, freqScatterMax]}
-                    label={{ value: "VTR đoàn/tháng", angle: -90, position: "insideLeft", offset: 8, fontSize: 11, fill: "#64748b" }}
-                    tick={{ fontSize: 10 }}
-                    width={44}
-                  />
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={freqChart.slice(0, 10)} layout="vertical">
+                  <XAxis type="number" tickFormatter={(v) => `${v}%`} tick={{ fontSize: 9 }} />
+                  <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 9 }} />
+                  <ReferenceLine x={0} stroke="#9ca3af" />
+                  <Tooltip formatter={(v: number) => [`${v}%`, "Gap tần suất"]} />
+                  <Bar dataKey="gap" radius={[0, 3, 3, 0]}>
+                    {freqChart.slice(0, 10).map((e, i) => <Cell key={i} fill={(e.gap ?? 0) >= 0 ? "#059669" : "#d97706"} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Weekday so sánh — 1 chart, tooltip đủ info */}
+          {weekdayCompareChart.some((r) => r.vtr > 0 || r.mkt > 0) && (
+            <div className="card p-5">
+              <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+                <div>
+                  <h3 className="font-semibold text-sm inline-flex items-center gap-2">
+                    Phân bổ thứ KH — VTR vs Thị trường
+                    <InfoTip text="Số đoàn/tháng theo thứ khởi hành. Cột TT = TỔNG TẤT CẢ công ty (không phải avg), nên tự nhiên cao hơn VTR." />
+                  </h3>
+                  <div className="flex gap-4 mt-1 text-xs text-gray-500">
+                    <span>
+                      <span className="inline-block w-2 h-2 rounded-sm bg-primary-700 mr-1" />
+                      VTR: {weekdayDist?.vietravel_tour_count ?? 0} SP · ~{Math.round(weekdayDist?.vietravel_total ?? 0)} đoàn/tháng
+                    </span>
+                    <span>
+                      <span className="inline-block w-2 h-2 rounded-sm bg-slate-400 mr-1" />
+                      TT (tổng): {weekdayDist?.market_tour_count ?? 0} SP · ~{Math.round(weekdayDist?.market_total ?? 0)} đoàn/tháng
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={weekdayCompareChart}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="weekday" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 10 }} />
                   <Tooltip
-                    cursor={{ strokeDasharray: "3 3" }}
-                    content={({ active, payload }) => {
+                    content={({ active, payload, label }) => {
                       if (!active || !payload?.length) return null;
-                      const p = payload[0].payload;
+                      const vtr = payload.find((p) => p.dataKey === "vtr");
+                      const mkt = payload.find((p) => p.dataKey === "mkt");
+                      const vtrShare = weekdayDist?.vietravel?.find((d) => d.weekday === label)?.share_pct;
+                      const mktShare = weekdayDist?.market?.find((d) => d.weekday === label)?.share_pct;
                       return (
-                        <div className="bg-white border border-gray-200 rounded-lg shadow p-3 text-xs max-w-[220px]">
-                          <p className="font-semibold truncate">{p.label}</p>
-                          <p className="text-gray-500">{p.thi_truong} · {p.diem_kh}</p>
-                          <div className="mt-1.5 space-y-0.5">
-                            <p>TT: <strong>{p.x} đoàn/tháng</strong></p>
-                            <p>VTR: <strong>{p.y} đoàn/tháng</strong></p>
-                            {p.x > 0 && <p className={p.y < p.x ? "text-amber-700 font-medium" : "text-green-700 font-medium"}>
-                              {p.y >= p.x ? "VTR ≥ TT ✓" : `VTR kém TT ${Math.round((1 - p.y / p.x) * 100)}%`}
-                            </p>}
+                        <div className="bg-white border border-gray-200 rounded-lg shadow p-3 text-xs">
+                          <p className="font-semibold mb-2">{label}</p>
+                          <div className="space-y-1.5">
+                            <p>
+                              <span className="inline-block w-2 h-2 rounded-sm bg-primary-700 mr-1.5" />
+                              VTR: <strong>{vtr?.value} đoàn/tháng</strong>
+                              {vtrShare != null && <span className="text-gray-400 ml-1">({vtrShare}% lịch VTR)</span>}
+                            </p>
+                            <p>
+                              <span className="inline-block w-2 h-2 rounded-sm bg-slate-400 mr-1.5" />
+                              TT tổng: <strong>{mkt?.value} đoàn/tháng</strong>
+                              {mktShare != null && <span className="text-gray-400 ml-1">({mktShare}% lịch TT)</span>}
+                            </p>
+                            <p className="text-gray-400 text-[10px] border-t pt-1.5">
+                              TT = tổng tất cả công ty · {weekdayDist?.market_tour_count ?? "?"} SP thị trường
+                            </p>
                           </div>
                         </div>
                       );
                     }}
                   />
-                  {/* Đường diagonal: VTR = TT */}
-                  <ReferenceLine
-                    segment={[{ x: 0, y: 0 }, { x: freqScatterMax, y: freqScatterMax }]}
-                    stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="6 4"
-                    label={{ value: "VTR = TT", position: "insideTopLeft", fontSize: 10, fill: "#64748b" }}
-                  />
-                  <Scatter
-                    data={freqScatter}
-                    onClick={(p) => setSelectedKey(p.segment_key)}
-                    shape={(props: any) => {
-                      const { cx, cy, payload } = props;
-                      if (cx == null || cy == null) return null;
-                      const isLagging = payload.y < payload.x * 0.8;
-                      return (
-                        <circle
-                          cx={cx} cy={cy} r={6}
-                          fill={payload.fill}
-                          fillOpacity={0.8}
-                          stroke={isLagging ? "#fff" : "transparent"}
-                          strokeWidth={isLagging ? 2 : 0}
-                          style={{ cursor: "pointer" }}
-                        />
-                      );
-                    }}
-                  />
-                </ScatterChart>
-              </ResponsiveContainer>
-              <p className="text-xs text-gray-400 mt-1">· Viền trắng = VTR kém TT &gt;20% · Click điểm bất kỳ để drill-down segment</p>
-            </div>
-          )}
-
-          <div className="card p-5">
-            <h3 className="font-semibold mb-3 flex items-center gap-2">
-              <Calendar size={16} /> {COL.tbDoanThang} — Gap % VTR vs đối thủ (top tuyến)
-              <InfoTip text={GLOSSARY.tanSuat} />
-            </h3>
-            <ResponsiveContainer width="100%" height={320}>
-              <BarChart data={freqChart} layout="vertical"><XAxis type="number" tickFormatter={(v) => `${v}%`} />
-                <YAxis dataKey="name" type="category" width={130} tick={{ fontSize: 9 }} />
-                <ReferenceLine x={0} stroke="#666" /><Tooltip />
-                <Bar dataKey="gap" radius={[0, 4, 4, 0]}>{freqChart.map((e, i) => <Cell key={i} fill={(e.gap ?? 0) >= 0 ? "#059669" : "#d97706"} />)}</Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="card p-5">
-              <h3 className="font-semibold mb-1 text-sm inline-flex items-center gap-2">
-                Tour VTR khởi hành thứ mấy
-                <InfoTip text={GLOSSARY.tanSuatThu} />
-              </h3>
-              <p className="text-xs text-gray-500 mb-3">
-                {weekdayDist?.vietravel_tour_count ?? 0} sản phẩm · ~{Math.round(weekdayDist?.vietravel_total ?? 0)} đoàn/tháng
-              </p>
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={weekdayDist?.vietravel ?? []}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="weekday" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} />
-                  <Tooltip formatter={(v: number, _n, p: any) => [`${v} đoàn/tháng (${p.payload.share_pct}%)`, COL.doanThang]} />
-                  <Bar dataKey="departures_monthly" fill="#003580" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="card p-5">
-              <h3 className="font-semibold mb-1 text-sm inline-flex items-center gap-2">
-                Tour thị trường khởi hành thứ mấy
-                <InfoTip text={GLOSSARY.tanSuatThu} />
-              </h3>
-              <p className="text-xs text-gray-500 mb-3">
-                {weekdayDist?.market_tour_count ?? 0} sản phẩm · ~{Math.round(weekdayDist?.market_total ?? 0)} đoàn/tháng
-              </p>
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={weekdayDist?.market ?? []}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="weekday" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} />
-                  <Tooltip formatter={(v: number, _n, p: any) => [`${v} đoàn/tháng (${p.payload.share_pct}%)`, COL.doanThang]} />
-                  <Bar dataKey="departures_monthly" fill="#64748b" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {weekdayCompareChart.some((r) => r.vtr > 0 || r.mkt > 0) && (
-            <div className="card p-5">
-              <h3 className="font-semibold mb-3 text-sm inline-flex items-center gap-2">
-                So sánh phân bổ thứ KH — VTR vs thị trường
-                <InfoTip text={GLOSSARY.tanSuatThu} />
-              </h3>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={weekdayCompareChart}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="weekday" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} />
-                  <Tooltip formatter={(v: number) => [`${v} đoàn/tháng`, COL.doanThang]} />
-                  <Legend />
-                  <Bar dataKey="vtr" name="Vietravel" fill="#003580" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="mkt" name="Thị trường" fill="#94a3b8" radius={[4, 4, 0, 0]} />
+                  <Legend formatter={(v) => v === "vtr" ? "Vietravel" : "Thị trường (tổng)"} iconSize={10} wrapperStyle={{ fontSize: 11 }} />
+                  <Bar dataKey="vtr" name="vtr" fill="#003580" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="mkt" name="mkt" fill="#94a3b8" radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
