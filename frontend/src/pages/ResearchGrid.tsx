@@ -16,6 +16,39 @@ function Badge({ children, className }: { children: React.ReactNode; className?:
   return <span className={cn("badge", className)}>{children}</span>;
 }
 
+/** Rút gọn trong ô bảng; hover hiện tooltip đủ nội dung. */
+function HoverFullText({
+  text,
+  className,
+  clamp = 2,
+}: {
+  text: string;
+  className?: string;
+  clamp?: 1 | 2;
+}) {
+  if (!text) return <span className="text-gray-400">—</span>;
+  return (
+    <span className="relative block max-w-full group/tip">
+      <span
+        className={cn(
+          "block text-left",
+          clamp === 2 ? "line-clamp-2" : "truncate",
+          className,
+        )}
+        title={text}
+      >
+        {text}
+      </span>
+      <span
+        role="tooltip"
+        className="pointer-events-none invisible opacity-0 group-hover/tip:visible group-hover/tip:opacity-100 transition-opacity absolute z-30 left-0 top-full mt-1 w-max max-w-lg rounded-md border border-gray-700 bg-gray-900 text-white text-xs px-2.5 py-1.5 shadow-lg whitespace-normal leading-snug"
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
+
 function EditableCell({ value, onSave, disabled }: { value: string; onSave: (v: string) => void; disabled?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
@@ -425,7 +458,15 @@ export default function ResearchGrid() {
                 <input type="checkbox" disabled={!canEdit} checked={allPageSelected} onChange={() => setSelectedIds(allPageSelected ? selectedIds.filter((id) => !pageIds.includes(id)) : [...new Set([...selectedIds, ...pageIds])])} />
               </th>
               {["#", COL.tenTour, COL.congTy, COL.thiTruong, COL.tuyenTour, COL.thoiGian, COL.gia, "Phân khúc", "Nguồn", "Ghi chú", "Flag", COL.linkTour].map((h) => (
-                <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap">{h}</th>
+                <th
+                  key={h}
+                  className={cn(
+                    "px-3 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap",
+                    h === COL.tenTour && "min-w-[260px] max-w-[440px] normal-case",
+                  )}
+                >
+                  {h}
+                </th>
               ))}
             </tr>
           </thead>
@@ -436,9 +477,13 @@ export default function ResearchGrid() {
                   <input type="checkbox" disabled={!canEdit} checked={selectedIds.includes(tour.id)} onChange={() => toggleSelect(tour.id)} />
                 </td>
                 <td className="px-3 py-2 text-xs text-gray-400">{(page - 1) * PAGE_SIZE + i + 1}</td>
-                <td className="px-3 py-2 max-w-xs">
-                  <p className="font-medium text-gray-900 text-xs leading-snug line-clamp-2">{tour.ten_tour}</p>
-                  {tour.has_override && <span className="text-[10px] text-blue-600">Đã chỉnh workspace</span>}
+                <td className="px-3 py-2 min-w-[260px] max-w-[440px] align-top">
+                  <HoverFullText
+                    text={tour.ten_tour}
+                    className="font-medium text-gray-900 text-xs leading-snug"
+                    clamp={2}
+                  />
+                  {tour.has_override && <span className="text-[10px] text-blue-600 block mt-0.5">Đã chỉnh workspace</span>}
                 </td>
                 <td className="px-3 py-2 text-xs text-gray-700 max-w-[140px]">
                   <span className="truncate block max-w-[140px]">{tour.cong_ty}</span>
