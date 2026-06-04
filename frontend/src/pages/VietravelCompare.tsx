@@ -419,7 +419,7 @@ export default function VietravelCompare() {
     return (segments?.items ?? [])
       .filter((s) => s.vietravel_freq_monthly != null && s.market_freq_monthly != null)
       .map((s) => ({
-        x: parseFloat((s.market_departures_monthly ?? s.market_freq_monthly ?? 0).toFixed(1)),
+        x: parseFloat((s.market_freq_monthly ?? 0).toFixed(1)),
         y: parseFloat(((s.vtr_avg_departures_per_month ?? s.vietravel_freq_monthly) || 0).toFixed(1)),
         label: s.tuyen_tour,
         diem_kh: s.diem_kh,
