@@ -105,6 +105,45 @@ def recompute_all_phan_khuc(db: Session) -> dict:
     return {"updated": updated, "route_buckets": len(route_avg)}
 
 
+def recompute_phan_khuc_for_tour_ids(db: Session, tour_ids: list[int]) -> dict:
+    """Tính lại phân khúc cho danh sách tour (vd. sau scrape chỉ tour mới/cập nhật)."""
+    from data_sources import DB_CANONICAL_NGUON
+
+    ids = [int(i) for i in tour_ids if i]
+    if not ids:
+        return {"updated": 0, "tours": 0}
+
+    all_priced = (
+        db.query(Tour)
+        .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
+        .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+        .all()
+    )
+    route_avg = build_route_market_avg_price_day(all_priced)
+    tours = db.query(Tour).filter(Tour.id.in_(ids)).all()
+    updated = 0
+    for t in tours:
+        label = phan_khuc_relative_for_tour(t, route_avg)
+        if t.phan_khuc != label:
+            t.phan_khuc = label[:64]
+            updated += 1
+    if updated:
+        db.commit()
+    return {"updated": updated, "tours": len(tours), "route_buckets": len(route_avg)}
+
+
+def recompute_segments_for_sync(db: Session, affected_tour_ids: set[int] | list[int]) -> dict:
+    """Phân khúc cho tour mới (thiếu nhãn) + tour vừa thay đổi — không quét toàn DB."""
+    missing = recompute_missing_phan_khuc(db)
+    targeted = recompute_phan_khuc_for_tour_ids(db, list(affected_tour_ids))
+    return {
+        "missing_filled": missing,
+        "targeted_updated": targeted.get("updated", 0),
+        "targeted_tours": targeted.get("tours", 0),
+        "route_buckets": targeted.get("route_buckets", 0),
+    }
+
+
 def recompute_missing_phan_khuc(db: Session) -> int:
     """Tính phân khúc cho tour có giá nhưng chưa có nhãn (vd. Vietravel mới scrape)."""
     from data_sources import DB_CANONICAL_NGUON

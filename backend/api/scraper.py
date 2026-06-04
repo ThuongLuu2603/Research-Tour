@@ -387,7 +387,7 @@ def _run_vietravel(db: Session, job_id: int, job: ScrapeJob):
         df,
         "Vietravel",
         mirror_delete=True,
-        recompute_segments=False,
+        recompute_segments=True,
         progress=_progress,
     )
 

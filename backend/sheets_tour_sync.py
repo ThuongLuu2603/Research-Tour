@@ -178,6 +178,33 @@ def _row_to_fields(row: list[str], *, nguon: str = "") -> dict | None:
     }
 
 
+def _needs_route_reclassification(tour: Tour, fields: dict) -> bool:
+    """Chỉ chạy quy tắc tuyến khi tour chưa có phân loại hoặc tên/lịch trình đổi."""
+    if not (tour.tuyen_tour or "").strip() or not (tour.thi_truong or "").strip():
+        return True
+    if (fields.get("ten_tour") or "").strip() != (tour.ten_tour or "").strip():
+        return True
+    if (fields.get("lich_trinh") or "").strip() != (tour.lich_trinh or "").strip():
+        return True
+    return False
+
+
+def _phan_khuc_inputs_changed(tour: Tour, fields: dict) -> bool:
+    if not (tour.phan_khuc or "").strip() or tour.phan_khuc == "Chưa có giá":
+        return True
+    if fields.get("gia") != tour.gia:
+        return True
+    if (fields.get("thoi_gian") or "").strip() != (tour.thoi_gian or "").strip():
+        return True
+    mk = (fields.get("thi_truong") or "").strip()
+    rt = (fields.get("tuyen_tour") or "").strip()
+    if mk and mk != (tour.thi_truong or "").strip():
+        return True
+    if rt and rt != (tour.tuyen_tour or "").strip():
+        return True
+    return False
+
+
 def _find_db_tour(db, nguon: str, fields: dict, external_id: str) -> Tour | None:
     tour = db.query(Tour).filter(Tour.external_id == external_id).first()
     if tour:
@@ -224,6 +251,7 @@ def _apply_fields_to_tour(
     *,
     preserve_nguon: bool = False,
     preserve_analyst: bool = True,
+    preserve_classification: bool = False,
     external_id: str = "",
     sheet_row: int | None = None,
 ) -> None:
@@ -232,14 +260,21 @@ def _apply_fields_to_tour(
 
     note = tour.analyst_note
     flagged = tour.flagged
+    phan_khuc_dirty = _phan_khuc_inputs_changed(tour, fields)
 
     tour.cong_ty = resolve_company_name(fields["cong_ty"])[:256]
     tour.ten_tour = fields["ten_tour"][:512]
     tour.lich_trinh = fields["lich_trinh"]
+    if preserve_classification and (tour.thi_truong or tour.tuyen_tour):
+        fields = {
+            **fields,
+            "thi_truong": tour.thi_truong or "",
+            "tuyen_tour": tour.tuyen_tour or "",
+        }
     if nguon in ("Main", "Vietravel"):
         mk = (fields.get("thi_truong") or "").strip()
         rt = (fields.get("tuyen_tour") or "").strip()
-        if not mk and not rt:
+        if not preserve_classification and not mk and not rt:
             mk, rt = classify_route_fields(tour.ten_tour, tour.lich_trinh)
         tour.thi_truong = mk[:128]
         tour.tuyen_tour = rt[:256]
@@ -259,7 +294,8 @@ def _apply_fields_to_tour(
     tour.khach_san = _clean_field(fields.get("khach_san"))
     tour.hang_khong = _clean_field(fields.get("hang_khong"))
     tour.so_ngay = parse_ngay(fields["thoi_gian"])
-    tour.phan_khuc = ""  # gán sau recompute_all_phan_khuc
+    if phan_khuc_dirty:
+        tour.phan_khuc = ""
     if not preserve_nguon:
         tour.nguon = nguon
     if external_id:
@@ -365,8 +401,9 @@ def merge_dataframe_to_db(
 
     matcher = RouteRuleMatcher(_load_route_rules()) if nguon in ("Vietravel", "Main") else None
     total = len(df)
-    updated = inserted = skipped = unchanged = 0
+    updated = inserted = skipped = unchanged = route_reclassified = route_preserved = 0
     synced_tour_ids: set[int] = set()
+    affected_tour_ids: set[int] = set()
     now = datetime.utcnow()
     for idx, (_, row) in enumerate(df.iterrows()):
         fields = _scrape_row_to_fields(row)
@@ -376,14 +413,6 @@ def merge_dataframe_to_db(
         if not fields.get("gia"):
             skipped += 1
             continue
-        if matcher:
-            mk, rt, matched, _rid = matcher.resolve(
-                fields["ten_tour"],
-                fields["lich_trinh"],
-            )
-            if matched:
-                fields["thi_truong"] = mk
-                fields["tuyen_tour"] = rt
 
         external_id = compute_external_id(
             nguon,
@@ -393,13 +422,33 @@ def merge_dataframe_to_db(
         )
         tour = _find_db_tour(db, nguon, fields, external_id)
         is_new = tour is None
+        needs_classify = is_new or (tour is not None and _needs_route_reclassification(tour, fields))
+
+        if matcher and needs_classify:
+            mk, rt, matched, _rid = matcher.resolve(
+                fields["ten_tour"],
+                fields["lich_trinh"],
+            )
+            if matched:
+                fields["thi_truong"] = mk
+                fields["tuyen_tour"] = rt
+        elif not is_new and tour is not None and not needs_classify:
+            fields = {
+                **fields,
+                "thi_truong": tour.thi_truong or "",
+                "tuyen_tour": tour.tuyen_tour or "",
+            }
+
         if is_new:
             tour = _create_tour_from_fields(fields, nguon, now)
             tour.external_id = external_id[:128]
             db.add(tour)
             db.flush()
             synced_tour_ids.add(tour.id)
+            affected_tour_ids.add(tour.id)
             inserted += 1
+            if needs_classify:
+                route_reclassified += 1
         else:
             synced_tour_ids.add(tour.id)
             new_hash = compute_content_hash(fields)
@@ -407,6 +456,11 @@ def merge_dataframe_to_db(
                 unchanged += 1
                 continue
             updated += 1
+            affected_tour_ids.add(tour.id)
+            if needs_classify:
+                route_reclassified += 1
+            else:
+                route_preserved += 1
 
         _apply_fields_to_tour(
             tour,
@@ -414,6 +468,7 @@ def merge_dataframe_to_db(
             nguon,
             now,
             preserve_nguon=(not is_new and tour.nguon not in ("", nguon)),
+            preserve_classification=(not is_new and not needs_classify),
             external_id=external_id,
         )
 
@@ -433,11 +488,11 @@ def merge_dataframe_to_db(
             db.commit()
 
     phan_khuc_stats: dict | None = None
-    if recompute_segments and (inserted or updated or deleted):
+    if recompute_segments and affected_tour_ids:
         try:
-            from pricing_segments import recompute_all_phan_khuc
+            from pricing_segments import recompute_segments_for_sync
 
-            phan_khuc_stats = recompute_all_phan_khuc(db)
+            phan_khuc_stats = recompute_segments_for_sync(db, affected_tour_ids)
         except Exception as e:
             logger.warning("recompute phan_khuc after %s scrape failed: %s", nguon, e)
             phan_khuc_stats = {"error": str(e)}
@@ -453,6 +508,9 @@ def merge_dataframe_to_db(
         "unchanged": unchanged,
         "deleted": deleted,
         "synced": len(synced_tour_ids),
+        "route_reclassified": route_reclassified,
+        "route_preserved": route_preserved,
+        "affected_tour_ids": sorted(affected_tour_ids),
     }
     if phan_khuc_stats is not None:
         out["phan_khuc"] = phan_khuc_stats
@@ -486,6 +544,11 @@ def merge_sheet_source_to_db(
     if mirror_delete is None:
         mirror_delete = should_mirror_prune(nguon)
 
+    from classification import _load_route_rules
+    from route_rule_matcher import RouteRuleMatcher
+
+    matcher = RouteRuleMatcher(_load_route_rules()) if nguon in ("Vietravel", "Main") else None
+
     ws = _worksheet(nguon)
     rows = ws.get_all_values()
     if len(rows) < 2:
@@ -499,8 +562,9 @@ def merge_sheet_source_to_db(
             "synced": 0,
         }
 
-    updated = inserted = skipped = unchanged = 0
+    updated = inserted = skipped = unchanged = route_reclassified = route_preserved = 0
     synced_tour_ids: set[int] = set()
+    affected_tour_ids: set[int] = set()
     now = datetime.utcnow()
     for row_idx, row in enumerate(rows[1:], start=2):
         fields = _row_to_fields(row, nguon=nguon)
@@ -515,6 +579,23 @@ def merge_sheet_source_to_db(
         )
         tour = _find_db_tour(db, nguon, fields, external_id)
         is_new = tour is None
+        needs_classify = is_new or (tour is not None and _needs_route_reclassification(tour, fields))
+
+        if matcher and needs_classify:
+            mk, rt, matched, _rid = matcher.resolve(
+                fields["ten_tour"],
+                fields["lich_trinh"],
+            )
+            if matched:
+                fields["thi_truong"] = mk
+                fields["tuyen_tour"] = rt
+        elif not is_new and tour is not None and not needs_classify:
+            fields = {
+                **fields,
+                "thi_truong": tour.thi_truong or "",
+                "tuyen_tour": tour.tuyen_tour or "",
+            }
+
         if is_new:
             if not fields.get("gia"):
                 skipped += 1
@@ -523,7 +604,10 @@ def merge_sheet_source_to_db(
             db.add(tour)
             db.flush()
             synced_tour_ids.add(tour.id)
+            affected_tour_ids.add(tour.id)
             inserted += 1
+            if needs_classify:
+                route_reclassified += 1
         else:
             synced_tour_ids.add(tour.id)
             new_hash = compute_content_hash(fields)
@@ -531,6 +615,11 @@ def merge_sheet_source_to_db(
                 unchanged += 1
                 continue
             updated += 1
+            affected_tour_ids.add(tour.id)
+            if needs_classify:
+                route_reclassified += 1
+            else:
+                route_preserved += 1
 
         _apply_fields_to_tour(
             tour,
@@ -538,6 +627,7 @@ def merge_sheet_source_to_db(
             nguon,
             now,
             preserve_nguon=(not is_new and tour.nguon not in ("", nguon)),
+            preserve_classification=(not is_new and not needs_classify),
             external_id=external_id,
             sheet_row=row_idx,
         )
@@ -555,17 +645,18 @@ def merge_sheet_source_to_db(
         _post_sync_cache(db)
 
     phan_khuc_stats: dict | None = None
-    if recompute_segments and (inserted or updated or deleted):
+    if recompute_segments and affected_tour_ids:
         try:
-            from pricing_segments import recompute_all_phan_khuc
+            from pricing_segments import recompute_segments_for_sync
 
-            phan_khuc_stats = recompute_all_phan_khuc(db)
+            phan_khuc_stats = recompute_segments_for_sync(db, affected_tour_ids)
         except Exception as e:
             logger.warning("recompute phan_khuc after %s sync failed: %s", nguon, e)
             phan_khuc_stats = {"error": str(e)}
 
     logger.info(
-        "Sheet sync %s: inserted=%s updated=%s unchanged=%s skipped=%s deleted=%s synced=%s",
+        "Sheet sync %s: inserted=%s updated=%s unchanged=%s skipped=%s deleted=%s synced=%s "
+        "route_reclassified=%s route_preserved=%s",
         nguon,
         inserted,
         updated,
@@ -573,6 +664,8 @@ def merge_sheet_source_to_db(
         skipped,
         deleted,
         len(synced_tour_ids),
+        route_reclassified,
+        route_preserved,
     )
     out = {
         "nguon": nguon,
@@ -582,6 +675,9 @@ def merge_sheet_source_to_db(
         "unchanged": unchanged,
         "deleted": deleted,
         "synced": len(synced_tour_ids),
+        "route_reclassified": route_reclassified,
+        "route_preserved": route_preserved,
+        "affected_tour_ids": sorted(affected_tour_ids),
     }
     if phan_khuc_stats is not None:
         out["phan_khuc"] = phan_khuc_stats
@@ -615,19 +711,25 @@ def merge_all_sheets_to_db(db) -> dict:
     from data_sources import DB_CANONICAL_NGUON
 
     results = []
+    all_affected: set[int] = set()
     for nguon in sorted(DB_CANONICAL_NGUON):
         try:
-            results.append(
-                merge_sheet_source_to_db(db, nguon, recompute_segments=False)
-            )
+            r = merge_sheet_source_to_db(db, nguon, recompute_segments=False)
+            results.append(r)
+            all_affected.update(r.get("affected_tour_ids") or [])
         except Exception as e:
             logger.exception("Sheet sync failed for %s", nguon)
             results.append({"nguon": nguon, "error": str(e)})
     phan_khuc: dict = {}
     try:
-        from pricing_segments import recompute_all_phan_khuc
+        from pricing_segments import recompute_segments_for_sync
 
-        phan_khuc = recompute_all_phan_khuc(db)
+        if all_affected:
+            phan_khuc = recompute_segments_for_sync(db, all_affected)
+        else:
+            from pricing_segments import recompute_missing_phan_khuc
+
+            phan_khuc = {"missing_filled": recompute_missing_phan_khuc(db), "targeted_updated": 0}
     except Exception as e:
         logger.warning("recompute phan_khuc after full sheet sync failed: %s", e)
         phan_khuc = {"error": str(e)}
