@@ -329,7 +329,7 @@ export default function RulesAdminPage() {
   );
 
   return (
-    <div className="p-6 max-w-5xl space-y-6 pb-24">
+    <div className="p-6 space-y-6 pb-24">
       <div>
         <h1 className="text-xl font-bold">Quy tắc phân loại & Key matching</h1>
         <p className="text-sm text-gray-500">
