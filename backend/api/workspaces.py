@@ -171,10 +171,17 @@ def list_workspace_tours(
         q = q.filter(Tour.id.in_(override_tour_ids))
 
     total = q.count()
-    sort_col = getattr(Tour, sort_by, Tour.id)
-    if sort_dir == "desc":
-        sort_col = sort_col.desc()
-    tours = q.order_by(sort_col).offset((page - 1) * page_size).limit(page_size).all()
+    _sortable = frozenset({
+        "id", "ten_tour", "cong_ty", "thi_truong", "tuyen_tour", "thoi_gian",
+        "gia", "phan_khuc", "nguon", "analyst_note", "updated_at", "created_at",
+    })
+    sort_field = sort_by if sort_by in _sortable else "id"
+    sort_col = getattr(Tour, sort_field, Tour.id)
+    if sort_dir == "asc":
+        order = sort_col.asc()
+    else:
+        order = sort_col.desc()
+    tours = q.order_by(order).offset((page - 1) * page_size).limit(page_size).all()
     overrides = _override_map(db, workspace_id, [t.id for t in tours])
     items = [merge_tour(t, overrides.get(t.id)).to_dict() for t in tours]
     perm = resolve_permission(db, ws, user) or "view"

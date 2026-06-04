@@ -8,9 +8,67 @@ import {
 } from "@/lib/api";
 import { fmtVND, formatPhanKhuc, segmentColor, cn } from "@/lib/utils";
 import { COL } from "@/lib/glossary";
-import { Search, Download, Flag, FlagOff, ChevronLeft, ChevronRight, ExternalLink, Pencil, Check, X, Users, Copy } from "lucide-react";
+import { Search, Download, Flag, FlagOff, ChevronLeft, ChevronRight, ExternalLink, Pencil, Check, X, Users, Copy, ArrowUpDown } from "lucide-react";
 
 const PAGE_SIZE = 50;
+
+type GridSortCol =
+  | "id"
+  | "ten_tour"
+  | "cong_ty"
+  | "thi_truong"
+  | "tuyen_tour"
+  | "thoi_gian"
+  | "gia"
+  | "phan_khuc"
+  | "nguon"
+  | "analyst_note";
+
+const GRID_SORT_COLUMNS: { label: string; col: GridSortCol; wide?: boolean }[] = [
+  { label: "#", col: "id" },
+  { label: COL.tenTour, col: "ten_tour", wide: true },
+  { label: COL.congTy, col: "cong_ty" },
+  { label: COL.thiTruong, col: "thi_truong" },
+  { label: COL.tuyenTour, col: "tuyen_tour" },
+  { label: COL.thoiGian, col: "thoi_gian" },
+  { label: COL.gia, col: "gia" },
+  { label: "Phân khúc", col: "phan_khuc" },
+  { label: "Nguồn", col: "nguon" },
+  { label: "Ghi chú", col: "analyst_note" },
+];
+
+function SortTh({
+  label,
+  col,
+  wide,
+  sortBy,
+  sortDir,
+  onSort,
+}: {
+  label: string;
+  col: GridSortCol;
+  wide?: boolean;
+  sortBy: GridSortCol;
+  sortDir: "asc" | "desc";
+  onSort: (c: GridSortCol) => void;
+}) {
+  const active = sortBy === col;
+  return (
+    <th
+      className={cn(
+        "px-3 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap cursor-pointer select-none hover:bg-gray-100",
+        wide && "min-w-[260px] max-w-[440px] normal-case",
+      )}
+      onClick={() => onSort(col)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        <ArrowUpDown size={11} className={cn(active ? "text-primary-600" : "text-gray-300")} />
+        {active && <span className="text-primary-600 text-[10px]">{sortDir === "asc" ? "↑" : "↓"}</span>}
+      </span>
+    </th>
+  );
+}
 
 function Badge({ children, className }: { children: React.ReactNode; className?: string }) {
   return <span className={cn("badge", className)}>{children}</span>;
@@ -104,6 +162,17 @@ export default function ResearchGrid() {
   const [sharePerm, setSharePerm] = useState<"view" | "edit" | "copy">("view");
   const [copyFromId, setCopyFromId] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [sortBy, setSortBy] = useState<GridSortCol>("id");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const handleSort = (col: GridSortCol) => {
+    if (sortBy === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortBy(col);
+      setSortDir(col === "gia" || col === "id" ? "desc" : "asc");
+    }
+    setPage(1);
+  };
 
   const { data: workspaces } = useQuery({ queryKey: ["workspaces"], queryFn: listWorkspaces, staleTime: 60000 });
   const activeWs = workspaces?.find((w) => w.id === workspaceId) ?? workspaces?.[0];
@@ -135,12 +204,14 @@ export default function ResearchGrid() {
   }, [availableRoutes]);
 
   const { data, isFetching } = useQuery({
-    queryKey: ["workspace-tours", workspaceId, page, search, selMarkets, selRoutes, selCompanies, selPhanKhuc, selNguon, onlyFlagged],
+    queryKey: ["workspace-tours", workspaceId, page, search, selMarkets, selRoutes, selCompanies, selPhanKhuc, selNguon, onlyFlagged, sortBy, sortDir],
     queryFn: () => getWorkspaceTours(workspaceId!, {
       page, page_size: PAGE_SIZE, search,
       thi_truong: selMarkets, tuyen_tour: selRoutes, cong_ty: selCompanies,
       phan_khuc: selPhanKhuc, nguon: selNguon,
       flagged: onlyFlagged || undefined,
+      sort_by: sortBy,
+      sort_dir: sortDir,
     }),
     enabled: !!workspaceId,
     placeholderData: (prev) => prev,
@@ -457,17 +528,19 @@ export default function ResearchGrid() {
               <th className="px-3 py-2.5 text-left">
                 <input type="checkbox" disabled={!canEdit} checked={allPageSelected} onChange={() => setSelectedIds(allPageSelected ? selectedIds.filter((id) => !pageIds.includes(id)) : [...new Set([...selectedIds, ...pageIds])])} />
               </th>
-              {["#", COL.tenTour, COL.congTy, COL.thiTruong, COL.tuyenTour, COL.thoiGian, COL.gia, "Phân khúc", "Nguồn", "Ghi chú", "Flag", COL.linkTour].map((h) => (
-                <th
-                  key={h}
-                  className={cn(
-                    "px-3 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap",
-                    h === COL.tenTour && "min-w-[260px] max-w-[440px] normal-case",
-                  )}
-                >
-                  {h}
-                </th>
+              {GRID_SORT_COLUMNS.map(({ label, col, wide }) => (
+                <SortTh
+                  key={col}
+                  label={label}
+                  col={col}
+                  wide={wide}
+                  sortBy={sortBy}
+                  sortDir={sortDir}
+                  onSort={handleSort}
+                />
               ))}
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap">Flag</th>
+              <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap">{COL.linkTour}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
