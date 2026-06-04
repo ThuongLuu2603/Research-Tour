@@ -371,6 +371,24 @@ def list_route_rules(
     return q.order_by(RouteKeywordRule.sort_order, RouteKeywordRule.id).all()
 
 
+@router.post("/route/replace-all")
+def replace_all_route_rules(
+    body: RouteRulesReplaceIn,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Thay toàn bộ quy tắc tuyến tour trong DB (import Excel/JSON)."""
+    from classification_rules_import import replace_route_rules
+
+    rows = [r.model_dump() for r in body.rules]
+    try:
+        result = replace_route_rules(db, rows, body.market_order or None)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    tours_apply = _auto_apply_tours(db, body.auto_apply, scope="route")
+    return {**result, "tours_apply": tours_apply}
+
+
 @router.post("/route", response_model=RouteRuleOut)
 def create_route_rule(
     body: RouteRuleIn,
@@ -432,24 +450,6 @@ def delete_route_rule(
     msg = _try_push_route(db) if push_sheet else None
     stats = _auto_apply_tours(db, auto_apply, scope="route")
     return {"deleted": rule_id, "sheet_sync": msg, "tours_apply": stats}
-
-
-@router.post("/route/replace-all")
-def replace_all_route_rules(
-    body: RouteRulesReplaceIn,
-    _: User = Depends(require_admin),
-    db: Session = Depends(get_db),
-):
-    """Thay toàn bộ quy tắc tuyến tour trong DB (import Excel/JSON)."""
-    from classification_rules_import import replace_route_rules
-
-    rows = [r.model_dump() for r in body.rules]
-    try:
-        result = replace_route_rules(db, rows, body.market_order or None)
-    except ValueError as e:
-        raise HTTPException(400, str(e)) from e
-    tours_apply = _auto_apply_tours(db, body.auto_apply, scope="route")
-    return {**result, "tours_apply": tours_apply}
 
 
 # ── Sync endpoints ────────────────────────────────────────────────────────────
