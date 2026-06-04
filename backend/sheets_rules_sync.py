@@ -56,7 +56,7 @@ def pull_route_rules_from_sheet() -> dict[str, list[dict]]:
 
 def import_route_rules_to_db(db: Session) -> int:
     from models import RouteKeywordRule
-    from classification import invalidate_classification_cache
+    from classification import invalidate_rules_changed
 
     raw = pull_route_rules_from_sheet()
     db.query(RouteKeywordRule).delete()
@@ -75,7 +75,7 @@ def import_route_rules_to_db(db: Session) -> int:
             count += 1
             order += 1
     db.commit()
-    invalidate_classification_cache()
+    invalidate_rules_changed(db)
     return count
 
 
@@ -125,7 +125,7 @@ def pull_market_rules_from_sheet() -> list[dict]:
 
 def import_market_rules_from_sheet(db: Session) -> int:
     from models import MarketKeywordRule
-    from classification import invalidate_classification_cache
+    from classification import invalidate_rules_changed
 
     raw = pull_market_rules_from_sheet()
     if not raw:
@@ -139,7 +139,7 @@ def import_market_rules_from_sheet(db: Session) -> int:
             sort_order=r.get("sort_order", i),
         ))
     db.commit()
-    invalidate_classification_cache()
+    invalidate_rules_changed(db)
     return len(raw)
 
 

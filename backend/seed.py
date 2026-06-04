@@ -169,10 +169,18 @@ def _row_to_mapping(row: dict[str, str], nguon: str) -> dict | None:
     external_id = compute_external_id(nguon, ma_tour=ma_tour, link_url=link_url, ten_tour=ten_tour)[:128]
     now = datetime.utcnow()
 
+    # Main: không import Thị trường/Tuyến từ CSV — gán bằng matcher sau import.
+    if nguon == "Main":
+        sheet_tt = ""
+        sheet_route = ""
+    else:
+        sheet_tt = str(row.get("thi_truong") or "").strip()[:128]
+        sheet_route = str(row.get("tuyen_tour") or "").strip()[:256]
+
     return {
         "cong_ty": resolve_company_name(str(row.get("cong_ty") or "").strip())[:256],
-        "thi_truong": str(row.get("thi_truong") or "").strip()[:128],
-        "tuyen_tour": str(row.get("tuyen_tour") or "").strip()[:256],
+        "thi_truong": sheet_tt,
+        "tuyen_tour": sheet_route,
         "ten_tour": ten_tour[:512],
         "lich_trinh": str(row.get("lich_trinh") or "").strip(),
         "diem_kh": resolve_departure_point(str(row.get("diem_kh") or "").strip())[:256],
@@ -296,6 +304,14 @@ def import_main_chunks() -> int:
             _set_progress("Main", total)
 
         logger.info("Finished Main: %s tours from %s chunks", total, len(chunks))
+        try:
+            from classification import reclassify_tours_by_nguon
+
+            stats = reclassify_tours_by_nguon(db, "Main")
+            logger.info("Main post-import classify: %s", stats)
+            _set_progress("Main", total, f"Đã phân loại Main ({stats.get('tours_scanned', 0)} tour)")
+        except Exception as e:
+            logger.warning("Main post-import classify failed: %s", e)
         return total
     except Exception:
         db.rollback()
@@ -342,6 +358,51 @@ def import_missing_sheets() -> dict[str, int]:
 
     logger.info("Sync done — total %s — %s", tour_count(), results)
     return results
+
+
+def start_sheet_sync_background(*, main_only: bool = True) -> bool:
+    """Kéo Google Sheet (live) → DB — không dùng file CSV gói."""
+    with _import_lock:
+        if _import_status["running"]:
+            return False
+        _import_status.update({
+            "running": True,
+            "message": "Đang đồng bộ Google Sheet → DB…",
+            "current_source": "Sheet",
+            "rows_done": 0,
+            "error": None,
+        })
+
+    def _run():
+        db = SessionLocal()
+        try:
+            from sheets_tour_sync import merge_all_sheets_to_db, merge_sheet_source_to_db
+
+            if main_only:
+                r = merge_sheet_source_to_db(db, "Main", force_reclassify_all=True)
+                msg = (
+                    f"Xong Main: +{r.get('inserted', 0)} mới, ~{r.get('updated', 0)} cập nhật, "
+                    f"{r.get('unchanged', 0)} giữ nguyên"
+                )
+            else:
+                r = merge_all_sheets_to_db(db)
+                msg = f"Xong đồng bộ Sheet: {r.get('total_updated', 0)} cập nhật"
+            with _import_lock:
+                _import_status["message"] = msg
+                _import_status["rows_done"] = r.get("synced", r.get("total_updated", 0))
+        except Exception as e:
+            logger.exception("Sheet sync failed")
+            with _import_lock:
+                _import_status["error"] = str(e)[:500]
+                _import_status["message"] = f"Lỗi đồng bộ Sheet: {e}"
+        finally:
+            db.close()
+            gc.collect()
+            with _import_lock:
+                _import_status["running"] = False
+
+    threading.Thread(target=_run, daemon=True, name="sheet-sync").start()
+    return True
 
 
 def start_import_background() -> bool:

@@ -55,11 +55,22 @@ def _status_payload():
 
 @router.post("/sync-data")
 def sync_data(_: User = Depends(get_current_user)):
+    """Import từ CSV gói (deploy) — chỉ khi DB thiếu tour; không kéo Sheet live."""
     from seed import start_import_background
 
     if not start_import_background():
         raise HTTPException(status_code=409, detail="Import đang chạy, vui lòng đợi...")
-    return {"started": True, "message": "Import đang chạy nền."}
+    return {"started": True, "message": "Import CSV gói đang chạy nền (nếu DB đã đủ ~8.410 Main thì không thay đổi)."}
+
+
+@router.post("/sync-main-sheet-live")
+def sync_main_sheet_live(_: User = Depends(get_current_user)):
+    """Kéo tab Main từ Google Sheet (live) → DB + phân loại lại bằng matcher."""
+    from seed import start_sheet_sync_background
+
+    if not start_sheet_sync_background(main_only=True):
+        raise HTTPException(status_code=409, detail="Đồng bộ đang chạy, vui lòng đợi...")
+    return {"started": True, "message": "Đang đồng bộ tab Main từ Google Sheet → DB…"}
 
 
 @router.get("/data-status")
@@ -117,7 +128,7 @@ def sync_main_sheet(_: User = Depends(get_current_user), db: Session = Depends(g
     """Chỉ đồng bộ tab Main (thị trường) — sau khi Google Apps Script cập nhật Sheet."""
     from sheets_tour_sync import merge_sheet_source_to_db
     try:
-        return merge_sheet_source_to_db(db, "Main", mirror_delete=True)
+        return merge_sheet_source_to_db(db, "Main", mirror_delete=True, force_reclassify_all=True)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Lỗi đồng bộ Main: {e}") from e
 

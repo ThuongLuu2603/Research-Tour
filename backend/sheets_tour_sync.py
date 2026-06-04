@@ -534,6 +534,7 @@ def merge_sheet_source_to_db(
     *,
     mirror_delete: bool | None = None,
     recompute_segments: bool = True,
+    force_reclassify_all: bool = False,
 ) -> dict:
     from data_sources import is_db_canonical_source, should_mirror_prune
 
@@ -579,7 +580,11 @@ def merge_sheet_source_to_db(
         )
         tour = _find_db_tour(db, nguon, fields, external_id)
         is_new = tour is None
-        needs_classify = is_new or (tour is not None and _needs_route_reclassification(tour, fields))
+        needs_classify = (
+            is_new
+            or force_reclassify_all
+            or (tour is not None and _needs_route_reclassification(tour, fields))
+        )
 
         if matcher and needs_classify:
             mk, rt, matched, _rid = matcher.resolve(

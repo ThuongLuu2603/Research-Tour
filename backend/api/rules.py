@@ -15,6 +15,7 @@ from classification import (
     apply_classification_rules_to_tours,
     classification_rules_status,
     invalidate_classification_cache,
+    invalidate_rules_changed,
     seed_company_aliases_from_defaults,
     seed_departure_aliases_from_defaults,
     seed_duration_aliases_from_defaults,
@@ -33,6 +34,11 @@ from sheets_rules_sync import (
 )
 
 router = APIRouter(prefix="/api/admin/rules", tags=["rules-admin"])
+
+
+def _on_market_route_rules_changed(db: Session) -> None:
+    """Sửa rule thị trường/tuyến → matcher mới + tour phải áp dụng lại."""
+    invalidate_rules_changed(db)
 
 
 @router.get("/status")
@@ -313,7 +319,7 @@ def create_market_rule(
     db.add(rule)
     db.commit()
     db.refresh(rule)
-    invalidate_classification_cache()
+    _on_market_route_rules_changed(db)
     if push_sheet:
         _try_push_market(db)
     _auto_apply_tours(db, auto_apply, scope="market")
@@ -336,7 +342,7 @@ def update_market_rule(
         setattr(rule, k, v)
     db.commit()
     db.refresh(rule)
-    invalidate_classification_cache()
+    _on_market_route_rules_changed(db)
     if push_sheet:
         _try_push_market(db)
     _auto_apply_tours(db, auto_apply, scope="market")
@@ -356,7 +362,7 @@ def delete_market_rule(
         raise HTTPException(404, "Không tìm thấy rule")
     db.delete(rule)
     db.commit()
-    invalidate_classification_cache()
+    _on_market_route_rules_changed(db)
     msg = _try_push_market(db) if push_sheet else None
     stats = _auto_apply_tours(db, auto_apply, scope="market")
     return {"deleted": rule_id, "sheet_sync": msg, "tours_apply": stats}
@@ -406,7 +412,7 @@ def create_route_rule(
     db.add(rule)
     db.commit()
     db.refresh(rule)
-    invalidate_classification_cache()
+    _on_market_route_rules_changed(db)
     if push_sheet:
         _try_push_route(db)
     kws = [k.strip().lower() for k in rule.keywords.split(",") if k.strip()]
@@ -430,7 +436,7 @@ def update_route_rule(
         setattr(rule, k, v)
     db.commit()
     db.refresh(rule)
-    invalidate_classification_cache()
+    _on_market_route_rules_changed(db)
     if push_sheet:
         _try_push_route(db)
     kws = [k.strip().lower() for k in rule.keywords.split(",") if k.strip()]
@@ -451,7 +457,7 @@ def delete_route_rule(
         raise HTTPException(404, "Không tìm thấy rule")
     db.delete(rule)
     db.commit()
-    invalidate_classification_cache()
+    _on_market_route_rules_changed(db)
     msg = _try_push_route(db) if push_sheet else None
     stats = _auto_apply_tours(db, auto_apply, scope="route")
     return {"deleted": rule_id, "sheet_sync": msg, "tours_apply": stats}
@@ -892,11 +898,10 @@ def put_classify_market_order(
     db: Session = Depends(get_db),
 ):
     from classify_market_order import save_market_order
-    from classification import invalidate_classification_cache
     from rules_job_store import invalidate_unmatched_cache
 
     markets = save_market_order(db, body.markets)
-    invalidate_classification_cache()
+    _on_market_route_rules_changed(db)
     invalidate_unmatched_cache()
     return {"markets": markets, "message": "Đã lưu thứ tự thị trường (trên xuống = ưu tiên)"}
 
@@ -987,7 +992,7 @@ def assign_classification(
     _add_route_rule_row(db, mk, route, route_kws)
 
     db.commit()
-    invalidate_classification_cache()
+    _on_market_route_rules_changed(db)
     kws = [k.strip().lower() for k in route_kws.split(",") if k.strip()]
     tours = _auto_apply_tours(db, body.auto_apply, scope="all", keywords=kws)
     return {
@@ -1020,7 +1025,7 @@ def assign_classification_bulk(
         all_kws.extend(k.strip().lower() for k in route_kws.split(",") if k.strip())
 
     db.commit()
-    invalidate_classification_cache()
+    _on_market_route_rules_changed(db)
     tours = _auto_apply_tours(db, body.auto_apply, scope="all", keywords=list(dict.fromkeys(all_kws)))
     n = len(body.items)
     return {
@@ -1044,7 +1049,7 @@ def assign_market_keyword(
     db.add(rule)
     db.commit()
     db.refresh(rule)
-    invalidate_classification_cache()
+    _on_market_route_rules_changed(db)
     tours = _auto_apply_tours(db, auto_apply, scope="market")
     return {
         "rule": rule,

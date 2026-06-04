@@ -93,7 +93,6 @@ function HoverFullText({
           clamp === 2 ? "line-clamp-2" : "truncate",
           className,
         )}
-        title={text}
       >
         {text}
       </span>

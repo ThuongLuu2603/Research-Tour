@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  triggerScrape, getScrapeJobs, getScrapeJob, getSchedule, updateSchedule, getDataStatus, syncSheetData,
+  triggerScrape, getScrapeJobs, getScrapeJob, getSchedule, updateSchedule, getDataStatus, syncMainSheetLive,
   cancelScrapeJob, reconcileStaleScrapeJobs, ScrapeJob,
 } from "@/lib/api";
 import { fmtDate, parseAppDate, statusColor, cn } from "@/lib/utils";
@@ -221,7 +221,7 @@ export default function ScraperHub() {
   });
 
   const syncData = useMutation({
-    mutationFn: syncSheetData,
+    mutationFn: syncMainSheetLive,
     onSuccess: () => {
       refetchDataStatus();
     },
@@ -297,27 +297,30 @@ export default function ScraperHub() {
             className="btn-primary text-sm shrink-0"
           >
             {syncData.isPending || dataStatus?.import?.running ? (
-              <><Loader2 size={16} className="animate-spin" /> {dataStatus?.import?.message || "Đang import..."}</>
+              <><Loader2 size={16} className="animate-spin" /> {dataStatus?.import?.message || "Đang đồng bộ..."}</>
             ) : (
-              <><Database size={16} /> Import dữ liệu Sheet</>
+              <><Database size={16} /> Đồng bộ Sheet Main → DB</>
             )}
           </button>
         </div>
         {dataStatus?.import?.running && (
           <p className="text-sm text-blue-700 mt-3">
-            ⏳ {dataStatus.import.message} — tab Main có ~8.410 tour, cần 2–5 phút. Không tắt trang.
+            ⏳ {dataStatus.import.message} — kéo Google Sheet tab Main (~8.410 tour), thường 3–10 phút trên Render free. Không tắt trang.
           </p>
         )}
+        <p className="text-xs text-gray-500 mt-2">
+          Nút này đọc <strong>Google Sheet tab Main (live)</strong>, không phải file CSV gói trên server. Sau đồng bộ, matcher gán lại Thị trường/Tuyến (không lấy cột B/C từ Sheet).
+        </p>
         {dataStatus?.import?.error && (
           <p className="text-sm text-red-600 mt-3">Lỗi import: {dataStatus.import.error}</p>
         )}
         {!dataStatus?.import?.running && dataStatus?.complete && syncData.isSuccess && (
           <p className="text-sm text-green-700 mt-3">
-            ✓ Import xong — tổng {dataStatus.total.toLocaleString("vi-VN")} tour. Refresh Dashboard để xem.
+            ✓ Đồng bộ xong — tổng {dataStatus.total.toLocaleString("vi-VN")} tour. Refresh Research Grid để xem.
           </p>
         )}
         {syncData.isError && !dataStatus?.import?.running && (
-          <p className="text-sm text-red-600 mt-3">{(syncData.error as Error)?.message || "Import thất bại."}</p>
+          <p className="text-sm text-red-600 mt-3">{(syncData.error as Error)?.message || "Đồng bộ thất bại."}</p>
         )}
       </div>
 

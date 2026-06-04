@@ -352,7 +352,14 @@ export const getDataStatus = async (): Promise<DataStatus> => {
   return data;
 };
 
-export const syncSheetData = async () => {
+/** Đồng bộ tab Main từ Google Sheet (live) → DB + matcher. */
+export const syncMainSheetLive = async () => {
+  const { data } = await api.post("/admin/sync-main-sheet-live");
+  return data;
+};
+
+/** Import CSV gói khi deploy — không dùng khi Sheet đã cập nhật hàng ngày. */
+export const syncBundledCsvImport = async () => {
   const { data } = await api.post("/admin/sync-data");
   return data;
 };

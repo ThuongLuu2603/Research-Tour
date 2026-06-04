@@ -1,7 +1,7 @@
 """Thay thế toàn bộ quy tắc tuyến tour trong DB (dùng cho import Excel/JSON)."""
 from __future__ import annotations
 
-from classification import invalidate_classification_cache
+from classification import invalidate_rules_changed
 from classify_market_order import save_market_order
 from models import RouteKeywordRule, Tour
 from route_rule_tokens import rebuild_route_rule_tokens
@@ -39,7 +39,7 @@ def replace_route_rules(
         save_market_order(db, market_order)
 
     token_count = rebuild_route_rule_tokens(db)
-    invalidate_classification_cache()
+    invalidate_rules_changed(db)
     new_count = db.query(RouteKeywordRule).count()
     return {
         "old_count": old_count,

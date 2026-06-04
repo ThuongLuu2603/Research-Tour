@@ -84,6 +84,38 @@ def invalidate_classification_cache() -> None:
         pass
 
 
+def clear_tour_classified_timestamps(db, *, nguon: str | None = None) -> int:
+    """Xóa dấu «đã classify» — lần «Áp dụng ngay» sau đó sẽ quét lại (kể cả khi chỉ đổi rule)."""
+    from data_sources import DB_CANONICAL_NGUON
+    from models import Tour
+
+    q = db.query(Tour).filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
+    if nguon:
+        q = q.filter(Tour.nguon == nguon)
+    n = q.update(
+        {Tour.classified_at: None, Tour.classification_rule_id: None},
+        synchronize_session=False,
+    )
+    db.commit()
+    return int(n or 0)
+
+
+def invalidate_rules_changed(db=None) -> None:
+    """Sau khi sửa rule tuyến/thị trường — cache matcher mới + tour cần áp dụng lại."""
+    invalidate_classification_cache()
+    if db is None:
+        db = SessionLocal()
+        own = True
+    else:
+        own = False
+    try:
+        cleared = clear_tour_classified_timestamps(db)
+        logger.info("Rules changed — cleared classified_at on %s tours", cleared)
+    finally:
+        if own:
+            db.close()
+
+
 _route_matcher = None
 
 
@@ -1020,13 +1052,59 @@ def _apply_rule_result_to_tour(t, mk: str, rt: str, from_rule: bool, rule_id: in
     return market_n, route_n
 
 
-def _commit_tour_batch(db, batch) -> None:
+def _commit_tour_batch(db, batch, *, sync_search: bool = True) -> list[int]:
     from tour_search import sync_search_tsv_for_ids
 
     ids = [t.id for t in batch if t.id]
     db.commit()
-    if ids:
+    if sync_search and ids:
         sync_search_tsv_for_ids(ids)
+    return ids
+
+
+def reclassify_tours_by_nguon(db, nguon: str, *, batch_size: int = 500) -> dict:
+    """Chạy matcher cho mọi tour một nguồn (sau import Main không lấy B/C từ CSV)."""
+    from data_sources import DB_CANONICAL_NGUON
+    from models import Tour
+
+    if nguon not in DB_CANONICAL_NGUON:
+        return {"error": f"nguon không hợp lệ: {nguon}"}
+
+    invalidate_classification_cache()
+    matcher = get_route_rule_matcher()
+    route_n = market_n = 0
+    processed = 0
+    last_id = 0
+    while True:
+        rows = (
+            db.query(Tour)
+            .filter(Tour.nguon == nguon, Tour.id > last_id)
+            .order_by(Tour.id)
+            .limit(batch_size)
+            .all()
+        )
+        if not rows:
+            break
+        for t in rows:
+            mk, rt, from_rule, rule_id = matcher.resolve(t.ten_tour or "", t.lich_trinh or "")
+            m_delta, r_delta = _apply_rule_result_to_tour(t, mk, rt, from_rule, rule_id)
+            market_n += m_delta
+            route_n += r_delta
+        db.commit()
+        processed += len(rows)
+        last_id = rows[-1].id
+    try:
+        from compare_cache import invalidate_compare_cache
+
+        invalidate_compare_cache()
+    except Exception:
+        pass
+    return {
+        "nguon": nguon,
+        "tours_scanned": processed,
+        "route_updated": route_n,
+        "market_updated": market_n,
+    }
 
 
 def apply_all_rules_to_tours(
@@ -1044,6 +1122,8 @@ def apply_all_rules_to_tours(
     market_n = route_n = link_n = company_n = dep_n = dur_n = 0
     processed = 0
     total = count_canonical_tours(db, incremental=incremental)
+    defer_search = not incremental
+    pending_search_ids: list[int] = []
 
     for batch in _iter_canonical_tour_batches(db, incremental=incremental):
         for i, t in enumerate(batch):
@@ -1074,17 +1154,35 @@ def apply_all_rules_to_tours(
 
             _stamp_tour_classified(t)
 
-            if progress_cb and total and (i % 200 == 0 or i + 1 == len(batch)):
+            if progress_cb and total and (i % 100 == 0 or i + 1 == len(batch)):
                 progress_cb(
                     processed + i + 1,
                     total,
                     f"Đang quét {processed + i + 1}/{total} tour…",
                 )
 
-        _commit_tour_batch(db, batch)
+        ids = _commit_tour_batch(db, batch, sync_search=not defer_search)
+        if defer_search:
+            pending_search_ids.extend(ids)
         processed += len(batch)
         if progress_cb:
             progress_cb(processed, total, f"Đang quét {processed}/{total} tour…")
+
+    if defer_search and pending_search_ids:
+        try:
+            from tour_search import sync_search_tsv_for_ids
+
+            unique_ids = list({int(i) for i in pending_search_ids if i})
+            for off in range(0, len(unique_ids), 500):
+                sync_search_tsv_for_ids(unique_ids[off : off + 500])
+                if progress_cb and total:
+                    progress_cb(
+                        processed,
+                        total,
+                        f"Đang lập chỉ mục tìm kiếm {min(off + 500, len(unique_ids))}/{len(unique_ids)}…",
+                    )
+        except Exception as e:
+            logger.warning("deferred search tsv sync failed: %s", e)
 
     result = {
         "market_updated": market_n,
