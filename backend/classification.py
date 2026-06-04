@@ -1138,7 +1138,7 @@ def reclassify_tours_by_nguon(db, nguon: str, *, batch_size: int = 500) -> dict:
     }
 
 
-def apply_all_rules_to_tours(
+def _apply_all_rules_to_tours_locked(
     db,
     *,
     recompute_phan_khuc: bool = False,
@@ -1295,7 +1295,33 @@ def apply_all_rules_to_tours(
     return result
 
 
-def apply_classification_rules_to_tours(
+def apply_all_rules_to_tours(
+    db,
+    *,
+    recompute_phan_khuc: bool = False,
+    incremental: bool = True,
+    start_after_id: int = 0,
+    initial_processed: int = 0,
+    total_override: int | None = None,
+    progress_cb: callable | None = None,
+) -> dict:
+    from db_job_lock import tours_write_lock
+
+    with tours_write_lock(db, "apply_all_rules_to_tours") as locked:
+        if not locked:
+            raise RuntimeError("Đang có job khác ghi dữ liệu tour. Vui lòng thử lại sau.")
+        return _apply_all_rules_to_tours_locked(
+            db,
+            recompute_phan_khuc=recompute_phan_khuc,
+            incremental=incremental,
+            start_after_id=start_after_id,
+            initial_processed=initial_processed,
+            total_override=total_override,
+            progress_cb=progress_cb,
+        )
+
+
+def _apply_classification_rules_to_tours_locked(
     db,
     *,
     keyword_filter: list[str] | None = None,
@@ -1344,6 +1370,28 @@ def apply_classification_rules_to_tours(
     except Exception:
         pass
     return {"market_updated": market_n, "route_updated": route_n, "links_repaired": link_n, "tours_scanned": processed}
+
+
+def apply_classification_rules_to_tours(
+    db,
+    *,
+    keyword_filter: list[str] | None = None,
+    route_state: str | None = None,
+    clear_unmatched: bool = True,
+    progress_cb: callable | None = None,
+) -> dict:
+    from db_job_lock import tours_write_lock
+
+    with tours_write_lock(db, "apply_classification_rules_to_tours") as locked:
+        if not locked:
+            raise RuntimeError("Đang có job khác ghi dữ liệu tour. Vui lòng thử lại sau.")
+        return _apply_classification_rules_to_tours_locked(
+            db,
+            keyword_filter=keyword_filter,
+            route_state=route_state,
+            clear_unmatched=clear_unmatched,
+            progress_cb=progress_cb,
+        )
 
 
 def apply_classification_for_keywords(db, keywords: list[str]) -> dict:

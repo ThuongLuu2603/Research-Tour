@@ -54,10 +54,11 @@ def _job_plan(hour: int | None = None, minute: int | None = None) -> list[tuple[
     h = _schedule_hour if hour is None else hour
     m = _schedule_minute if minute is None else minute
     ftg_h, ftg_m = _add_minutes(h, m, 20)
+    main_h, main_m = _add_minutes(h, m, 50)
     return [
-        ("daily_main_sheet_sync", "Sync Main → DB", 6, 30),
         ("daily_vietravel", "Scrape Vietravel", h, m),
         ("daily_findtourgo", "Scrape FindTourGo → Sheet", ftg_h, ftg_m),
+        ("daily_main_sheet_sync", "Sync Main → DB", main_h, main_m),
         ("daily_intel_snapshot", "Snapshot", 8, 30),
         ("daily_sheet_sync", "Sync Main + Vietravel Sheet → DB", 9, 0),
     ]
@@ -114,7 +115,16 @@ def update_schedule_config(hour: int, minute: int, db=None) -> None:
     if _scheduler:
         _scheduler.reschedule_job("daily_vietravel", trigger=_vn_cron(hour, minute))
         _scheduler.reschedule_job("daily_findtourgo", trigger=_vn_cron(ftg_h, ftg_m))
-    logger.info("Schedule updated (VN): Vietravel %02d:%02d, FindTourGo %02d:%02d", hour, minute, ftg_h, ftg_m)
+        main_h, main_m = _add_minutes(hour, minute, 50)
+        _scheduler.reschedule_job("daily_main_sheet_sync", trigger=_vn_cron(main_h, main_m))
+    logger.info(
+        "Schedule updated (VN): Vietravel %02d:%02d, FindTourGo %02d:%02d, Main sync %02d:%02d",
+        hour,
+        minute,
+        ftg_h,
+        ftg_m,
+        *_add_minutes(hour, minute, 50),
+    )
 
 
 def _vn_now() -> datetime:
@@ -310,6 +320,7 @@ def start_scheduler():
     _load_schedule_from_db()
     _scheduler = AsyncIOScheduler(timezone=VN_TZ)
     ftg_h, ftg_m = _add_minutes(_schedule_hour, _schedule_minute, 20)
+    main_h, main_m = _add_minutes(_schedule_hour, _schedule_minute, 50)
 
     _scheduler.add_job(
         _auto_scrape,
@@ -327,7 +338,7 @@ def start_scheduler():
     )
     _scheduler.add_job(
         _sync_main_sheet,
-        _vn_cron(6, 30),
+        _vn_cron(main_h, main_m),
         id="daily_main_sheet_sync",
         replace_existing=True,
     )
@@ -352,12 +363,14 @@ def start_scheduler():
     )
     _scheduler.start()
     logger.info(
-        "Scheduler (VN %s): Main 06:30, Vietravel %02d:%02d, FindTourGo %02d:%02d, snapshot 08:30, all sheets 09:00 + catchup/15m",
+        "Scheduler (VN %s): Vietravel %02d:%02d, FindTourGo %02d:%02d, Main sync %02d:%02d, snapshot 08:30, all sheets 09:00 + catchup/15m",
         VN_TZ_NAME,
         _schedule_hour,
         _schedule_minute,
         ftg_h,
         ftg_m,
+        main_h,
+        main_m,
     )
 
 

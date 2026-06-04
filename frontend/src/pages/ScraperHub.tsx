@@ -382,9 +382,9 @@ export default function ScraperHub() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {(schedule?.jobs ?? [
-              { label: "Sync Main → DB", time_vn: "06:30" },
               { label: "Scrape Vietravel → DB → Sheet", time_vn: `${String(schedHour).padStart(2, "0")}:${String(schedMin).padStart(2, "0")}` },
               { label: "Scrape FindTourGo → Sheet", time_vn: (() => { const t = addMinutes(schedHour, schedMin, 20); return `${String(t.h).padStart(2, "0")}:${String(t.m).padStart(2, "0")}`; })() },
+              { label: "Sync Main → DB", time_vn: (() => { const t = addMinutes(schedHour, schedMin, 50); return `${String(t.h).padStart(2, "0")}:${String(t.m).padStart(2, "0")}`; })() },
               { label: "Snapshot", time_vn: "08:30" },
               { label: "Sync Main + Vietravel → DB", time_vn: "09:00" },
             ]).map((j) => (

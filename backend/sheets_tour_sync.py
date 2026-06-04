@@ -205,7 +205,106 @@ def _phan_khuc_inputs_changed(tour: Tour, fields: dict) -> bool:
     return False
 
 
-def _find_db_tour(db, nguon: str, fields: dict, external_id: str) -> Tour | None:
+def _build_tour_lookup(db, nguon: str) -> dict[str, dict[str, Tour]]:
+    from sqlalchemy import or_
+    from sqlalchemy.orm import load_only
+
+    q = db.query(Tour).options(load_only(
+        Tour.id,
+        Tour.external_id,
+        Tour.nguon,
+        Tour.ma_tour,
+        Tour.link_url,
+        Tour.ten_tour,
+        Tour.lich_trinh,
+        Tour.thi_truong,
+        Tour.tuyen_tour,
+        Tour.phan_khuc,
+        Tour.gia,
+        Tour.thoi_gian,
+        Tour.analyst_note,
+        Tour.flagged,
+        Tour.content_hash,
+        Tour.sheet_source,
+    ))
+    if nguon == "Main":
+        q = q.filter(or_(Tour.nguon == nguon, Tour.ma_tour != "", Tour.link_url != ""))
+    else:
+        q = q.filter(Tour.nguon == nguon)
+
+    lookup: dict[str, dict[str, Tour]] = {
+        "external": {},
+        "source_ma": {},
+        "source_link": {},
+        "source_ten": {},
+        "any_ma": {},
+        "any_link": {},
+    }
+    for tour in q.order_by(Tour.id).all():
+        _remember_tour_lookup(lookup, tour)
+    return lookup
+
+
+def _remember_tour_lookup(lookup: dict[str, dict[str, Tour]], tour: Tour) -> None:
+    ext = (tour.external_id or "").strip()
+    ma = (tour.ma_tour or "").strip()
+    link = (tour.link_url or "").strip()
+    ten = (tour.ten_tour or "").strip()
+    source = (tour.nguon or "").strip()
+    if ext:
+        lookup["external"].setdefault(ext, tour)
+    if ma:
+        lookup["source_ma"].setdefault(f"{source}|{ma}", tour)
+        lookup["any_ma"].setdefault(ma, tour)
+    if link:
+        lookup["source_link"].setdefault(f"{source}|{link}", tour)
+        lookup["any_link"].setdefault(link, tour)
+        lookup["any_link"].setdefault(link.split("?")[0], tour)
+    if ten:
+        lookup["source_ten"].setdefault(f"{source}|{ten}", tour)
+
+
+def _find_db_tour(
+    db,
+    nguon: str,
+    fields: dict,
+    external_id: str,
+    lookup: dict[str, dict[str, Tour]] | None = None,
+) -> Tour | None:
+    if lookup is not None:
+        tour = lookup["external"].get(external_id)
+        if tour:
+            return tour
+        ma = fields.get("ma_tour") or ""
+        link = fields.get("link_url") or ""
+        ten = fields.get("ten_tour") or ""
+        if ma:
+            tour = lookup["source_ma"].get(f"{nguon}|{ma}")
+            if tour:
+                return tour
+        if link:
+            tour = lookup["source_link"].get(f"{nguon}|{link}")
+            if tour:
+                return tour
+        if ten:
+            tour = lookup["source_ten"].get(f"{nguon}|{ten}")
+            if tour:
+                return tour
+        if nguon != "Main":
+            return None
+        if ma:
+            tour = lookup["any_ma"].get(ma)
+            if tour:
+                return tour
+        if link:
+            for needle in (link, link.split("?")[0]):
+                if not needle:
+                    continue
+                tour = lookup["any_link"].get(needle)
+                if tour:
+                    return tour
+        return None
+
     tour = db.query(Tour).filter(Tour.external_id == external_id).first()
     if tour:
         return tour
@@ -378,7 +477,7 @@ def purge_nguon_from_db(db, nguon: str) -> int:
     return deleted
 
 
-def merge_dataframe_to_db(
+def _merge_dataframe_to_db_locked(
     db,
     df,
     nguon: str,
@@ -389,6 +488,8 @@ def merge_dataframe_to_db(
     commit_batch: int = 80,
 ) -> dict:
     """Scraper → DB trước (Vietravel). Tour.id giữ nguyên khi match external_id."""
+    if hasattr(db, "expire_on_commit"):
+        db.expire_on_commit = False
     from classification import _load_route_rules
     from data_sources import is_db_canonical_source, should_mirror_prune
 
@@ -404,6 +505,7 @@ def merge_dataframe_to_db(
     updated = inserted = skipped = unchanged = route_reclassified = route_preserved = 0
     synced_tour_ids: set[int] = set()
     affected_tour_ids: set[int] = set()
+    lookup = _build_tour_lookup(db, nguon)
     now = datetime.utcnow()
     for idx, (_, row) in enumerate(df.iterrows()):
         fields = _scrape_row_to_fields(row)
@@ -420,7 +522,7 @@ def merge_dataframe_to_db(
             link_url=fields.get("link_url", ""),
             ten_tour=fields.get("ten_tour", ""),
         )
-        tour = _find_db_tour(db, nguon, fields, external_id)
+        tour = _find_db_tour(db, nguon, fields, external_id, lookup)
         is_new = tour is None
         needs_classify = is_new or (tour is not None and _needs_route_reclassification(tour, fields))
 
@@ -471,6 +573,7 @@ def merge_dataframe_to_db(
             preserve_classification=(not is_new and not needs_classify),
             external_id=external_id,
         )
+        _remember_tour_lookup(lookup, tour)
 
         if progress and (idx % 15 == 0 or idx + 1 == total):
             pct = 65 + int(17 * (idx + 1) / max(total, 1))
@@ -517,6 +620,32 @@ def merge_dataframe_to_db(
     return out
 
 
+def merge_dataframe_to_db(
+    db,
+    df,
+    nguon: str,
+    *,
+    mirror_delete: bool | None = None,
+    recompute_segments: bool = True,
+    progress: Callable[[int, str], None] | None = None,
+    commit_batch: int = 80,
+) -> dict:
+    from db_job_lock import tours_write_lock
+
+    with tours_write_lock(db, f"merge_dataframe_to_db:{nguon}") as locked:
+        if not locked:
+            raise RuntimeError("Đang có job khác ghi dữ liệu tour. Vui lòng thử lại sau.")
+        return _merge_dataframe_to_db_locked(
+            db,
+            df,
+            nguon,
+            mirror_delete=mirror_delete,
+            recompute_segments=recompute_segments,
+            progress=progress,
+            commit_batch=commit_batch,
+        )
+
+
 def export_vietravel_tab_from_db(db) -> dict:
     """DB (nguon=Vietravel) → ghi đè tab Sheet Vietravel."""
     from models import Tour
@@ -528,7 +657,7 @@ def export_vietravel_tab_from_db(db) -> dict:
     return {"ok": True, "rows": len(tours)}
 
 
-def merge_sheet_source_to_db(
+def _merge_sheet_source_to_db_locked(
     db,
     nguon: str,
     *,
@@ -536,7 +665,10 @@ def merge_sheet_source_to_db(
     recompute_segments: bool = True,
     force_reclassify_all: bool = False,
     progress_cb: Callable[[int, int, str], None] | None = None,
+    commit_batch: int = 100,
 ) -> dict:
+    if hasattr(db, "expire_on_commit"):
+        db.expire_on_commit = False
     from data_sources import is_db_canonical_source, should_mirror_prune
 
     if not is_db_canonical_source(nguon):
@@ -567,6 +699,7 @@ def merge_sheet_source_to_db(
     updated = inserted = skipped = unchanged = route_reclassified = route_preserved = 0
     synced_tour_ids: set[int] = set()
     affected_tour_ids: set[int] = set()
+    lookup = _build_tour_lookup(db, nguon)
     now = datetime.utcnow()
     data_rows = rows[1:]
     total_rows = len(data_rows)
@@ -584,7 +717,7 @@ def merge_sheet_source_to_db(
             link_url=fields.get("link_url", ""),
             ten_tour=fields.get("ten_tour", ""),
         )
-        tour = _find_db_tour(db, nguon, fields, external_id)
+        tour = _find_db_tour(db, nguon, fields, external_id, lookup)
         is_new = tour is None
         needs_classify = (
             is_new
@@ -642,6 +775,10 @@ def merge_sheet_source_to_db(
             external_id=external_id,
             sheet_row=row_idx,
         )
+        _remember_tour_lookup(lookup, tour)
+
+        if commit_batch > 0 and row_num % commit_batch == 0:
+            db.commit()
 
         if progress_cb and total_rows and (row_num % 100 == 0 or row_num == total_rows):
             progress_cb(
@@ -724,6 +861,32 @@ def _post_sync_cache(db) -> None:
         refresh_segment_mv()
     except Exception as e:
         logger.warning("post-sync cache refresh failed: %s", e)
+
+
+def merge_sheet_source_to_db(
+    db,
+    nguon: str,
+    *,
+    mirror_delete: bool | None = None,
+    recompute_segments: bool = True,
+    force_reclassify_all: bool = False,
+    progress_cb: Callable[[int, int, str], None] | None = None,
+    commit_batch: int = 100,
+) -> dict:
+    from db_job_lock import tours_write_lock
+
+    with tours_write_lock(db, f"merge_sheet_source_to_db:{nguon}") as locked:
+        if not locked:
+            raise RuntimeError("Đang có job khác ghi dữ liệu tour. Vui lòng thử lại sau.")
+        return _merge_sheet_source_to_db_locked(
+            db,
+            nguon,
+            mirror_delete=mirror_delete,
+            recompute_segments=recompute_segments,
+            force_reclassify_all=force_reclassify_all,
+            progress_cb=progress_cb,
+            commit_batch=commit_batch,
+        )
 
 
 def merge_all_sheets_to_db(db) -> dict:
