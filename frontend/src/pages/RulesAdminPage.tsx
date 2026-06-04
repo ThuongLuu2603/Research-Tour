@@ -372,45 +372,48 @@ export default function RulesAdminPage() {
         </div>
       </div>
 
-      {/* ─── Tab buttons với badge số chưa khớp ─────────────────────────── */}
-      <div className="flex gap-2 flex-wrap">
-        {([
-          ["classify", "Tuyến tour", unmatchedSummary?.classify],
-          ["company", COL.congTy, unmatchedSummary?.company],
-          ["departure", COL.diemKhoiHanh, unmatchedSummary?.departure],
-          ["duration", COL.thoiGian, unmatchedSummary?.duration],
-        ] as const).map(([t, label, badgeCount]) => (
-          <button key={t} onClick={() => { setTab(t); setSearch(""); cancelEdit(); }}
-            className={cn("px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2", tab === t ? "bg-primary-600 text-white" : "bg-gray-100 hover:bg-gray-200")}>
-            {label}
-            {(badgeCount ?? 0) > 0 && (
-              <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full",
-                tab === t ? "bg-white/30 text-white" : "bg-amber-100 text-amber-800")}>
-                {badgeCount}
-              </span>
-            )}
-          </button>
-        ))}
+      {/* ─── Tabs + Search cùng 1 hàng ────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex gap-1 flex-wrap">
+          {([
+            ["classify", "Tuyến tour", unmatchedSummary?.classify],
+            ["company", COL.congTy, unmatchedSummary?.company],
+            ["departure", COL.diemKhoiHanh, unmatchedSummary?.departure],
+            ["duration", COL.thoiGian, unmatchedSummary?.duration],
+          ] as const).map(([t, label, badgeCount]) => (
+            <button key={t} onClick={() => { setTab(t); setSearch(""); cancelEdit(); }}
+              className={cn("px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5", tab === t ? "bg-primary-600 text-white" : "bg-gray-100 hover:bg-gray-200")}>
+              {label}
+              {(badgeCount ?? 0) > 0 && (
+                <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full",
+                  tab === t ? "bg-white/30 text-white" : "bg-amber-100 text-amber-800")}>
+                  {badgeCount}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+        <div className="flex-1 min-w-[200px] max-w-md">
+          <RuleSearchBar
+            value={search}
+            onChange={setSearch}
+            total={
+              tab === "classify" ? classifySearchCounts.total
+                : tab === "company" ? (companyRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
+                : tab === "departure" ? (departureRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
+                : tab === "duration" ? (durationRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
+                : (durationRules?.length ?? 0)
+            }
+            filtered={
+              tab === "classify" ? classifySearchCounts.filtered
+                : tab === "company" ? filteredCompany.length + filteredUnmatched.length
+                : tab === "departure" ? filteredDeparture.length + filteredUnmatched.length
+                : tab === "duration" ? filteredDuration.length + filteredUnmatched.length
+                : filteredDuration.length
+            }
+          />
+        </div>
       </div>
-
-      <RuleSearchBar
-        value={search}
-        onChange={setSearch}
-        total={
-          tab === "classify" ? classifySearchCounts.total
-            : tab === "company" ? (companyRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
-            : tab === "departure" ? (departureRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
-            : tab === "duration" ? (durationRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
-            : (durationRules?.length ?? 0)
-        }
-        filtered={
-          tab === "classify" ? classifySearchCounts.filtered
-            : tab === "company" ? filteredCompany.length + filteredUnmatched.length
-            : tab === "departure" ? filteredDeparture.length + filteredUnmatched.length
-            : tab === "duration" ? filteredDuration.length + filteredUnmatched.length
-            : filteredDuration.length
-        }
-      />
 
       {tab === "classify" && (
         <ClassificationRulesTab
@@ -434,154 +437,155 @@ export default function RulesAdminPage() {
       )}
 
       {tab === "company" && (
-        <div className="space-y-4">
-          <div className="card p-4 flex flex-wrap gap-2 items-end">
-            <div><label className="text-xs text-gray-500">Tên chính thức</label>
-              <input className="input text-sm" value={cCanonical} onChange={(e) => setCCanonical(e.target.value)} placeholder="Vietravel" /></div>
-            <div className="flex-1 min-w-[200px]"><label className="text-xs text-gray-500">Alias</label>
-              <input className="input text-sm" value={cAlias} onChange={(e) => setCAlias(e.target.value)} placeholder="vietravel, vtr..."
-                onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); setCAlias(e.dataTransfer.getData("text/plain")); }} /></div>
-            <button onClick={() => addCompany.mutate()} disabled={!cCanonical || !cAlias} className="btn-primary text-sm"><Plus size={14} /> Thêm</button>
-            <button onClick={() => seedCompanyDefaults().then(() => afterRuleSaved("Đã import alias mặc định"))} className="btn-secondary text-sm"><Database size={14} /> Alias mặc định</button>
+        <div className="grid lg:grid-cols-[3fr_2fr] gap-4 items-start">
+          {/* LEFT: Form thêm + bảng rules */}
+          <div className="space-y-3">
+            <div className="card p-4 flex flex-wrap gap-2 items-end">
+              <div><label className="text-xs text-gray-500">Tên chính thức</label>
+                <input className="input text-sm" value={cCanonical} onChange={(e) => setCCanonical(e.target.value)} placeholder="Vietravel" /></div>
+              <div className="flex-1 min-w-[180px]"><label className="text-xs text-gray-500">Alias</label>
+                <input className="input text-sm" value={cAlias} onChange={(e) => setCAlias(e.target.value)} placeholder="vietravel, vtr..."
+                  onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); setCAlias(e.dataTransfer.getData("text/plain")); }} /></div>
+              <div className="flex gap-2">
+                <button onClick={() => addCompany.mutate()} disabled={!cCanonical || !cAlias} className="btn-primary text-sm"><Plus size={14} /> Thêm</button>
+                <button onClick={() => seedCompanyDefaults().then(() => afterRuleSaved("Đã import alias mặc định"))} className="btn-secondary text-sm"><Database size={14} /> Mặc định</button>
+              </div>
+            </div>
+            <AliasTable
+              rows={filteredCompany} unmatched={filteredUnmatched} hideUnmatched
+              canonicalOptions={canonicalOptions} editingId={editingId} editDraft={editDraft}
+              dropTarget={dropTarget} setDropTarget={setDropTarget}
+              onDropAssign={(canonical, alias) => assignCompanyAlias(canonical, alias)}
+              onStartEdit={(r) => startEdit(r.id, { canonical_name: r.canonical_name, alias: r.alias })}
+              onDraftChange={setEditDraft} onCancel={cancelEdit}
+              onSave={(r) => updateCompanyRule(r.id, { canonical_name: editDraft.canonical_name, alias: editDraft.alias }).then(() => { cancelEdit(); afterRuleSaved("Đã cập nhật alias công ty"); })}
+              onDelete={(r) => deleteCompanyRule(r.id).then(() => afterRuleSaved("Đã xóa alias"))}
+              canonicalLabel="Tên chính thức"
+            />
           </div>
-          <AliasTable
-            rows={filteredCompany}
-            unmatched={filteredUnmatched}
+          {/* RIGHT: Chưa khớp */}
+          <SideUnmatchedAlias
+            items={filteredUnmatched}
             canonicalOptions={canonicalOptions}
-            editingId={editingId}
-            editDraft={editDraft}
-            dropTarget={dropTarget}
-            setDropTarget={setDropTarget}
-            onDropAssign={(canonical, alias) => assignCompanyAlias(canonical, alias)}
-            onStartEdit={(r) => startEdit(r.id, { canonical_name: r.canonical_name, alias: r.alias })}
-            onDraftChange={setEditDraft}
-            onCancel={cancelEdit}
-            onSave={(r) => updateCompanyRule(r.id, { canonical_name: editDraft.canonical_name, alias: editDraft.alias }).then(() => { cancelEdit(); afterRuleSaved("Đã cập nhật alias công ty"); })}
-            onDelete={(r) => deleteCompanyRule(r.id).then(() => afterRuleSaved("Đã xóa alias"))}
-            canonicalLabel="Tên chính thức"
+            onAssign={(canonical, alias) => assignCompanyAlias(canonical, alias)}
+            label="Tên chính thức"
           />
         </div>
       )}
 
       {tab === "departure" && (
-        <div className="space-y-4">
-          <div className="card p-4 flex flex-wrap gap-2 items-end">
-            <div><label className="text-xs text-gray-500">Tên chính thức</label>
-              <input className="input text-sm" value={dCanonical} onChange={(e) => setDCanonical(e.target.value)} placeholder="TP.HCM" /></div>
-            <div className="flex-1 min-w-[200px]"><label className="text-xs text-gray-500">Alias</label>
-              <input className="input text-sm" value={dAlias} onChange={(e) => setDAlias(e.target.value)} placeholder="sài gòn, hcm..."
-                onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); setDAlias(e.dataTransfer.getData("text/plain")); }} /></div>
-            <button onClick={() => addDeparture.mutate()} disabled={!dCanonical || !dAlias} className="btn-primary text-sm"><Plus size={14} /> Thêm</button>
-            <button onClick={() => seedDepartureDefaults().then(() => afterRuleSaved("Đã import alias mặc định"))} className="btn-secondary text-sm"><Database size={14} /> Alias mặc định</button>
+        <div className="grid lg:grid-cols-[3fr_2fr] gap-4 items-start">
+          {/* LEFT: Form thêm + bảng rules */}
+          <div className="space-y-3">
+            <div className="card p-4 flex flex-wrap gap-2 items-end">
+              <div><label className="text-xs text-gray-500">Tên chính thức</label>
+                <input className="input text-sm" value={dCanonical} onChange={(e) => setDCanonical(e.target.value)} placeholder="TP.HCM" /></div>
+              <div className="flex-1 min-w-[180px]"><label className="text-xs text-gray-500">Alias</label>
+                <input className="input text-sm" value={dAlias} onChange={(e) => setDAlias(e.target.value)} placeholder="sài gòn, hcm..."
+                  onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); setDAlias(e.dataTransfer.getData("text/plain")); }} /></div>
+              <div className="flex gap-2">
+                <button onClick={() => addDeparture.mutate()} disabled={!dCanonical || !dAlias} className="btn-primary text-sm"><Plus size={14} /> Thêm</button>
+                <button onClick={() => seedDepartureDefaults().then(() => afterRuleSaved("Đã import alias mặc định"))} className="btn-secondary text-sm"><Database size={14} /> Mặc định</button>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 inline-flex items-center gap-1">
+              Chuẩn hóa {COL.diemKhoiHanh}.<InfoTip text="Sài Gòn / HCM / TPHCM → TP.HCM. Bấm bút chì để sửa từng dòng." />
+            </p>
+            <AliasTable
+              rows={filteredDeparture} unmatched={filteredUnmatched} hideUnmatched
+              canonicalOptions={canonicalOptions} editingId={editingId} editDraft={editDraft}
+              dropTarget={dropTarget} setDropTarget={setDropTarget}
+              onDropAssign={(canonical, alias) => assignDepartureAlias(canonical, alias)}
+              onStartEdit={(r) => startEdit(r.id, { canonical_name: r.canonical_name, alias: r.alias })}
+              onDraftChange={setEditDraft} onCancel={cancelEdit}
+              onSave={(r) => updateDepartureRule(r.id, { canonical_name: editDraft.canonical_name, alias: editDraft.alias }).then(() => { cancelEdit(); afterRuleSaved("Đã cập nhật alias điểm KH"); })}
+              onDelete={(r) => deleteDepartureRule(r.id).then(() => afterRuleSaved("Đã xóa alias"))}
+              canonicalLabel="Tên chính thức"
+            />
           </div>
-          <p className="text-xs text-gray-500 inline-flex items-center gap-1">
-            Chuẩn hóa {COL.diemKhoiHanh}.
-            <InfoTip text="Sài Gòn / HCM / TPHCM → TP.HCM. Bấm bút chì để sửa từng dòng." />
-          </p>
-          <AliasTable
-            rows={filteredDeparture}
-            unmatched={filteredUnmatched}
+          {/* RIGHT: Chưa khớp */}
+          <SideUnmatchedAlias
+            items={filteredUnmatched}
             canonicalOptions={canonicalOptions}
-            editingId={editingId}
-            editDraft={editDraft}
-            dropTarget={dropTarget}
-            setDropTarget={setDropTarget}
-            onDropAssign={(canonical, alias) => assignDepartureAlias(canonical, alias)}
-            onStartEdit={(r) => startEdit(r.id, { canonical_name: r.canonical_name, alias: r.alias })}
-            onDraftChange={setEditDraft}
-            onCancel={cancelEdit}
-            onSave={(r) => updateDepartureRule(r.id, { canonical_name: editDraft.canonical_name, alias: editDraft.alias }).then(() => { cancelEdit(); afterRuleSaved("Đã cập nhật alias điểm KH"); })}
-            onDelete={(r) => deleteDepartureRule(r.id).then(() => afterRuleSaved("Đã xóa alias"))}
-            canonicalLabel="Tên chính thức"
+            onAssign={(canonical, alias) => assignDepartureAlias(canonical, alias)}
+            label="Tên chính thức"
           />
         </div>
       )}
 
       {tab === "duration" && (
-        <div className="space-y-4">
-          <div className="card p-4 flex flex-wrap gap-2 items-end">
-            <div><label className="text-xs text-gray-500">Chuẩn (NĐ)</label>
-              <input className="input text-sm w-28" value={durDays} onChange={(e) => setDurDays(e.target.value)} placeholder="5N4Đ" />
-              {parsedDurDays != null && durDays.trim() && (
-                <span className="text-[10px] text-gray-500 block mt-0.5">= {parsedDurDays} ngày</span>
-              )}
+        <div className="grid lg:grid-cols-[3fr_2fr] gap-4 items-start">
+          {/* LEFT: Form thêm + bảng rules */}
+          <div className="space-y-3">
+            <div className="card p-4 flex flex-wrap gap-2 items-end">
+              <div>
+                <label className="text-xs text-gray-500">Chuẩn (NĐ)</label>
+                <input className="input text-sm w-28" value={durDays} onChange={(e) => setDurDays(e.target.value)} placeholder="5N4Đ" />
+                {parsedDurDays != null && durDays.trim() && <span className="text-[10px] text-gray-500 block mt-0.5">= {parsedDurDays} ngày</span>}
+              </div>
+              <div className="flex-1 min-w-[160px]">
+                <label className="text-xs text-gray-500">Alias (text gốc)</label>
+                <input className="input text-sm" value={durAlias} onChange={(e) => setDurAlias(e.target.value)} placeholder="5n4d, 5 ngày 4 đêm..."
+                  onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); setDurAlias(e.dataTransfer.getData("text/plain")); }} />
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => addDuration.mutate()} disabled={parsedDurDays == null || !durAlias} className="btn-primary text-sm"><Plus size={14} /> Thêm</button>
+                <button onClick={() => seedDurationDefaults().then(() => afterRuleSaved("Đã import alias mặc định"))} className="btn-secondary text-sm"><Database size={14} /> Mặc định</button>
+              </div>
             </div>
-            <div className="flex-1 min-w-[200px]"><label className="text-xs text-gray-500">Alias (text gốc)</label>
-              <input className="input text-sm" value={durAlias} onChange={(e) => setDurAlias(e.target.value)} placeholder="5n4d, 5 ngày 4 đêm..."
-                onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); setDurAlias(e.dataTransfer.getData("text/plain")); }} /></div>
-            <button onClick={() => addDuration.mutate()} disabled={parsedDurDays == null || !durAlias} className="btn-primary text-sm"><Plus size={14} /> Thêm</button>
-            <button onClick={() => seedDurationDefaults().then(() => afterRuleSaved("Đã import alias mặc định"))} className="btn-secondary text-sm"><Database size={14} /> Alias mặc định</button>
-          </div>
-          <p className="text-xs text-gray-500 inline-flex items-center gap-1">
-            Key matching {COL.thoiGian} — chuẩn dạng <strong>NĐ</strong>: 5N4Đ→5, 5N5Đ→5.5, 1N→1, 0.5N→0.5 (1 buổi).
-            <InfoTip text="Alias khớp không phân biệt hoa thường. Giá trị số lưu trong DB; nhãn NĐ chỉ để hiển thị." />
-          </p>
-          <div className="card overflow-auto max-h-[500px]">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 sticky top-0"><tr>
-                <th className="px-3 py-2 text-left">Chuẩn (NĐ) <span className="text-[10px] font-normal text-gray-400">(thả alias vào đây)</span></th><th className="px-3 py-2 text-left">Alias</th><th className="w-24"></th>
-              </tr></thead>
-              <tbody>
-                {filteredDuration.map((r: DurationRule) => {
-                  const key = `dur-${r.canonical_days}`;
-                  const { dropClassName, ...drop } = dropHandlers(key, dropTarget, setDropTarget, (alias) => assignDurationAlias(r.canonical_days, alias));
-                  return (
-                  <tr key={r.id} className={cn("border-t", editingId === r.id && "bg-blue-50")}>
-                    <td className={cn("px-3 py-2 font-medium", dropClassName)} {...drop}>
-                      {editingId === r.id ? (
-                        <input className="input text-sm py-1 w-24" value={editDraft.canonical_label ?? formatDurationLabel(r.canonical_days)} onChange={(e) => setEditDraft({ ...editDraft, canonical_label: e.target.value })} />
-                      ) : (
-                        <span className="flex items-center gap-1">{formatDurationLabel(r.canonical_days)}
-                          <span className="text-[10px] text-gray-400">({r.canonical_days})</span>
-                          <button type="button" className="text-gray-400 hover:text-primary-600" onClick={() => startEdit(r.id, { canonical_label: formatDurationLabel(r.canonical_days), alias: r.alias })}><Pencil size={12} /></button>
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 font-mono text-xs">
-                      {editingId === r.id ? (
-                        <input className="input text-sm py-1 font-mono" value={editDraft.alias ?? ""} onChange={(e) => setEditDraft({ ...editDraft, alias: e.target.value })} />
-                      ) : r.alias}
-                    </td>
-                    <td className="px-3 py-2">
-                      {editingId === r.id ? (
-                        <span className="flex gap-1">
-                          <button type="button" className="text-green-600" onClick={() => {
-                            const days = parseDurationInput(editDraft.canonical_label ?? "");
-                            if (days == null) { setSyncMsg("Chuẩn NĐ không hợp lệ (VD: 5N4Đ, 0.5N)"); return; }
-                            updateDurationRule(r.id, { canonical_days: days, alias: editDraft.alias }).then(() => { afterRuleSaved("Đã cập nhật alias thời gian"); cancelEdit(); }).catch(showErr);
-                          }}><Check size={14} /></button>
-                          <button type="button" className="text-gray-400" onClick={cancelEdit}><X size={14} /></button>
-                        </span>
-                      ) : (
-                        <button type="button" className="text-red-500" onClick={() => deleteDurationRule(r.id).then(() => { invalidate(); setSyncMsg("Đã xóa alias"); })}><Trash2 size={14} /></button>
-                      )}
-                    </td>
-                  </tr>
-                  );
-                })}
-                {filteredUnmatched.length > 0 && (
-                  <>
-                    <tr className="bg-amber-100 border-t-2 border-amber-400">
-                      <td colSpan={3} className="px-3 py-2 text-xs font-semibold text-amber-900">
-                        <span className="inline-flex items-center gap-1">
-                          <GripVertical size={12} /> Chưa khớp ({filteredUnmatched.length}) — kéo Alias lên dòng Số ngày phía trên, hoặc nhập ngày rồi bấm Gán
-                          <InfoTip text="Giá trị thời gian raw từ tour chưa có trong bảng alias." />
-                        </span>
+            <p className="text-xs text-gray-500 inline-flex items-center gap-1">
+              Chuẩn dạng NĐ: 5N4Đ→5, 5N5Đ→5.5, 1N→1, 0.5N→0.5 (1 buổi).<InfoTip text="Alias khớp không phân biệt hoa thường." />
+            </p>
+            <div className="card overflow-auto" style={{ maxHeight: "calc(100vh - 280px)" }}>
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 sticky top-0"><tr>
+                  <th className="px-3 py-2 text-left">Chuẩn (NĐ) <span className="text-[10px] font-normal text-gray-400">(thả alias)</span></th>
+                  <th className="px-3 py-2 text-left">Alias</th>
+                  <th className="w-24" />
+                </tr></thead>
+                <tbody>
+                  {filteredDuration.map((r: DurationRule) => {
+                    const key = `dur-${r.canonical_days}`;
+                    const { dropClassName, ...drop } = dropHandlers(key, dropTarget, setDropTarget, (alias) => assignDurationAlias(r.canonical_days, alias));
+                    return (
+                    <tr key={r.id} className={cn("border-t", editingId === r.id && "bg-blue-50")}>
+                      <td className={cn("px-3 py-2 font-medium", dropClassName)} {...drop}>
+                        {editingId === r.id ? (
+                          <input className="input text-sm py-1 w-24" value={editDraft.canonical_label ?? formatDurationLabel(r.canonical_days)} onChange={(e) => setEditDraft({ ...editDraft, canonical_label: e.target.value })} />
+                        ) : (
+                          <span className="flex items-center gap-1">{formatDurationLabel(r.canonical_days)}
+                            <span className="text-[10px] text-gray-400">({r.canonical_days})</span>
+                            <button type="button" className="text-gray-400 hover:text-primary-600" onClick={() => startEdit(r.id, { canonical_label: formatDurationLabel(r.canonical_days), alias: r.alias })}><Pencil size={12} /></button>
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs">
+                        {editingId === r.id ? <input className="input text-sm py-1 font-mono" value={editDraft.alias ?? ""} onChange={(e) => setEditDraft({ ...editDraft, alias: e.target.value })} /> : r.alias}
+                      </td>
+                      <td className="px-3 py-2">
+                        {editingId === r.id ? (
+                          <span className="flex gap-1">
+                            <button type="button" className="text-green-600" onClick={() => {
+                              const days = parseDurationInput(editDraft.canonical_label ?? "");
+                              if (days == null) { setSyncMsg("Chuẩn NĐ không hợp lệ (VD: 5N4Đ, 0.5N)"); return; }
+                              updateDurationRule(r.id, { canonical_days: days, alias: editDraft.alias }).then(() => { afterRuleSaved("Đã cập nhật alias thời gian"); cancelEdit(); }).catch(showErr);
+                            }}><Check size={14} /></button>
+                            <button type="button" className="text-gray-400" onClick={cancelEdit}><X size={14} /></button>
+                          </span>
+                        ) : (
+                          <button type="button" className="text-red-500" onClick={() => deleteDurationRule(r.id).then(() => { invalidate(); setSyncMsg("Đã xóa alias"); })}><Trash2 size={14} /></button>
+                        )}
                       </td>
                     </tr>
-                    {filteredUnmatched.map((item) => (
-                      <UnmatchedDurationRow
-                        key={item.value}
-                        item={item}
-                        onAssign={(days, alias) => assignDurationAlias(days, alias)}
-                      />
-                    ))}
-                  </>
-                )}
-              </tbody>
-            </table>
-            <p className="text-xs text-gray-400 p-3">{filteredDuration.length} rules · {filteredUnmatched.length} chưa khớp</p>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <p className="text-xs text-gray-400 p-3">{filteredDuration.length} rules</p>
+            </div>
           </div>
+          {/* RIGHT: Chưa khớp */}
+          <SideUnmatchedDuration items={filteredUnmatched} onAssign={(days, alias) => assignDurationAlias(days, alias)} />
         </div>
       )}
 
@@ -620,9 +624,155 @@ export default function RulesAdminPage() {
   );
 }
 
+// ── Side panel "Chưa khớp" cho tab Công ty / Điểm KH ─────────────────────────
+function SideUnmatchedAlias({
+  items, canonicalOptions, onAssign, label,
+}: {
+  items: UnmatchedItem[];
+  canonicalOptions: string[];
+  onAssign: (canonical: string, alias: string) => void | Promise<void>;
+  label: string;
+}) {
+  const [pending, setPending] = useState<Record<string, string>>({});
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  if (!items.length) return (
+    <div className="card p-6 flex flex-col items-center justify-center text-center text-gray-400 min-h-[160px]">
+      <Check size={24} className="text-green-500 mb-2" />
+      <p className="text-sm font-medium text-green-700">Tất cả alias đã khớp</p>
+      <p className="text-xs mt-1">Không có giá trị nào cần gán thêm</p>
+    </div>
+  );
+
+  return (
+    <div className="card overflow-auto" style={{ maxHeight: "calc(100vh - 280px)" }}>
+      <div className="px-3 py-2 border-b bg-amber-50 sticky top-0 z-10">
+        <p className="text-xs font-semibold text-amber-900 flex items-center gap-1.5">
+          <GripVertical size={13} />
+          Chưa khớp alias ({items.length}) — nhập {label} rồi bấm Gán
+        </p>
+      </div>
+      <table className="w-full text-xs">
+        <thead className="bg-amber-50/60">
+          <tr>
+            <th className="px-2 py-1.5 text-left text-amber-800">{label}</th>
+            <th className="px-2 py-1.5 text-left text-amber-800">Alias chưa khớp</th>
+            <th className="w-14" />
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => (
+            <tr key={item.value} className="border-t border-amber-100 bg-amber-50/30 align-top">
+              <td className="px-2 py-1.5">
+                <input
+                  className="input text-xs py-1 w-full border-amber-300 bg-white"
+                  placeholder={`${label}...`}
+                  list="side-canonical-suggestions"
+                  value={pending[item.value] ?? ""}
+                  onChange={(e) => setPending({ ...pending, [item.value]: e.target.value })}
+                />
+              </td>
+              <td className="px-2 py-1.5">
+                <span {...dragAliasProps(item.value)} className="flex items-center gap-1 text-amber-900 font-mono cursor-grab">
+                  <GripVertical size={9} className="text-amber-500 shrink-0" />
+                  <span className="truncate">{item.value || "—"}</span>
+                  <span className="text-gray-400 shrink-0">×{item.count}</span>
+                </span>
+                {(item.members ?? []).length > 0 && (
+                  <>
+                    <button type="button" className="text-[10px] text-amber-600 hover:underline mt-0.5 block"
+                      onClick={() => setExpanded((p) => { const n = new Set(p); n.has(item.value) ? n.delete(item.value) : n.add(item.value); return n; })}>
+                      {expanded.has(item.value) ? "▲ Ẩn" : `▼ ${(item.members ?? []).length} mẫu`}
+                    </button>
+                    {expanded.has(item.value) && (
+                      <ul className="mt-1 space-y-0.5">
+                        {(item.members ?? []).slice(0, 5).map((m: any) => (
+                          <li key={m.title} className="text-[10px] text-gray-600 bg-white rounded px-1 py-0.5 truncate" title={m.title}>
+                            · {m.title} <span className="text-gray-400">×{m.count}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                )}
+              </td>
+              <td className="px-2 py-1.5">
+                <button type="button"
+                  className="btn-primary text-[10px] py-1 px-2 whitespace-nowrap"
+                  disabled={!(pending[item.value] ?? "").trim()}
+                  onClick={async () => {
+                    const c = (pending[item.value] ?? "").trim();
+                    if (!c) return;
+                    await onAssign(c, item.value);
+                    setPending((p) => { const n = { ...p }; delete n[item.value]; return n; });
+                  }}>Gán</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <datalist id="side-canonical-suggestions">
+        {canonicalOptions.map((c) => <option key={c} value={c} />)}
+      </datalist>
+    </div>
+  );
+}
+
+// ── Side panel "Chưa khớp" cho tab Thời gian ────────────────────────────────
+function SideUnmatchedDuration({ items, onAssign }: { items: UnmatchedItem[]; onAssign: (days: number, alias: string) => void }) {
+  if (!items.length) return (
+    <div className="card p-6 flex flex-col items-center justify-center text-center text-gray-400 min-h-[160px]">
+      <Check size={24} className="text-green-500 mb-2" />
+      <p className="text-sm font-medium text-green-700">Tất cả alias thời gian đã khớp</p>
+    </div>
+  );
+  return (
+    <div className="card overflow-auto" style={{ maxHeight: "calc(100vh - 280px)" }}>
+      <div className="px-3 py-2 border-b bg-amber-50 sticky top-0 z-10">
+        <p className="text-xs font-semibold text-amber-900">Chưa khớp thời gian ({items.length})</p>
+        <p className="text-[10px] text-amber-700 mt-0.5">Nhập số ngày → bấm Gán</p>
+      </div>
+      <table className="w-full text-xs">
+        <thead className="bg-amber-50/60">
+          <tr>
+            <th className="px-2 py-1.5 text-left text-amber-800">Số ngày</th>
+            <th className="px-2 py-1.5 text-left text-amber-800">Alias chưa khớp</th>
+            <th className="w-14" />
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => <SideUnmatchedDurationRow key={item.value} item={item} onAssign={onAssign} />)}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SideUnmatchedDurationRow({ item, onAssign }: { item: UnmatchedItem; onAssign: (days: number, alias: string) => void }) {
+  const [days, setDays] = useState("");
+  return (
+    <tr className="border-t border-amber-100 bg-amber-50/30">
+      <td className="px-2 py-1.5">
+        <input className="input text-xs py-1 w-20 border-amber-300 bg-white" type="number" min={1} max={45} placeholder="5" value={days} onChange={(e) => setDays(e.target.value)} />
+      </td>
+      <td className="px-2 py-1.5 font-mono text-amber-900">
+        <span {...dragAliasProps(item.value)} className="flex items-center gap-1 cursor-grab">
+          <GripVertical size={9} className="text-amber-500 shrink-0" />
+          <span className="truncate">{item.value || "—"}</span>
+          <span className="text-gray-400">×{item.count}</span>
+        </span>
+      </td>
+      <td className="px-2 py-1.5">
+        <button type="button" className="btn-primary text-[10px] py-1 px-2" disabled={!days || Number.isNaN(parseFloat(days))}
+          onClick={() => onAssign(parseFloat(days), item.value)}>Gán</button>
+      </td>
+    </tr>
+  );
+}
+
 function AliasTable({
   rows, unmatched, canonicalOptions, editingId, editDraft, dropTarget, setDropTarget, onDropAssign,
-  onStartEdit, onDraftChange, onCancel, onSave, onDelete, canonicalLabel,
+  onStartEdit, onDraftChange, onCancel, onSave, onDelete, canonicalLabel, hideUnmatched = false,
 }: {
   rows: Array<CompanyRule | DepartureRule>;
   unmatched: UnmatchedItem[];
@@ -638,9 +788,10 @@ function AliasTable({
   onSave: (r: CompanyRule | DepartureRule) => void;
   onDelete: (r: CompanyRule | DepartureRule) => void;
   canonicalLabel: string;
+  hideUnmatched?: boolean;
 }) {
   const [pending, setPending] = useState<Record<string, string>>({});
-  const [confirmId, setConfirmId] = useState<number | null>(null); // confirm xóa 2-bước
+  const [confirmId, setConfirmId] = useState<number | null>(null);
   const [expandedUnmatched, setExpandedUnmatched] = useState<Set<string>>(() => new Set());
 
   return (
@@ -692,7 +843,7 @@ function AliasTable({
             );
           })}
 
-          {unmatched.length > 0 && (
+          {!hideUnmatched && unmatched.length > 0 && (
             <>
               <tr className="bg-amber-100 border-t-2 border-amber-400">
                 <td colSpan={3} className="px-3 py-2 text-xs font-semibold text-amber-900">
@@ -775,30 +926,5 @@ function AliasTable({
   );
 }
 
-function UnmatchedDurationRow({ item, onAssign }: { item: UnmatchedItem; onAssign: (days: number, alias: string) => void }) {
-  const [days, setDays] = useState("");
-  return (
-    <tr className="bg-amber-50/70 border-t border-amber-200">
-      <td className="px-3 py-2">
-        <input className="input text-xs py-1 w-20 border-amber-300 bg-white" type="number" min={1} max={45} placeholder="5N" value={days} onChange={(e) => setDays(e.target.value)} />
-      </td>
-      <td className="px-3 py-2 font-mono text-xs text-amber-950">
-        <span {...dragAliasProps(item.value)} title={`${item.count} tour`}>
-          <GripVertical size={10} className="text-amber-600 shrink-0" />
-          {item.value || "—"}
-          <span className="text-gray-500 ml-1">({item.count})</span>
-        </span>
-      </td>
-      <td className="px-3 py-2">
-        <button
-          type="button"
-          className="btn-primary text-[10px] py-1 px-2"
-          disabled={!days || Number.isNaN(parseFloat(days))}
-          onClick={() => onAssign(parseFloat(days), item.value)}
-        >
-          Gán
-        </button>
-      </td>
-    </tr>
-  );
-}
+// UnmatchedDurationRow đã được thay thế bởi SideUnmatchedDurationRow trong SideUnmatchedDuration
+
