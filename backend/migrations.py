@@ -187,6 +187,29 @@ def _migrate_search_indexes():
         ON tours (segment_key)
         WHERE segment_key IS NOT NULL AND segment_key <> ''
         """,
+        # fingerprint query (count + max updated_at) chạy mỗi 60s
+        """
+        CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tours_fingerprint
+        ON tours (updated_at DESC)
+        WHERE gia IS NOT NULL AND gia > 0
+        """,
+        # compare/market-lab GROUP BY thị trường × tuyến
+        """
+        CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tours_market_route_price
+        ON tours (thi_truong, tuyen_tour, gia)
+        WHERE gia IS NOT NULL AND gia > 0
+        """,
+        # stale job detection
+        """
+        CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_scrape_jobs_status_started
+        ON scrape_jobs (status, started_at DESC)
+        """,
+        # classify incremental: tour chưa qua apply
+        """
+        CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tours_classify_pending
+        ON tours (id)
+        WHERE classified_at IS NULL
+        """,
     ]
     for stmt in stmts:
         try:

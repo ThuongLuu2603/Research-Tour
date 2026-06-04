@@ -55,11 +55,26 @@ def _load_market_keyword_pairs() -> tuple[tuple[str, str], ...]:
     return tuple(pairs)
 
 
+_market_kw_cache: tuple[tuple[str, str], ...] | None = None
+_market_kw_cache_ts: float = 0.0
+_MARKET_KW_CACHE_TTL = 300.0  # 5 phút
+
+
 def _market_keyword_pairs() -> tuple[tuple[str, str], ...]:
-    return _load_market_keyword_pairs()
+    global _market_kw_cache, _market_kw_cache_ts
+    import time
+    now = time.time()
+    if _market_kw_cache is not None and now - _market_kw_cache_ts < _MARKET_KW_CACHE_TTL:
+        return _market_kw_cache
+    _market_kw_cache = _load_market_keyword_pairs()
+    _market_kw_cache_ts = now
+    return _market_kw_cache
 
 
 def invalidate_classification_cache() -> None:
+    global _market_kw_cache, _market_kw_cache_ts, _route_matcher
+    _market_kw_cache = None
+    _market_kw_cache_ts = 0.0
     _company_alias_pairs.cache_clear()
     _departure_alias_pairs.cache_clear()
     _duration_alias_pairs.cache_clear()

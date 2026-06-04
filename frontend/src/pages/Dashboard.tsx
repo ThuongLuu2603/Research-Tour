@@ -23,12 +23,14 @@ function KpiCard({ label, value, icon: Icon, color }: { label: string; value: st
   );
 }
 
+const DASHBOARD_STALE_MS = 5 * 60 * 1000; // 5 phút — tránh refetch mỗi lần đổi tab
+
 export default function Dashboard() {
-  const { data: kpi } = useQuery({ queryKey: ["kpi"], queryFn: () => getKPI() });
-  const { data: markets } = useQuery({ queryKey: ["by-market"], queryFn: () => getByMarket() });
-  const { data: companies } = useQuery({ queryKey: ["by-company"], queryFn: () => getByCompany() });
-  const { data: segments } = useQuery({ queryKey: ["by-segment"], queryFn: () => getBySegment() });
-  const { data: scatter } = useQuery({ queryKey: ["scatter"], queryFn: () => getScatterData() });
+  const { data: kpi } = useQuery({ queryKey: ["kpi"], queryFn: () => getKPI(), staleTime: DASHBOARD_STALE_MS });
+  const { data: markets } = useQuery({ queryKey: ["by-market"], queryFn: () => getByMarket(), staleTime: DASHBOARD_STALE_MS });
+  const { data: companies } = useQuery({ queryKey: ["by-company"], queryFn: () => getByCompany(), staleTime: DASHBOARD_STALE_MS });
+  const { data: segments } = useQuery({ queryKey: ["by-segment"], queryFn: () => getBySegment(), staleTime: DASHBOARD_STALE_MS });
+  const { data: scatter } = useQuery({ queryKey: ["scatter"], queryFn: () => getScatterData(), staleTime: DASHBOARD_STALE_MS });
 
   return (
     <div className="p-6 space-y-6">

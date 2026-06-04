@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import time
+import threading
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
@@ -23,6 +26,12 @@ from database import get_db
 from models import Tour, User
 
 router = APIRouter(prefix="/api/compare", tags=["compare"])
+
+# Cache /filter-options — dữ liệu này thay đổi ít, không cần rebuild mỗi request
+_filter_options_cache: dict | None = None
+_filter_options_ts: float = 0.0
+_filter_options_lock = threading.Lock()
+_FILTER_OPTIONS_TTL = 600.0  # 10 phút
 
 
 class CompareSummary(BaseModel):
@@ -48,28 +57,90 @@ def _load_vtr_tours(db: Session, thi_truong: list[str], tuyen_tour: str = "", di
     return [t for t in ctx.tours if is_vietravel(t.cong_ty)]
 
 
+def _build_filter_options_from_cache(db: Session) -> dict:
+    """Lấy filter options từ compare cache (nếu warm) hoặc DB DISTINCT query (nếu cold)."""
+    from tour_sources import is_vietravel_tab
+
+    # Thử lấy từ compare cache trước (nếu đã warm)
+    try:
+        from compare_cache import _cache, _lock
+        with _lock:
+            base_hit = next(
+                (v for k, v in _cache.items() if k[0] == () and k[1] == "" and k[2] == ""),
+                None,
+            )
+        if base_hit:
+            vtr_tours = [t for t in base_hit[1].tours if is_vietravel_tab(t)]
+            markets = sorted({(t.thi_truong or "Khác").strip() for t in vtr_tours})
+            routes_by_market: dict[str, list[str]] = defaultdict(list)
+            all_routes: set[str] = set()
+            deps: set[str] = set()
+            for t in vtr_tours:
+                m = (t.thi_truong or "Khác").strip()
+                route = normalize_route(t.tuyen_tour) or m
+                all_routes.add(route)
+                if route not in routes_by_market[m]:
+                    routes_by_market[m].append(route)
+                deps.add(normalize_departure(t.diem_kh))
+            for m in routes_by_market:
+                routes_by_market[m] = sorted(routes_by_market[m])
+            return {
+                "thi_truong": markets,
+                "tuyen_tour": sorted(all_routes),
+                "diem_kh": sorted(deps),
+                "routes_by_market": dict(routes_by_market),
+            }
+    except Exception:
+        pass
+
+    # Fallback: SQL DISTINCT — nhanh hơn load toàn bộ tour
+    rows = (
+        db.query(Tour.thi_truong, Tour.tuyen_tour, Tour.diem_kh)
+        .filter(Tour.nguon == "Vietravel", Tour.gia != None, Tour.gia > 0)
+        .distinct()
+        .all()
+    )
+    markets: set[str] = set()
+    routes_by_market2: dict[str, list[str]] = defaultdict(list)
+    all_routes2: set[str] = set()
+    deps2: set[str] = set()
+    for r in rows:
+        m = (r.thi_truong or "Khác").strip()
+        markets.add(m)
+        route = normalize_route(r.tuyen_tour) or m
+        all_routes2.add(route)
+        if route not in routes_by_market2[m]:
+            routes_by_market2[m].append(route)
+        deps2.add(normalize_departure(r.diem_kh))
+    for m in routes_by_market2:
+        routes_by_market2[m] = sorted(routes_by_market2[m])
+    return {
+        "thi_truong": sorted(markets),
+        "tuyen_tour": sorted(all_routes2),
+        "diem_kh": sorted(deps2),
+        "routes_by_market": dict(routes_by_market2),
+    }
+
+
 @router.get("/filter-options")
 def compare_filter_options(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    vtr_tours = _load_vtr_tours(db, [])
-    markets = sorted({(t.thi_truong or "Khác").strip() for t in vtr_tours})
-    routes_by_market: dict[str, list[str]] = defaultdict(list)
-    all_routes: set[str] = set()
-    deps: set[str] = set()
-    for t in vtr_tours:
-        m = (t.thi_truong or "Khác").strip()
-        route = normalize_route(t.tuyen_tour) or m
-        all_routes.add(route)
-        if route not in routes_by_market[m]:
-            routes_by_market[m].append(route)
-        deps.add(normalize_departure(t.diem_kh))
-    for m in routes_by_market:
-        routes_by_market[m] = sorted(routes_by_market[m])
-    return {
-        "thi_truong": markets,
-        "tuyen_tour": sorted(all_routes),
-        "diem_kh": sorted(deps),
-        "routes_by_market": dict(routes_by_market),
-    }
+    global _filter_options_cache, _filter_options_ts
+    now = time.time()
+    with _filter_options_lock:
+        if _filter_options_cache is not None and now - _filter_options_ts < _FILTER_OPTIONS_TTL:
+            return _filter_options_cache
+    result = _build_filter_options_from_cache(db)
+    with _filter_options_lock:
+        _filter_options_cache = result
+        _filter_options_ts = now
+    return result
+
+
+def invalidate_compare_filter_cache() -> None:
+    global _filter_options_cache, _filter_options_ts
+    with _filter_options_lock:
+        _filter_options_cache = None
+        _filter_options_ts = 0.0
 
 
 @router.get("/classification-gaps")

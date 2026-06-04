@@ -47,7 +47,7 @@ _inflight: dict[tuple, threading.Event] = {}
 def _db_fingerprint(db: Session) -> tuple[int, str | None]:
     global _fingerprint_cache
     now = time.time()
-    if _fingerprint_cache and now - _fingerprint_cache[0] < 15:
+    if _fingerprint_cache and now - _fingerprint_cache[0] < 60:
         return _fingerprint_cache[1]
     row = (
         apply_market_compare_source_filter(

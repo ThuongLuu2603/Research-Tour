@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import func, case
 from sqlalchemy.orm import Session
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel
 
 from api.auth import get_current_user
@@ -10,6 +10,8 @@ from database import get_db
 from models import Tour, User
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
+
+_ANALYTICS_CACHE_SEC = 300  # 5 phút — dữ liệu thay đổi theo batch, không realtime
 
 SEGMENT_ORDER = ["Standard", "Premium", "Luxury", "Chưa có giá"]
 
@@ -59,27 +61,31 @@ class TreemapNode(BaseModel):
 
 @router.get("/kpi", response_model=KPIResponse)
 def kpi(
+    response: Response,
     nguon: list[str] = Query([]),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    response.headers["Cache-Control"] = f"private, max-age={_ANALYTICS_CACHE_SEC}"
     q = db.query(Tour)
     if nguon:
         q = q.filter(Tour.nguon.in_(nguon))
 
-    total_tours = q.count()
-    total_companies = q.with_entities(func.count(func.distinct(Tour.cong_ty))).scalar() or 0
-    total_markets = q.with_entities(func.count(func.distinct(Tour.thi_truong))).scalar() or 0
-    total_routes = q.with_entities(func.count(func.distinct(Tour.tuyen_tour))).scalar() or 0
+    # 1 query thay vì 5 queries riêng lẻ
+    row = q.with_entities(
+        func.count(Tour.id).label("total"),
+        func.count(func.distinct(Tour.cong_ty)).label("companies"),
+        func.count(func.distinct(Tour.thi_truong)).label("markets"),
+        func.count(func.distinct(Tour.tuyen_tour)).label("routes"),
+        func.max(Tour.updated_at).label("last_at"),
+    ).one()
 
-    last = q.order_by(Tour.updated_at.desc()).first()
-    last_updated = last.updated_at.strftime("%d/%m/%Y %H:%M") if last else None
-
+    last_updated = row.last_at.strftime("%d/%m/%Y %H:%M") if row.last_at else None
     return KPIResponse(
-        total_tours=total_tours,
-        total_companies=total_companies,
-        total_markets=total_markets,
-        total_routes=total_routes,
+        total_tours=row.total or 0,
+        total_companies=row.companies or 0,
+        total_markets=row.markets or 0,
+        total_routes=row.routes or 0,
         last_updated=last_updated,
     )
 
@@ -150,22 +156,22 @@ def scatter(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    q = db.query(Tour)
+    q = db.query(Tour.ten_tour, Tour.cong_ty, Tour.thi_truong, Tour.gia, Tour.so_ngay)
     if nguon:
         q = q.filter(Tour.nguon.in_(nguon))
-    tours = (
+    rows = (
         q.filter(Tour.gia != None, Tour.so_ngay != None, Tour.so_ngay > 0, Tour.so_ngay <= 45)
         .all()
     )
     return [
         ScatterPoint(
-            ten_tour=t.ten_tour,
-            cong_ty=t.cong_ty,
-            thi_truong=t.thi_truong,
-            gia=t.gia,
-            so_ngay=t.so_ngay,
+            ten_tour=r.ten_tour,
+            cong_ty=r.cong_ty,
+            thi_truong=r.thi_truong,
+            gia=r.gia,
+            so_ngay=r.so_ngay,
         )
-        for t in tours
+        for r in rows
     ]
 
 
@@ -250,31 +256,47 @@ def competitor_profile(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    tours = db.query(Tour).filter(Tour.cong_ty == company).all()
+    from fastapi import HTTPException
+
+    # 1 query: tất cả tour của công ty
+    tours = (
+        db.query(Tour.id, Tour.ten_tour, Tour.thi_truong, Tour.tuyen_tour, Tour.gia, Tour.gia_raw, Tour.link_url)
+        .filter(Tour.cong_ty == company)
+        .all()
+    )
     if not tours:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Không tìm thấy công ty")
 
-    prices = [t.gia for t in tours if t.gia]
+    prices = [r.gia for r in tours if r.gia]
     avg_price = round(sum(prices) / len(prices), 0) if prices else None
 
     market_counts: dict[str, int] = {}
-    for t in tours:
-        if t.thi_truong:
-            market_counts[t.thi_truong] = market_counts.get(t.thi_truong, 0) + 1
+    co_route_prices: dict[str, list[float]] = {}
+    for r in tours:
+        if r.thi_truong:
+            market_counts[r.thi_truong] = market_counts.get(r.thi_truong, 0) + 1
+        if r.tuyen_tour and r.gia:
+            co_route_prices.setdefault(r.tuyen_tour, []).append(r.gia)
+
+    # 1 GROUP BY query thay vì N queries
+    route_list = list(co_route_prices.keys())
+    market_avgs: dict[str, float] = {}
+    if route_list:
+        for row in (
+            db.query(Tour.tuyen_tour, func.avg(Tour.gia).label("avg_gia"))
+            .filter(Tour.tuyen_tour.in_(route_list), Tour.gia != None)
+            .group_by(Tour.tuyen_tour)
+            .all()
+        ):
+            market_avgs[row.tuyen_tour] = float(row.avg_gia)
 
     route_avg_market: list[dict] = []
-    for route in set(t.tuyen_tour for t in tours if t.tuyen_tour):
-        co_prices = [t.gia for t in tours if t.tuyen_tour == route and t.gia]
-        all_prices_q = (
-            db.query(func.avg(Tour.gia))
-            .filter(Tour.tuyen_tour == route, Tour.gia != None)
-            .scalar()
-        )
-        if co_prices and all_prices_q:
+    for route, co_prices in co_route_prices.items():
+        all_avg = market_avgs.get(route)
+        if co_prices and all_avg:
             co_avg = sum(co_prices) / len(co_prices)
-            pct = round((co_avg / all_prices_q - 1) * 100, 1)
-            route_avg_market.append({"route": route, "co_avg": round(co_avg, 0), "market_avg": round(all_prices_q, 0), "diff_pct": pct})
+            pct = round((co_avg / all_avg - 1) * 100, 1)
+            route_avg_market.append({"route": route, "co_avg": round(co_avg, 0), "market_avg": round(all_avg, 0), "diff_pct": pct})
 
     return {
         "company": company,
@@ -282,5 +304,5 @@ def competitor_profile(
         "avg_price": avg_price,
         "markets": [{"label": k, "value": v} for k, v in sorted(market_counts.items(), key=lambda x: -x[1])],
         "route_positioning": sorted(route_avg_market, key=lambda x: abs(x["diff_pct"]), reverse=True)[:15],
-        "tours": [{"id": t.id, "ten_tour": t.ten_tour, "thi_truong": t.thi_truong, "tuyen_tour": t.tuyen_tour, "gia_raw": t.gia_raw, "gia": t.gia, "link_url": t.link_url} for t in tours[:50]],
+        "tours": [{"id": r.id, "ten_tour": r.ten_tour, "thi_truong": r.thi_truong, "tuyen_tour": r.tuyen_tour, "gia_raw": r.gia_raw, "gia": r.gia, "link_url": r.link_url} for r in tours[:50]],
     }

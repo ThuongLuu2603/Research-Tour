@@ -163,6 +163,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# GZip nén response — giảm bandwidth đáng kể cho JSON lớn (compare, market-lab)
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 app.include_router(auth.router)
 app.include_router(tours.router)
 app.include_router(analytics.router)
