@@ -329,125 +329,12 @@ export function ClassificationRulesTab({
   );
 
   return (
-    <div className="grid lg:grid-cols-[3fr_2fr] gap-4 items-start">
-
-      {/* ── LEFT: Rule tuyến ──────────────────────────────────────────────── */}
-      <div className="space-y-3">
-        <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-          <strong>Ưu tiên khớp:</strong> (1) thị trường <strong>trên xuống</strong> — kéo thả để sắp xếp;
-          (2) trong mỗi TT, dòng có <strong>nhiều từ AND</strong> hơn được thử trước;
-          (3) cùng tuyến, nhiều dòng = OR. Bấm tên TT để mở/đóng.
-        </p>
-        {routeKeywordConflicts.size > 0 && (
-          <p className="text-sm text-red-800 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-            {routeKeywordConflicts.size} từ keyword trùng nhiều tuyến (đỏ) — sort_order nhỏ hơn thắng.
-          </p>
-        )}
-        {/* Route rules table */}
-        <div className="card overflow-auto" style={{ maxHeight: "calc(100vh - 260px)" }}>
-          <p className="px-3 py-2 text-xs font-semibold text-gray-600 bg-gray-50 sticky top-0 z-10 border-b flex items-center justify-between gap-2">
-            <span className="inline-flex items-center gap-1">
-              Quy tắc theo thị trường
-              <InfoTip text="Kéo ⋮⋮ để đổi thứ tự TT. Trong nhóm: dòng nhiều «và» hơn được ưu tiên trước." />
-            </span>
-            {searchQuery.trim() && <span className="font-normal text-gray-500">{orderedMarkets.length} nhóm khớp</span>}
-          </p>
-          <div className="text-sm">
-            {orderedMarkets.length === 0 && searchQuery.trim() && (
-              <p className="p-4 text-sm text-gray-500">Không có rule khớp «{searchQuery.trim()}»</p>
-            )}
-            {orderedMarkets.map((mk, idx) => {
-              const rRulesAll = routesByMarket.get(mk) ?? [];
-              const showAll = matchRulesSearch(searchQuery, mk);
-              const filtered = showAll || !searchQuery.trim()
-                ? rRulesAll
-                : rRulesAll.filter((r) => matchRulesSearch(searchQuery, r.tuyen_tour, r.keywords));
-              const rRules = sortRouteRulesForDisplay(filtered);
-              if (!rRules.length) return null;
-              const open = expanded.has(mk);
-              const dragging = dragMarket === mk;
-              const dropHint = dropMarket === mk && dragMarket && dragMarket !== mk;
-              return (
-                <div key={mk}
-                  className={cn("border-b border-gray-100", dragging && "opacity-40", dropHint && "bg-primary-50 ring-1 ring-inset ring-primary-200")}
-                  onDragOver={(e) => { e.preventDefault(); setDropMarket(mk); }}
-                  onDragLeave={() => setDropMarket((d) => (d === mk ? null : d))}
-                  onDrop={(e) => { e.preventDefault(); onDropMarket(mk); }}
-                >
-                  <div className="flex items-center gap-1 px-2 py-2 bg-gray-50/80">
-                    <span draggable onDragStart={() => setDragMarket(mk)} onDragEnd={() => { setDragMarket(null); setDropMarket(null); }}
-                      className="cursor-grab text-gray-400 hover:text-gray-600 shrink-0 touch-none" title="Kéo để đổi thứ tự">
-                      <GripVertical size={14} />
-                    </span>
-                    <button type="button" className="flex-1 flex items-center gap-1 text-left font-medium text-gray-900 min-w-0" onClick={() => toggleMarket(mk)}>
-                      {open ? <ChevronDown size={14} className="shrink-0" /> : <ChevronRight size={14} className="shrink-0" />}
-                      <span className="truncate">{idx + 1}. {mk}</span>
-                      <span className="text-gray-400 font-normal text-xs shrink-0">({rRules.length})</span>
-                    </button>
-                    <button type="button" className="text-red-500 hover:text-red-700 shrink-0 p-1" title="Xóa nhóm"
-                      onClick={() => deleteMarketGroup(mk).catch(onError)}><Trash2 size={14} /></button>
-                  </div>
-                  {open && (
-                    <div className="px-3 pb-3">
-                      <table className="w-full text-xs">
-                        <thead><tr className="text-gray-500">
-                          <th className="text-left py-1 w-6">#</th>
-                          <th className="text-left py-1">Tuyến</th>
-                          <th className="text-left">Keywords (AND)</th>
-                          <th className="text-right pr-1 w-14">
-                            <span className="inline-flex items-center gap-0.5 text-gray-400" title="Tour dùng rule này">
-                              <Users size={9} /> Tour
-                            </span>
-                          </th>
-                          <th className="w-14" />
-                        </tr></thead>
-                        <tbody>
-                          {rRules.map((r, ri) => {
-                            const dropKey = `route-${r.id}`;
-                            const kwCount = parseRouteKeywordList(r.keywords).length;
-                            const { dropClassName, ...drop } = dropHandlers(dropKey, dropTarget, setDropTarget, (raw) => appendKeywordToRouteRule(r, raw));
-                            const tourCount = routeStats?.[String(r.id)];
-                            return (
-                              <tr key={r.id} className="border-t border-gray-100">
-                                <td className="py-1 text-gray-400 text-[10px]">{ri + 1}</td>
-                                <td className={cn("py-1 pr-2", dropClassName)} {...drop}>{r.tuyen_tour}</td>
-                                <td className="py-1 font-mono">
-                                  <RouteKeywordsCell keywords={r.keywords} conflicts={routeKeywordConflicts} />
-                                  {kwCount > 1 && <span className="text-[10px] text-gray-500 font-sans ml-1">({kwCount} AND)</span>}
-                                </td>
-                                <td className="py-1 text-right pr-1">
-                                  {tourCount != null
-                                    ? <span className={cn("text-[10px] font-medium", tourCount > 0 ? "text-primary-700" : "text-gray-300")}>{tourCount}</span>
-                                    : <span className="text-gray-200 text-[10px]">—</span>}
-                                </td>
-                                <td className="py-1">
-                                  {confirmDeleteId === r.id ? (
-                                    <span className="flex gap-1 items-center">
-                                      <button type="button" className="text-[9px] bg-red-600 text-white px-1 py-0.5 rounded"
-                                        onClick={() => { setConfirmDeleteId(null); deleteRouteRule(r.id).then(() => onAfterSaved("Đã xóa")); }}>Xóa</button>
-                                      <button type="button" className="text-[9px] bg-gray-100 px-1 py-0.5 rounded"
-                                        onClick={() => setConfirmDeleteId(null)}>Hủy</button>
-                                    </span>
-                                  ) : (
-                                    actionBtns(() => setConfirmDeleteId(r.id))
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* ── RIGHT: Quick-add + Preview + Unmatched ────────────────────────── */}
-      <div className="space-y-3">
+    <div className="space-y-4">
+      <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+        <strong>Ưu tiên khớp:</strong> (1) thị trường <strong>trên xuống</strong> — kéo thả để sắp xếp;
+        (2) trong mỗi TT, dòng có <strong>nhiều từ AND</strong> hơn được thử trước;
+        (3) cùng tuyến, nhiều dòng = OR. Bấm tên TT để mở/đóng danh sách tuyến.
+      </p>
 
       {/* ── Preview keyword match (#6) ──────────────────────────────────── */}
       <div className="card p-4 border-dashed border-2 border-blue-200 bg-blue-50/40">
@@ -526,8 +413,142 @@ export function ClassificationRulesTab({
         )}
       </div>
 
-      {/* Unmatched gaps table */}
-      <div className="card overflow-auto" style={{ maxHeight: "calc(100vh - 260px)" }}>
+      {routeKeywordConflicts.size > 0 && (
+        <p className="text-sm text-red-800 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+          {routeKeywordConflicts.size} từ keyword trùng nhiều tuyến (đỏ) — cùng mức ưu tiên thì sort_order nhỏ hơn thắng.
+        </p>
+      )}
+
+      <div className="card overflow-auto max-h-[420px]">
+        <p className="px-3 py-2 text-xs font-semibold text-gray-600 bg-gray-50 sticky top-0 z-10 border-b flex items-center justify-between gap-2">
+          <span className="inline-flex items-center gap-1">
+            Quy tắc theo thị trường
+            <InfoTip text="Kéo ⋮⋮ để đổi thứ tự TT. Trong nhóm: dòng nhiều «và» hơn được ưu tiên trước." />
+          </span>
+          {searchQuery.trim() && (
+            <span className="font-normal text-gray-500">{orderedMarkets.length} nhóm khớp</span>
+          )}
+        </p>
+        <div className="text-sm">
+          {orderedMarkets.length === 0 && searchQuery.trim() && (
+            <p className="p-4 text-sm text-gray-500">Không có rule khớp «{searchQuery.trim()}»</p>
+          )}
+          {orderedMarkets.map((mk, idx) => {
+            const rRulesAll = routesByMarket.get(mk) ?? [];
+            const showAll = matchRulesSearch(searchQuery, mk);
+            const filtered = showAll || !searchQuery.trim()
+              ? rRulesAll
+              : rRulesAll.filter((r) => matchRulesSearch(searchQuery, r.tuyen_tour, r.keywords));
+            const rRules = sortRouteRulesForDisplay(filtered);
+            if (!rRules.length) return null;
+            const open = expanded.has(mk);
+            const dragging = dragMarket === mk;
+            const dropHint = dropMarket === mk && dragMarket && dragMarket !== mk;
+            return (
+              <div
+                key={mk}
+                className={cn(
+                  "border-b border-gray-100",
+                  dragging && "opacity-40",
+                  dropHint && "bg-primary-50 ring-1 ring-inset ring-primary-200",
+                )}
+                onDragOver={(e) => { e.preventDefault(); setDropMarket(mk); }}
+                onDragLeave={() => setDropMarket((d) => (d === mk ? null : d))}
+                onDrop={(e) => { e.preventDefault(); onDropMarket(mk); }}
+              >
+                <div className="flex items-center gap-1 px-2 py-2 bg-gray-50/80">
+                  <span
+                    draggable
+                    onDragStart={() => setDragMarket(mk)}
+                    onDragEnd={() => { setDragMarket(null); setDropMarket(null); }}
+                    className="cursor-grab text-gray-400 hover:text-gray-600 shrink-0 touch-none"
+                    title="Kéo để đổi thứ tự thị trường"
+                  >
+                    <GripVertical size={14} />
+                  </span>
+                  <button
+                    type="button"
+                    className="flex-1 flex items-center gap-1 text-left font-medium text-gray-900 min-w-0"
+                    onClick={() => toggleMarket(mk)}
+                  >
+                    {open ? <ChevronDown size={14} className="shrink-0" /> : <ChevronRight size={14} className="shrink-0" />}
+                    <span className="truncate">{idx + 1}. {mk}</span>
+                    <span className="text-gray-400 font-normal text-xs shrink-0">({rRules.length} dòng)</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="text-red-500 hover:text-red-700 shrink-0 p-1"
+                    title="Xóa nhóm"
+                    onClick={() => deleteMarketGroup(mk).catch(onError)}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+                {open && (
+                  <div className="px-3 pb-3">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-gray-500">
+                          <th className="text-left py-1 w-6">#</th>
+                          <th className="text-left py-1">Tuyến</th>
+                          <th className="text-left">Keywords (AND — nhiều từ ưu tiên trước)</th>
+                          <th className="text-right pr-1 w-14">
+                            <span className="inline-flex items-center gap-0.5 text-gray-400" title="Số tour hiện đang dùng rule này">
+                              <Users size={9} /> Tour
+                            </span>
+                          </th>
+                          <th className="w-14" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rRules.map((r, ri) => {
+                          const dropKey = `route-${r.id}`;
+                          const kwCount = parseRouteKeywordList(r.keywords).length;
+                          const { dropClassName, ...drop } = dropHandlers(dropKey, dropTarget, setDropTarget, (raw) =>
+                            appendKeywordToRouteRule(r, raw),
+                          );
+                          const tourCount = routeStats?.[String(r.id)];
+                          return (
+                            <tr key={r.id} className="border-t border-gray-100">
+                              <td className="py-1 text-gray-400 text-[10px]">{ri + 1}</td>
+                              <td className={cn("py-1 pr-2", dropClassName)} {...drop}>{r.tuyen_tour}</td>
+                              <td className="py-1 font-mono">
+                                <RouteKeywordsCell keywords={r.keywords} conflicts={routeKeywordConflicts} />
+                                {kwCount > 1 && (
+                                  <span className="text-[10px] text-gray-500 font-sans ml-1">({kwCount} AND)</span>
+                                )}
+                              </td>
+                              <td className="py-1 text-right pr-1">
+                                {tourCount != null ? (
+                                  <span className={cn("text-[10px] font-medium", tourCount > 0 ? "text-primary-700" : "text-gray-300")}>
+                                    {tourCount}
+                                  </span>
+                                ) : <span className="text-gray-200 text-[10px]">—</span>}
+                              </td>
+                              <td className="py-1">
+                                {confirmDeleteId === r.id ? (
+                                  <span className="flex gap-1 items-center">
+                                    <button type="button" className="text-[9px] bg-red-600 text-white px-1 py-0.5 rounded" onClick={() => { setConfirmDeleteId(null); deleteRouteRule(r.id).then(() => onAfterSaved("Đã xóa")); }}>Xóa</button>
+                                    <button type="button" className="text-[9px] bg-gray-100 px-1 py-0.5 rounded" onClick={() => setConfirmDeleteId(null)}>Hủy</button>
+                                  </span>
+                                ) : (
+                                  actionBtns(() => setConfirmDeleteId(r.id))
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="card overflow-auto max-h-[480px]">
         <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b bg-amber-50/80 sticky top-0 z-20">
           <button
             type="button"
@@ -670,7 +691,6 @@ export function ClassificationRulesTab({
           {gapLoading ? "Đang tải…" : `${gapItems.length} tên tour chưa có tuyến trong DB`}
         </p>
       </div>
-      </div>{/* end RIGHT column */}
-    </div>{/* end grid */}
+    </div>
   );
 }
