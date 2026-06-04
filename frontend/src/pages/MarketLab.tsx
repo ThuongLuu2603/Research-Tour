@@ -63,9 +63,36 @@ const TREEMAP_COLORS = [
   "#43a047","#7cb342","#c0ca33","#fdd835","#fb8c00","#e53935","#8e24aa",
 ];
 
+interface TreemapCellProps {
+  x?: number; y?: number; width?: number; height?: number;
+  name?: string; value?: number; fill?: string; gap?: number | null;
+}
+
+function TreemapCell(props: TreemapCellProps) {
+  const { x = 0, y = 0, width = 0, height = 0, name = "", value = 0, fill = "#003580", gap } = props;
+  if (width < 20 || height < 18) return null;
+  return (
+    <g>
+      <rect x={x} y={y} width={width} height={height} fill={fill} fillOpacity={0.85} stroke="#fff" strokeWidth={2} rx={4} />
+      {width > 50 && height > 30 && (
+        <>
+          <text x={x + width / 2} y={y + height / 2 - 6} textAnchor="middle" dominantBaseline="middle"
+            fontSize={Math.min(12, width / 7)} fill="#fff" fontWeight="600">
+            {name.length > 14 ? name.slice(0, 13) + "…" : name}
+          </text>
+          <text x={x + width / 2} y={y + height / 2 + 10} textAnchor="middle" dominantBaseline="middle"
+            fontSize={10} fill="#e2e8f0">
+            {value} đoàn{gap != null ? ` · ${gap > 0 ? "+" : ""}${gap}%` : ""}
+          </text>
+        </>
+      )}
+    </g>
+  );
+}
+
 function MarketHeatMap({ markets }: { markets: any[] }) {
-  const data = useMemo(() => {
-    const root = markets
+  const data = useMemo(() => (
+    markets
       .filter((m) => m.market_departures_monthly > 0)
       .map((m, i) => ({
         name: m.thi_truong,
@@ -73,38 +100,15 @@ function MarketHeatMap({ markets }: { markets: any[] }) {
         score: m.opportunity_score,
         gap: m.avg_gap_pct,
         fill: TREEMAP_COLORS[i % TREEMAP_COLORS.length],
-      }));
-    return root;
-  }, [markets]);
+      }))
+  ), [markets]);
 
   return (
     <div className="card p-4">
       <h3 className="font-semibold text-sm mb-1">Heat Map thị trường — theo đoàn TT/tháng</h3>
       <p className="text-xs text-gray-500 mb-3">Kích cỡ = cung thị trường. Click thị trường để drill-down tuyến.</p>
       <ResponsiveContainer width="100%" height={280}>
-        <Treemap
-          data={data}
-          dataKey="value"
-          nameKey="name"
-          content={({ x, y, width, height, name, value, fill, gap, score }: any) => {
-            if (!width || !height || width < 20 || height < 18) return null;
-            return (
-              <g>
-                <rect x={x} y={y} width={width} height={height} fill={fill} fillOpacity={0.85} stroke="#fff" strokeWidth={2} rx={4} />
-                {width > 50 && height > 30 && (
-                  <>
-                    <text x={x + width / 2} y={y + height / 2 - 6} textAnchor="middle" dominantBaseline="middle" fontSize={Math.min(12, width / 7)} fill="#fff" fontWeight="600">
-                      {name && name.length > 14 ? name.slice(0, 13) + "…" : name}
-                    </text>
-                    <text x={x + width / 2} y={y + height / 2 + 10} textAnchor="middle" dominantBaseline="middle" fontSize={10} fill="#e2e8f0">
-                      {value} đoàn{gap != null ? ` · ${gap > 0 ? "+" : ""}${gap}%` : ""}
-                    </text>
-                  </>
-                )}
-              </g>
-            );
-          }}
-        />
+        <Treemap data={data} dataKey="value" nameKey="name" content={<TreemapCell />} />
       </ResponsiveContainer>
     </div>
   );
