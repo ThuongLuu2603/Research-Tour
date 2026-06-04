@@ -75,6 +75,12 @@ class RouteRuleIn(BaseModel):
     sort_order: int = 0
 
 
+class RouteRulesReplaceIn(BaseModel):
+    rules: list[RouteRuleIn]
+    market_order: list[str] = Field(default_factory=list)
+    auto_apply: bool = False
+
+
 class AssignClassificationIn(BaseModel):
     thi_truong: str = Field(max_length=128)
     tuyen_tour: str = Field(default="", max_length=256)
@@ -426,6 +432,24 @@ def delete_route_rule(
     msg = _try_push_route(db) if push_sheet else None
     stats = _auto_apply_tours(db, auto_apply, scope="route")
     return {"deleted": rule_id, "sheet_sync": msg, "tours_apply": stats}
+
+
+@router.post("/route/replace-all")
+def replace_all_route_rules(
+    body: RouteRulesReplaceIn,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Thay toàn bộ quy tắc tuyến tour trong DB (import Excel/JSON)."""
+    from classification_rules_import import replace_route_rules
+
+    rows = [r.model_dump() for r in body.rules]
+    try:
+        result = replace_route_rules(db, rows, body.market_order or None)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    tours_apply = _auto_apply_tours(db, body.auto_apply, scope="route")
+    return {**result, "tours_apply": tours_apply}
 
 
 # ── Sync endpoints ────────────────────────────────────────────────────────────
