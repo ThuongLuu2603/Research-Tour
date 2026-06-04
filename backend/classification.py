@@ -300,11 +300,12 @@ def count_canonical_tours(db, *, incremental: bool = False) -> int:
 
 def _iter_canonical_tour_batches(
     db,
-    batch_size: int = 1000,
+    batch_size: int = 500,
     *,
     keyword_filter: list[str] | None = None,
     route_state: str | None = None,
     incremental: bool = False,
+    start_after_id: int = 0,
 ):
     """Phân trang theo id — chỉ cột cần cho apply rule."""
     from sqlalchemy.orm import load_only
@@ -314,6 +315,7 @@ def _iter_canonical_tour_batches(
     cols = load_only(
         Tour.id,
         Tour.ten_tour,
+        Tour.ma_tour,
         Tour.lich_trinh,
         Tour.thi_truong,
         Tour.tuyen_tour,
@@ -327,7 +329,7 @@ def _iter_canonical_tour_batches(
         Tour.segment_key,
         Tour.search_text,
     )
-    last_id = 0
+    last_id = max(0, int(start_after_id or 0))
     while True:
         q = (
             _canonical_tour_query(db)
@@ -1038,32 +1040,46 @@ def _stamp_tour_classified(t) -> None:
     t.updated_at = now
 
 
-def _apply_rule_result_to_tour(t, mk: str, rt: str, from_rule: bool, rule_id: int | None) -> tuple[int, int]:
+def _apply_rule_result_to_tour(
+    t,
+    mk: str,
+    rt: str,
+    from_rule: bool,
+    rule_id: int | None,
+    *,
+    update_derived: bool = True,
+) -> tuple[int, int]:
     """Cập nhật thị trường/tuyến + metadata classify. Trả (market_n, route_n)."""
-    from datetime import datetime
-
-    from tour_search import update_tour_derived_fields
-
     market_n = route_n = 0
+    changed = False
     if from_rule:
         if mk != (t.thi_truong or ""):
             t.thi_truong = mk[:128]
             market_n += 1
+            changed = True
         if rt != (t.tuyen_tour or "").strip():
             t.tuyen_tour = rt[:256]
             route_n += 1
+            changed = True
         if rule_id and t.classification_rule_id != rule_id:
             t.classification_rule_id = rule_id
+            changed = True
     else:
         if (t.thi_truong or "").strip():
             t.thi_truong = ""
             market_n += 1
+            changed = True
         if (t.tuyen_tour or "").strip():
             t.tuyen_tour = ""
             route_n += 1
+            changed = True
         if t.classification_rule_id is not None:
             t.classification_rule_id = None
-    update_tour_derived_fields(t)
+            changed = True
+    if changed and update_derived:
+        from tour_search import update_tour_derived_fields
+
+        update_tour_derived_fields(t)
     return market_n, route_n
 
 
@@ -1127,6 +1143,9 @@ def apply_all_rules_to_tours(
     *,
     recompute_phan_khuc: bool = False,
     incremental: bool = True,
+    start_after_id: int = 0,
+    initial_processed: int = 0,
+    total_override: int | None = None,
     progress_cb: callable | None = None,
 ) -> dict:
     """Một lượt quét tour — classification + alias công ty/KH/thời gian."""
@@ -1135,17 +1154,38 @@ def apply_all_rules_to_tours(
     from link_utils import normalize_tour_link
 
     market_n = route_n = link_n = company_n = dep_n = dur_n = 0
-    processed = 0
-    total = count_canonical_tours(db, incremental=incremental)
+    processed = max(0, int(initial_processed or 0))
+    total = int(total_override) if total_override is not None else count_canonical_tours(db, incremental=incremental)
     defer_search = not incremental
     pending_search_ids: list[int] = []
 
-    for batch in _iter_canonical_tour_batches(db, incremental=incremental):
+    def _progress(n: int, total_n: int, msg: str, last_id: int | None = None) -> None:
+        if not progress_cb:
+            return
+        try:
+            progress_cb(n, total_n, msg, last_id)
+        except TypeError:
+            progress_cb(n, total_n, msg)
+
+    for batch in _iter_canonical_tour_batches(
+        db,
+        incremental=incremental,
+        start_after_id=start_after_id,
+    ):
         for i, t in enumerate(batch):
+            derived_dirty = False
             mk, rt, from_rule, rule_id = matcher.resolve(t.ten_tour or "", t.lich_trinh or "")
-            m_delta, r_delta = _apply_rule_result_to_tour(t, mk, rt, from_rule, rule_id)
+            m_delta, r_delta = _apply_rule_result_to_tour(
+                t,
+                mk,
+                rt,
+                from_rule,
+                rule_id,
+                update_derived=False,
+            )
             market_n += m_delta
             route_n += r_delta
+            derived_dirty = bool(m_delta or r_delta)
 
             fixed_link = normalize_tour_link(t.link_url)
             if fixed_link != (t.link_url or ""):
@@ -1156,32 +1196,38 @@ def apply_all_rules_to_tours(
             if resolved_co and resolved_co != (t.cong_ty or ""):
                 t.cong_ty = resolved_co[:256]
                 company_n += 1
+                derived_dirty = True
 
             resolved_dep = resolve_departure_point(t.diem_kh)
             if resolved_dep and resolved_dep != (t.diem_kh or ""):
                 t.diem_kh = resolved_dep[:256]
                 dep_n += 1
+                derived_dirty = True
 
             days, matched = resolve_duration_days(t.thoi_gian, t.so_ngay)
             if days is not None and matched and (not t.so_ngay or float(t.so_ngay) != days):
                 t.so_ngay = days
                 dur_n += 1
 
+            if derived_dirty:
+                from tour_search import update_tour_derived_fields
+
+                update_tour_derived_fields(t)
             _stamp_tour_classified(t)
 
-            if progress_cb and total and (i % 100 == 0 or i + 1 == len(batch)):
-                progress_cb(
+            if total and (i % 100 == 0 or i + 1 == len(batch)):
+                _progress(
                     processed + i + 1,
                     total,
                     f"Đang quét {processed + i + 1}/{total} tour…",
+                    t.id,
                 )
 
         ids = _commit_tour_batch(db, batch, sync_search=not defer_search)
         if defer_search:
             pending_search_ids.extend(ids)
         processed += len(batch)
-        if progress_cb:
-            progress_cb(processed, total, f"Đang quét {processed}/{total} tour…")
+        _progress(processed, total, f"Đang quét {processed}/{total} tour…", batch[-1].id)
 
     if defer_search and pending_search_ids:
         try:
@@ -1190,11 +1236,12 @@ def apply_all_rules_to_tours(
             unique_ids = list({int(i) for i in pending_search_ids if i})
             for off in range(0, len(unique_ids), 500):
                 sync_search_tsv_for_ids(unique_ids[off : off + 500])
-                if progress_cb and total:
-                    progress_cb(
+                if total:
+                    _progress(
                         processed,
                         total,
                         f"Đang lập chỉ mục tìm kiếm {min(off + 500, len(unique_ids))}/{len(unique_ids)}…",
+                        unique_ids[min(off + 500, len(unique_ids)) - 1],
                     )
         except Exception as e:
             logger.warning("deferred search tsv sync failed: %s", e)
@@ -1209,6 +1256,7 @@ def apply_all_rules_to_tours(
         "tours_scanned": processed,
         "tours_total": total,
         "incremental": incremental,
+        "resumed_from_id": int(start_after_id or 0),
     }
     try:
         from segment_mv import refresh_segment_mv

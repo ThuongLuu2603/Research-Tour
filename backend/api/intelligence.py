@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from api.auth import get_current_user, require_admin
 from compare_engine import deduplicate_tours
@@ -21,6 +21,35 @@ from snapshot_service import capture_daily_snapshot
 from tour_sources import apply_market_compare_source_filter, filter_tours_for_market_compare
 
 router = APIRouter(prefix="/api/intelligence", tags=["intelligence"])
+
+_INTELLIGENCE_CACHE_SEC = 300
+
+
+def _market_compare_tour_query(db: Session):
+    return apply_market_compare_source_filter(
+        db.query(Tour)
+        .options(load_only(
+            Tour.id,
+            Tour.ten_tour,
+            Tour.ma_tour,
+            Tour.link_url,
+            Tour.gia_raw,
+            Tour.lich_trinh,
+            Tour.updated_at,
+            Tour.created_at,
+            Tour.cong_ty,
+            Tour.thi_truong,
+            Tour.tuyen_tour,
+            Tour.diem_kh,
+            Tour.thoi_gian,
+            Tour.so_ngay,
+            Tour.gia,
+            Tour.lich_kh,
+            Tour.nguon,
+            Tour.sheet_source,
+        ))
+        .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+    )
 
 
 class SavedViewIn(BaseModel):
@@ -51,22 +80,19 @@ def home_brief(db: Session = Depends(get_db), _: User = Depends(get_current_user
 
 @router.post("/snapshot/capture")
 def capture_snapshot(_: User = Depends(require_admin), db: Session = Depends(get_db)):
-    tours = filter_tours_for_market_compare(
-        apply_market_compare_source_filter(
-            db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
-        ).all()
-    )
+    tours = filter_tours_for_market_compare(_market_compare_tour_query(db).all())
     daily = capture_daily_snapshot(db, tours)
     return {"snapshot_date": daily.snapshot_date.isoformat(), "message": "Đã chụp snapshot & sinh insight"}
 
 
 @router.get("/coverage")
-def coverage(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    tours = filter_tours_for_market_compare(
-        apply_market_compare_source_filter(
-            db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
-        ).all()
-    )
+def coverage(
+    response: Response,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    response.headers["Cache-Control"] = f"private, max-age={_INTELLIGENCE_CACHE_SEC}"
+    tours = filter_tours_for_market_compare(_market_compare_tour_query(db).all())
     result = build_coverage_for_api(tours)
     # Enrich gaps với opportunity_score + market metrics từ RouteDailyMetrics
     try:
@@ -108,18 +134,48 @@ def quality(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
 
 
 @router.get("/matcher/suggest")
-def matcher_suggest(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    tours = db.query(Tour).all()
+def matcher_suggest(
+    response: Response,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    response.headers["Cache-Control"] = f"private, max-age={_INTELLIGENCE_CACHE_SEC}"
+    tours = (
+        db.query(Tour)
+        .options(load_only(
+            Tour.id,
+            Tour.ten_tour,
+            Tour.ma_tour,
+            Tour.link_url,
+            Tour.gia_raw,
+            Tour.lich_trinh,
+            Tour.updated_at,
+            Tour.created_at,
+            Tour.cong_ty,
+            Tour.thi_truong,
+            Tour.tuyen_tour,
+            Tour.diem_kh,
+            Tour.thoi_gian,
+            Tour.so_ngay,
+            Tour.gia,
+            Tour.lich_kh,
+            Tour.nguon,
+            Tour.sheet_source,
+        ))
+        .all()
+    )
     return {"items": suggest_vtr_tours(tours)}
 
 
 @router.get("/matcher/{tour_id}")
-def matcher_detail(tour_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    tours = filter_tours_for_market_compare(
-        apply_market_compare_source_filter(
-            db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
-        ).all()
-    )
+def matcher_detail(
+    tour_id: int,
+    response: Response,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    response.headers["Cache-Control"] = f"private, max-age={_INTELLIGENCE_CACHE_SEC}"
+    tours = filter_tours_for_market_compare(_market_compare_tour_query(db).all())
     return find_matches(tours, tour_id)
 
 

@@ -245,10 +245,21 @@ def _start_apply_all_rules_background(*, recompute_phan_khuc: bool = False, incr
             "message": "Đang áp dụng quy tắc lên tour (job trước chưa xong)…",
         }
 
+    params = {
+        "incremental": bool(incremental),
+        "recompute_phan_khuc": bool(recompute_phan_khuc),
+    }
+    can_resume = bool(st.get("stale")) and st.get("params") == params
+    resume_from_id = int(st.get("last_id") or 0) if can_resume else 0
+    initial_processed = int(st.get("progress") or 0) if can_resume else 0
+    total_override = int(st.get("total") or 0) if can_resume and st.get("total") is not None else None
     started_at = datetime.now(timezone.utc).isoformat()
     set_apply_status({
         "running": True,
         "started_at": started_at,
+        "progress": initial_processed,
+        "last_id": resume_from_id,
+        "params": params,
         "message": "Đang áp dụng quy tắc…",
     })
 
@@ -257,7 +268,7 @@ def _start_apply_all_rules_background(*, recompute_phan_khuc: bool = False, incr
 
         session = SessionLocal()
 
-        def _progress(n: int, total: int, msg: str) -> None:
+        def _progress(n: int, total: int, msg: str, last_id: int | None = None) -> None:
             from datetime import datetime, timezone
 
             set_apply_status({
@@ -266,6 +277,8 @@ def _start_apply_all_rules_background(*, recompute_phan_khuc: bool = False, incr
                 "progress_at": datetime.now(timezone.utc).isoformat(),
                 "progress": n,
                 "total": total,
+                "last_id": last_id,
+                "params": params,
                 "message": msg,
             })
 
@@ -274,6 +287,9 @@ def _start_apply_all_rules_background(*, recompute_phan_khuc: bool = False, incr
                 session,
                 recompute_phan_khuc=recompute_phan_khuc,
                 incremental=incremental,
+                start_after_id=resume_from_id,
+                initial_processed=initial_processed,
+                total_override=total_override,
                 progress_cb=_progress,
             )
             log.info("apply_all_rules_to_tours finished: %s", result.get("message"))
@@ -778,6 +794,12 @@ def apply_classification_status(_: User = Depends(require_admin)):
         out["progress"] = st["progress"]
     if st.get("total") is not None:
         out["total"] = st["total"]
+    if st.get("last_id") is not None:
+        out["last_id"] = st["last_id"]
+    if st.get("stale") is not None:
+        out["stale"] = bool(st.get("stale"))
+    if st.get("params"):
+        out["params"] = st["params"]
     if st.get("last_result"):
         out["last_result"] = st["last_result"]
     if st.get("error"):

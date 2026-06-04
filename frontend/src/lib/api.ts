@@ -1086,8 +1086,9 @@ export const applyClassificationToTours = async (opts?: { fullScan?: boolean; re
 export const getApplyClassificationStatus = async () => {
   const { data } = await api.get("/admin/rules/apply-classification-status");
   return data as {
-    running: boolean; message?: string; error?: string;
-    progress?: number; total?: number; last_result?: Record<string, unknown>;
+    running: boolean; message?: string; error?: string; stale?: boolean;
+    progress?: number; total?: number; last_id?: number; params?: Record<string, unknown>;
+    last_result?: Record<string, unknown>;
   };
 };
 

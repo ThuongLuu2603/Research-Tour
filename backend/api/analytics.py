@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import func, case
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel
 
@@ -152,15 +152,20 @@ def by_segment(
 
 @router.get("/scatter", response_model=list[ScatterPoint])
 def scatter(
+    response: Response,
     nguon: list[str] = Query([]),
+    limit: int = Query(2000, ge=100, le=5000),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    response.headers["Cache-Control"] = f"private, max-age={_ANALYTICS_CACHE_SEC}"
     q = db.query(Tour.ten_tour, Tour.cong_ty, Tour.thi_truong, Tour.gia, Tour.so_ngay)
     if nguon:
         q = q.filter(Tour.nguon.in_(nguon))
     rows = (
         q.filter(Tour.gia != None, Tour.so_ngay != None, Tour.so_ngay > 0, Tour.so_ngay <= 45)
+        .order_by(Tour.updated_at.desc())
+        .limit(limit)
         .all()
     )
     return [
@@ -177,6 +182,7 @@ def scatter(
 
 @router.get("/price-stats", response_model=list[PriceStatsItem])
 def price_stats(
+    response: Response,
     group_by: str = Query("thi_truong"),
     nguon: list[str] = Query([]),
     limit: int = Query(20, ge=1, le=50),
@@ -187,7 +193,27 @@ def price_stats(
 
     from tour_sources import apply_analytics_tour_filters
 
-    q = db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)
+    response.headers["Cache-Control"] = f"private, max-age={_ANALYTICS_CACHE_SEC}"
+    q = (
+        db.query(Tour)
+        .options(load_only(
+            Tour.id,
+            Tour.ten_tour,
+            Tour.ma_tour,
+            Tour.link_url,
+            Tour.updated_at,
+            Tour.cong_ty,
+            Tour.thi_truong,
+            Tour.tuyen_tour,
+            Tour.thoi_gian,
+            Tour.so_ngay,
+            Tour.gia,
+            Tour.lich_kh,
+            Tour.nguon,
+            Tour.sheet_source,
+        ))
+        .filter(Tour.gia != None, Tour.gia > 0)
+    )
     if nguon:
         q = q.filter(Tour.nguon.in_(nguon))
     else:
@@ -232,6 +258,7 @@ def treemap(
 
 @router.get("/market-intelligence")
 def market_intelligence(
+    response: Response,
     nguon: list[str] = Query([]),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
@@ -240,7 +267,27 @@ def market_intelligence(
 
     from tour_sources import apply_analytics_tour_filters, filter_tours_for_market_compare
 
-    q = db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+    response.headers["Cache-Control"] = f"private, max-age={_ANALYTICS_CACHE_SEC}"
+    q = (
+        db.query(Tour)
+        .options(load_only(
+            Tour.id,
+            Tour.ten_tour,
+            Tour.ma_tour,
+            Tour.link_url,
+            Tour.updated_at,
+            Tour.cong_ty,
+            Tour.thi_truong,
+            Tour.tuyen_tour,
+            Tour.thoi_gian,
+            Tour.so_ngay,
+            Tour.gia,
+            Tour.lich_kh,
+            Tour.nguon,
+            Tour.sheet_source,
+        ))
+        .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+    )
     if nguon:
         q = q.filter(Tour.nguon.in_(nguon))
         tours = filter_tours_for_market_compare(q.all())

@@ -60,6 +60,10 @@ def _normalize_apply_status(raw: dict) -> dict:
                     "stale": True,
                     "message": "Job áp dụng không cập nhật tiến độ >12 phút — có thể treo. Bấm «Áp dụng ngay» để chạy lại.",
                     "last_result": raw.get("last_result"),
+                    "progress": raw.get("progress"),
+                    "total": raw.get("total"),
+                    "last_id": raw.get("last_id"),
+                    "params": raw.get("params"),
                 }
         started = raw.get("started_at")
         if started:
@@ -70,6 +74,10 @@ def _normalize_apply_status(raw: dict) -> dict:
                     "stale": True,
                     "message": "Job áp dụng trước đó quá lâu — bạn có thể chạy lại.",
                     "last_result": raw.get("last_result"),
+                    "progress": raw.get("progress"),
+                    "total": raw.get("total"),
+                    "last_id": raw.get("last_id"),
+                    "params": raw.get("params"),
                 }
     except Exception:
         pass
