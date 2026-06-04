@@ -788,6 +788,21 @@ export const getRulesUnmatched = async (
   return data as { scope: string; items: UnmatchedItem[] };
 };
 
+export const getRulesUnmatchedSummary = async (): Promise<Record<string, number>> => {
+  const { data } = await api.get("/admin/rules/unmatched-summary");
+  return data;
+};
+
+export const previewKeywordMatch = async (keywords: string, limit = 20) => {
+  const { data } = await api.get(`/admin/rules/preview-keyword?keywords=${encodeURIComponent(keywords)}&limit=${limit}`);
+  return data as { keywords: string[]; tour_count: number; samples: Array<{ id: number; ten_tour: string; thi_truong: string; tuyen_tour: string; cong_ty: string }> };
+};
+
+export const getRuleRouteStats = async (): Promise<Record<string, number>> => {
+  const { data } = await api.get("/admin/rules/route-stats");
+  return data;
+};
+
 // ── Intelligence hub ──────────────────────────────────────────────────────────
 
 export interface IntelInsight {

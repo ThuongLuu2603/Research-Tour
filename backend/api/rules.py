@@ -906,6 +906,94 @@ def put_classify_market_order(
     return {"markets": markets, "message": "Đã lưu thứ tự thị trường (trên xuống = ưu tiên)"}
 
 
+@router.get("/preview-keyword")
+def preview_keyword_match(
+    keywords: str = Query(..., min_length=1, max_length=512,
+                          description="Một hoặc nhiều keyword cách nhau dấu phẩy — tất cả phải có trong tên tour (AND)"),
+    limit: int = Query(20, ge=1, le=50),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Xem thử keyword sẽ match tour nào — dùng trước khi lưu rule."""
+    from sqlalchemy import and_, or_, func
+    from data_sources import DB_CANONICAL_NGUON
+    from models import Tour
+
+    kws = [k.strip().lower() for k in keywords.split(",") if k.strip()]
+    if not kws:
+        return {"keywords": [], "tour_count": 0, "samples": []}
+
+    q = db.query(Tour.id, Tour.ten_tour, Tour.thi_truong, Tour.tuyen_tour, Tour.cong_ty).filter(
+        Tour.nguon.in_(tuple(DB_CANONICAL_NGUON))
+    )
+    for kw in kws:
+        q = q.filter(
+            or_(
+                func.lower(Tour.ten_tour).contains(kw),
+                func.lower(Tour.lich_trinh).contains(kw),
+            )
+        )
+    total = q.count()
+    samples = q.limit(limit).all()
+    return {
+        "keywords": kws,
+        "tour_count": total,
+        "samples": [
+            {
+                "id": r.id,
+                "ten_tour": r.ten_tour or "",
+                "thi_truong": r.thi_truong or "",
+                "tuyen_tour": r.tuyen_tour or "",
+                "cong_ty": r.cong_ty or "",
+            }
+            for r in samples
+        ],
+    }
+
+
+@router.get("/route-stats")
+def route_rule_stats(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Số tour đang được gán bởi mỗi rule tuyến (classification_rule_id)."""
+    from sqlalchemy import func
+    from models import Tour
+
+    rows = (
+        db.query(Tour.classification_rule_id, func.count(Tour.id).label("cnt"))
+        .filter(Tour.classification_rule_id.isnot(None))
+        .group_by(Tour.classification_rule_id)
+        .all()
+    )
+    return {str(rule_id): cnt for rule_id, cnt in rows}
+
+
+@router.get("/unmatched-summary")
+def unmatched_summary(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Số lượng chưa khớp per scope — dùng cho badge trên tab."""
+    from classification import collect_classify_gaps, collect_unmatched_values
+    from data_sources import DB_CANONICAL_NGUON
+    from models import Tour
+    from rules_job_store import get_unmatched_cached
+
+    def _load_all():
+        tours = db.query(Tour).filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON))).yield_per(800)
+        return collect_unmatched_values(tours, vtr_only=False)
+
+    def _load_classify():
+        return {"classify": collect_classify_gaps(db)}
+
+    try:
+        data = get_unmatched_cached(db, "all", _load_all)
+        classify_data = get_unmatched_cached(db, "classify", _load_classify)
+        return {
+            "classify": len(classify_data.get("classify", [])),
+            "company": len(data.get("cong_ty", [])),
+            "departure": len(data.get("diem_kh", [])),
+            "duration": len(data.get("thoi_gian", [])),
+        }
+    except Exception:
+        return {"classify": 0, "company": 0, "departure": 0, "duration": 0}
+
+
 @router.get("/stats-exclusions")
 def list_stats_exclusions(_: User = Depends(require_admin)):
     """Pattern tên tour bị loại khỏi KPI / compare (FIT placeholder)."""

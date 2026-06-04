@@ -11,6 +11,9 @@ import {
   applyClassificationToTours,
   getApplyClassificationStatus,
   getRulesUnmatched,
+  getRulesUnmatchedSummary,
+  getRuleRouteStats,
+  getDataQuality,
   RouteRule, CompanyRule, DepartureRule, DurationRule, UnmatchedItem,
 } from "@/lib/api";
 import { COL } from "@/lib/glossary";
@@ -67,6 +70,9 @@ export default function RulesAdminPage() {
   const { data: companyRules } = useQuery({ queryKey: ["company-rules"], queryFn: listCompanyRules, enabled: isAdmin });
   const { data: departureRules } = useQuery({ queryKey: ["departure-rules"], queryFn: listDepartureRules, enabled: isAdmin });
   const { data: durationRules } = useQuery({ queryKey: ["duration-rules"], queryFn: listDurationRules, enabled: isAdmin });
+  const { data: unmatchedSummary } = useQuery({ queryKey: ["rules-unmatched-summary"], queryFn: getRulesUnmatchedSummary, enabled: isAdmin, staleTime: 120_000 });
+  const { data: routeStats } = useQuery({ queryKey: ["rules-route-stats"], queryFn: getRuleRouteStats, enabled: isAdmin && tab === "classify", staleTime: 120_000 });
+  const { data: quality } = useQuery({ queryKey: ["data-quality"], queryFn: getDataQuality, enabled: isAdmin, staleTime: 120_000 });
   const unmatchedScope = tab === "classify" || tab === "company" || tab === "departure" || tab === "duration" ? tab : null;
   const [hiddenGapValues, setHiddenGapValues] = useState<Set<string>>(() => new Set());
   const { data: unmatched, isLoading: unmatchedLoading } = useQuery({
@@ -113,6 +119,9 @@ export default function RulesAdminPage() {
     qc.invalidateQueries({ queryKey: ["departure-rules"] });
     qc.invalidateQueries({ queryKey: ["duration-rules"] });
     qc.invalidateQueries({ queryKey: ["rules-unmatched"] });
+    qc.invalidateQueries({ queryKey: ["rules-unmatched-summary"] });
+    qc.invalidateQueries({ queryKey: ["rules-route-stats"] });
+    qc.invalidateQueries({ queryKey: ["data-quality"] });
     qc.invalidateQueries({ queryKey: ["compare-class-gaps"] });
     qc.invalidateQueries({ queryKey: ["workspace-tours"] });
     qc.invalidateQueries({ queryKey: ["filter-options"] });
@@ -320,56 +329,66 @@ export default function RulesAdminPage() {
   );
 
   return (
-    <div className="p-6 max-w-5xl space-y-6">
+    <div className="p-6 max-w-5xl space-y-6 pb-24">
       <div>
         <h1 className="text-xl font-bold">Quy tắc phân loại & Key matching</h1>
         <p className="text-sm text-gray-500">
-          Quy tắc lưu trong Supabase và áp dụng <strong>toàn hệ thống</strong> (mọi tour Main/Vietravel): Research Grid, So sánh VTR, Market Lab, phân khúc, báo cáo…
-          Sau khi sửa, tour được cập nhật tự động (nền) hoặc bấm «Áp dụng ngay lên tour».
+          Quy tắc lưu trong Supabase và áp dụng <strong>toàn hệ thống</strong>: Research Grid, So sánh VTR, Market Lab, báo cáo…
+          Sau khi sửa, bấm «Áp dụng» để cập nhật tour.
         </p>
       </div>
 
-      <div className="card p-4 space-y-3 bg-slate-50">
-        <p className="text-sm text-gray-600">
-          Mặc định quét tour mới hoặc tour đã đổi sau lần phân loại.
-          Bật «Quét toàn bộ» khi đổi quy tắc lớn và cần áp lại mọi tour.
-        </p>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <label className="text-xs text-gray-700 flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={fullScanApply} onChange={(e) => setFullScanApply(e.target.checked)} />
-            Quét toàn bộ ~9k tour
-          </label>
-          <button type="button" onClick={onApplyTours} disabled={applying} className="btn-primary text-xs flex items-center gap-1 shrink-0 disabled:opacity-60">
-            <RefreshCw size={13} className={applying ? "animate-spin" : ""} /> {applying ? "Đang áp dụng…" : "Áp dụng ngay lên tour"}
-          </button>
-        </div>
-        {syncMsg && (
-          <p
-            className={cn(
-              "text-sm px-3 py-2 rounded w-full border",
-              applying || syncMsg.includes("Đang quét") || syncMsg.includes("Đang áp dụng")
-                ? "text-amber-900 bg-amber-50 border-amber-200"
-                : syncMsg.includes("thất bại") || syncMsg.includes("Lỗi") || syncMsg.includes("error")
-                  ? "text-red-800 bg-red-50 border-red-200"
-                  : "text-green-800 bg-green-50 border-green-200",
-            )}
-            role="status"
-          >
-            {syncMsg}
+      {/* ─── Status bar ─────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="card p-3">
+          <p className="text-xs text-gray-500">Phân loại OK</p>
+          <p className={cn("text-xl font-bold", (quality?.classified_pct ?? 100) >= 90 ? "text-green-700" : "text-amber-700")}>
+            {quality?.classified_pct ?? "—"}%
           </p>
-        )}
+          <div className="w-full bg-gray-100 rounded-full h-1 mt-1">
+            <div className="h-1 rounded-full bg-green-500 transition-all" style={{ width: `${quality?.classified_pct ?? 0}%` }} />
+          </div>
+        </div>
+        <div className="card p-3">
+          <p className="text-xs text-gray-500">Chưa phân loại</p>
+          <p className={cn("text-xl font-bold", (quality?.unclassified_count ?? 0) > 50 ? "text-red-700" : "text-gray-800")}>
+            {quality?.unclassified_count ?? "—"}
+          </p>
+          <p className="text-[10px] text-gray-400 mt-0.5">tour chưa có tuyến</p>
+        </div>
+        <div className="card p-3">
+          <p className="text-xs text-gray-500">Rule tuyến</p>
+          <p className="text-xl font-bold text-primary-700">{routeRules?.length ?? "—"}</p>
+          <p className="text-[10px] text-gray-400 mt-0.5">
+            {companyRules?.length ?? 0} alias CT · {departureRules?.length ?? 0} alias ĐKH
+          </p>
+        </div>
+        <div className="card p-3">
+          <p className="text-xs text-gray-500">Chưa khớp (tổng)</p>
+          <p className={cn("text-xl font-bold", Object.values(unmatchedSummary ?? {}).some(v => v > 0) ? "text-amber-700" : "text-gray-800")}>
+            {unmatchedSummary ? Object.values(unmatchedSummary).reduce((a, b) => a + b, 0) : "—"}
+          </p>
+          <p className="text-[10px] text-gray-400 mt-0.5">tuyến + công ty + KH + thời gian</p>
+        </div>
       </div>
 
+      {/* ─── Tab buttons với badge số chưa khớp ─────────────────────────── */}
       <div className="flex gap-2 flex-wrap">
         {([
-          ["classify", "Tuyến tour"],
-          ["company", COL.congTy],
-          ["departure", COL.diemKhoiHanh],
-          ["duration", COL.thoiGian],
-        ] as const).map(([t, label]) => (
+          ["classify", "Tuyến tour", unmatchedSummary?.classify],
+          ["company", COL.congTy, unmatchedSummary?.company],
+          ["departure", COL.diemKhoiHanh, unmatchedSummary?.departure],
+          ["duration", COL.thoiGian, unmatchedSummary?.duration],
+        ] as const).map(([t, label, badgeCount]) => (
           <button key={t} onClick={() => { setTab(t); setSearch(""); cancelEdit(); }}
-            className={cn("px-4 py-2 rounded-lg text-sm font-medium", tab === t ? "bg-primary-600 text-white" : "bg-gray-100")}>
+            className={cn("px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2", tab === t ? "bg-primary-600 text-white" : "bg-gray-100 hover:bg-gray-200")}>
             {label}
+            {(badgeCount ?? 0) > 0 && (
+              <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full",
+                tab === t ? "bg-white/30 text-white" : "bg-amber-100 text-amber-800")}>
+                {badgeCount}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -401,6 +420,7 @@ export default function RulesAdminPage() {
           gapLoading={unmatchedLoading}
           marketOptions={marketOptions}
           routeKeywordConflicts={routeKeywordConflicts}
+          routeStats={routeStats}
           dropTarget={dropTarget}
           setDropTarget={setDropTarget}
           onAfterSaved={afterRuleSaved}
@@ -564,6 +584,38 @@ export default function RulesAdminPage() {
           </div>
         </div>
       )}
+
+      {/* ─── Sticky Apply Bar (fixed bottom) ─────────────────────────────── */}
+      <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-gray-200 bg-white/95 backdrop-blur-sm shadow-lg px-6 py-3 flex flex-wrap items-center gap-3">
+        <div className="flex-1 min-w-0">
+          {syncMsg ? (
+            <p className={cn(
+              "text-xs px-3 py-1.5 rounded border max-w-xl truncate",
+              applying || syncMsg.includes("Đang") ? "text-amber-900 bg-amber-50 border-amber-200"
+                : syncMsg.includes("thất bại") || syncMsg.includes("Lỗi") ? "text-red-800 bg-red-50 border-red-200"
+                : "text-green-800 bg-green-50 border-green-200"
+            )}>{syncMsg}</p>
+          ) : (
+            <p className="text-xs text-gray-400">
+              Sau khi thêm / sửa rule, bấm «Áp dụng» để cập nhật phân loại tour.
+            </p>
+          )}
+        </div>
+        <label className="text-xs text-gray-700 flex items-center gap-2 cursor-pointer shrink-0">
+          <input type="checkbox" checked={fullScanApply} onChange={(e) => setFullScanApply(e.target.checked)} />
+          <span>Quét toàn bộ</span>
+          <span className="text-gray-400">(khi đổi rule lớn)</span>
+        </label>
+        <button
+          type="button"
+          onClick={onApplyTours}
+          disabled={applying}
+          className="btn-primary text-sm flex items-center gap-1.5 shrink-0 disabled:opacity-60"
+        >
+          <RefreshCw size={14} className={applying ? "animate-spin" : ""} />
+          {applying ? "Đang áp dụng…" : "Áp dụng lên tour"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -588,6 +640,8 @@ function AliasTable({
   canonicalLabel: string;
 }) {
   const [pending, setPending] = useState<Record<string, string>>({});
+  const [confirmId, setConfirmId] = useState<number | null>(null); // confirm xóa 2-bước
+  const [expandedUnmatched, setExpandedUnmatched] = useState<Set<string>>(() => new Set());
 
   return (
     <div className="card overflow-auto max-h-[560px]">
@@ -595,7 +649,7 @@ function AliasTable({
         <thead className="bg-gray-50 sticky top-0 z-10"><tr>
           <th className="px-3 py-2 text-left">{canonicalLabel} <span className="text-[10px] font-normal text-gray-400">(thả alias vào đây)</span></th>
           <th className="px-3 py-2 text-left">Alias</th>
-          <th className="w-24"></th>
+          <th className="w-32"></th>
         </tr></thead>
         <tbody>
           {rows.map((r) => {
@@ -623,8 +677,15 @@ function AliasTable({
                     <button type="button" className="text-green-600" onClick={() => onSave(r)}><Check size={14} /></button>
                     <button type="button" className="text-gray-400" onClick={onCancel}><X size={14} /></button>
                   </span>
+                ) : confirmId === r.id ? (
+                  // Confirm xóa 2-bước
+                  <span className="flex gap-1 items-center">
+                    <span className="text-xs text-red-700 font-medium">Xóa?</span>
+                    <button type="button" className="text-[10px] bg-red-600 text-white px-1.5 py-0.5 rounded hover:bg-red-700" onClick={() => { setConfirmId(null); onDelete(r); }}>Có</button>
+                    <button type="button" className="text-[10px] bg-gray-100 px-1.5 py-0.5 rounded" onClick={() => setConfirmId(null)}>Không</button>
+                  </span>
                 ) : (
-                  <button type="button" className="text-red-500" onClick={() => onDelete(r)}><Trash2 size={14} /></button>
+                  <button type="button" className="text-red-400 hover:text-red-600 p-1" onClick={() => setConfirmId(r.id)} title="Xóa alias này"><Trash2 size={13} /></button>
                 )}
               </td>
             </tr>
@@ -652,11 +713,38 @@ function AliasTable({
                     />
                   </td>
                   <td className="px-3 py-2 font-mono text-xs text-amber-950">
-                    <span {...dragAliasProps(item.value)} title={`${item.count} tour · kéo lên dòng phía trên`}>
-                      <GripVertical size={10} className="text-amber-600 shrink-0" />
-                      {item.value || "—"}
-                      <span className="text-gray-500 ml-1">({item.count})</span>
-                    </span>
+                    <div>
+                      <span {...dragAliasProps(item.value)} title={`${item.count} tour · kéo lên dòng phía trên`} className="flex items-center gap-1">
+                        <GripVertical size={10} className="text-amber-600 shrink-0" />
+                        {item.value || "—"}
+                        <span className="text-gray-500">({item.count})</span>
+                      </span>
+                      {/* Expand để xem sample tours */}
+                      {(item.members ?? []).length > 0 && (
+                        <button
+                          type="button"
+                          className="text-[10px] text-amber-700 hover:underline mt-0.5 block"
+                          onClick={() => setExpandedUnmatched((prev) => {
+                            const next = new Set(prev);
+                            next.has(item.value) ? next.delete(item.value) : next.add(item.value);
+                            return next;
+                          })}
+                        >
+                          {expandedUnmatched.has(item.value) ? "▲ Ẩn mẫu" : `▼ Xem ${(item.members ?? []).length} tour mẫu`}
+                        </button>
+                      )}
+                      {expandedUnmatched.has(item.value) && (item.members ?? []).length > 0 && (
+                        <ul className="mt-1 space-y-0.5 text-[10px] text-gray-600 font-sans">
+                          {(item.members ?? []).slice(0, 5).map((m: any) => (
+                            <li key={m.title} className="flex items-start gap-1 bg-amber-100 rounded px-1 py-0.5">
+                              <span className="text-amber-600 shrink-0">·</span>
+                              <span className="truncate" title={m.title}>{m.title}</span>
+                              <span className="text-gray-400 shrink-0">×{m.count}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                   </td>
                   <td className="px-3 py-2">
                     <button

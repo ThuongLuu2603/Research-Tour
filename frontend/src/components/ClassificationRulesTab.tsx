@@ -6,12 +6,13 @@ import {
   assignClassificationBulk,
   getClassifyMarketOrder,
   putClassifyMarketOrder,
+  previewKeywordMatch,
   seedRouteDefaults,
 } from "@/lib/api";
 import { buildRouteKeywordConflicts, conflictHintForKeyword, parseRouteKeywordList } from "@/lib/rulesUnmatched";
 import { InfoTip } from "@/components/InfoTip";
 import { cn } from "@/lib/utils";
-import { ChevronDown, ChevronRight, Database, GripVertical, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Database, GripVertical, Plus, Trash2, Search, Users } from "lucide-react";
 import {
   dropHandlers,
   dragAliasProps,
@@ -31,6 +32,7 @@ type Props = {
   gapLoading: boolean;
   marketOptions: string[];
   routeKeywordConflicts: ReturnType<typeof buildRouteKeywordConflicts>;
+  routeStats?: Record<string, number>; // tour count per rule_id
   dropTarget: string | null;
   setDropTarget: (k: string | null) => void;
   onAfterSaved: (msg: string, opts?: { gapValues?: string[]; skipPoll?: boolean }) => void;
@@ -60,6 +62,7 @@ export function ClassificationRulesTab({
   gapLoading,
   marketOptions,
   routeKeywordConflicts,
+  routeStats,
   dropTarget,
   setDropTarget,
   onAfterSaved,
@@ -88,6 +91,21 @@ export function ClassificationRulesTab({
     route: string;
     routeKw: string;
   }>>({});
+
+  // Preview keyword match (#6)
+  const [previewKw, setPreviewKw] = useState("");
+  const [previewDebouncedKw, setPreviewDebouncedKw] = useState("");
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null); // confirm delete 2-step (#4)
+  useEffect(() => {
+    const t = window.setTimeout(() => setPreviewDebouncedKw(previewKw), 600);
+    return () => window.clearTimeout(t);
+  }, [previewKw]);
+  const { data: previewResult, isFetching: previewFetching } = useQuery({
+    queryKey: ["preview-keyword", previewDebouncedKw],
+    queryFn: () => previewKeywordMatch(previewDebouncedKw, 20),
+    enabled: previewDebouncedKw.trim().length >= 2,
+    staleTime: 30_000,
+  });
   const [selectedGaps, setSelectedGaps] = useState<Set<string>>(() => new Set());
   const [assigning, setAssigning] = useState(false);
   const [quickAdding, setQuickAdding] = useState(false);
@@ -318,6 +336,44 @@ export function ClassificationRulesTab({
         (3) cùng tuyến, nhiều dòng = OR. Bấm tên TT để mở/đóng danh sách tuyến.
       </p>
 
+      {/* ── Preview keyword match (#6) ──────────────────────────────────── */}
+      <div className="card p-4 border-dashed border-2 border-blue-200 bg-blue-50/40">
+        <p className="text-sm font-medium text-blue-900 mb-2 flex items-center gap-2">
+          <Search size={14} /> Test keyword trước khi lưu rule
+        </p>
+        <div className="flex gap-2 items-center flex-wrap">
+          <input
+            className="input text-sm font-mono flex-1 min-w-[200px] max-w-sm"
+            placeholder="Nhập keyword (vd: bangkok, osaka, europe) — dấu phẩy = AND"
+            value={previewKw}
+            onChange={(e) => setPreviewKw(e.target.value)}
+          />
+          {previewFetching && <span className="text-xs text-blue-600 animate-pulse">Đang tìm…</span>}
+          {previewResult && !previewFetching && (
+            <span className={cn("text-sm font-bold", previewResult.tour_count > 0 ? "text-blue-900" : "text-gray-500")}>
+              {previewResult.tour_count} tour sẽ match
+            </span>
+          )}
+        </div>
+        {previewResult && previewResult.samples.length > 0 && (
+          <div className="mt-2 max-h-40 overflow-auto space-y-1">
+            {previewResult.samples.map((t) => (
+              <div key={t.id} className="text-xs bg-white rounded px-2 py-1 border border-blue-100 flex items-start gap-2">
+                <span className="text-blue-700 shrink-0 font-mono">{t.thi_truong || "?"}</span>
+                <span className="flex-1 truncate text-gray-800" title={t.ten_tour}>{t.ten_tour}</span>
+                {t.tuyen_tour && <span className="text-gray-400 shrink-0 text-[10px]">{t.tuyen_tour}</span>}
+              </div>
+            ))}
+            {previewResult.tour_count > previewResult.samples.length && (
+              <p className="text-[10px] text-blue-600 px-1">…và {previewResult.tour_count - previewResult.samples.length} tour khác</p>
+            )}
+          </div>
+        )}
+        {previewResult && previewResult.tour_count === 0 && previewDebouncedKw.length >= 2 && (
+          <p className="text-xs text-gray-400 mt-1">Không có tour nào chứa tất cả keyword này.</p>
+        )}
+      </div>
+
       <div className="card p-4 space-y-3 bg-primary-50/40 border-primary-100">
         <p className="text-sm font-medium text-primary-900">
           Thêm rule tuyến
@@ -433,10 +489,15 @@ export function ClassificationRulesTab({
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="text-gray-500">
-                          <th className="text-left py-1 w-8">#</th>
+                          <th className="text-left py-1 w-6">#</th>
                           <th className="text-left py-1">Tuyến</th>
                           <th className="text-left">Keywords (AND — nhiều từ ưu tiên trước)</th>
-                          <th className="w-10" />
+                          <th className="text-right pr-1 w-14">
+                            <span className="inline-flex items-center gap-0.5 text-gray-400" title="Số tour hiện đang dùng rule này">
+                              <Users size={9} /> Tour
+                            </span>
+                          </th>
+                          <th className="w-14" />
                         </tr>
                       </thead>
                       <tbody>
@@ -446,9 +507,10 @@ export function ClassificationRulesTab({
                           const { dropClassName, ...drop } = dropHandlers(dropKey, dropTarget, setDropTarget, (raw) =>
                             appendKeywordToRouteRule(r, raw),
                           );
+                          const tourCount = routeStats?.[String(r.id)];
                           return (
                             <tr key={r.id} className="border-t border-gray-100">
-                              <td className="py-1 text-gray-400">{ri + 1}</td>
+                              <td className="py-1 text-gray-400 text-[10px]">{ri + 1}</td>
                               <td className={cn("py-1 pr-2", dropClassName)} {...drop}>{r.tuyen_tour}</td>
                               <td className="py-1 font-mono">
                                 <RouteKeywordsCell keywords={r.keywords} conflicts={routeKeywordConflicts} />
@@ -456,7 +518,23 @@ export function ClassificationRulesTab({
                                   <span className="text-[10px] text-gray-500 font-sans ml-1">({kwCount} AND)</span>
                                 )}
                               </td>
-                              <td className="py-1">{actionBtns(() => deleteRouteRule(r.id).then(() => onAfterSaved("Đã xóa")))}</td>
+                              <td className="py-1 text-right pr-1">
+                                {tourCount != null ? (
+                                  <span className={cn("text-[10px] font-medium", tourCount > 0 ? "text-primary-700" : "text-gray-300")}>
+                                    {tourCount}
+                                  </span>
+                                ) : <span className="text-gray-200 text-[10px]">—</span>}
+                              </td>
+                              <td className="py-1">
+                                {confirmDeleteId === r.id ? (
+                                  <span className="flex gap-1 items-center">
+                                    <button type="button" className="text-[9px] bg-red-600 text-white px-1 py-0.5 rounded" onClick={() => { setConfirmDeleteId(null); deleteRouteRule(r.id).then(() => onAfterSaved("Đã xóa")); }}>Xóa</button>
+                                    <button type="button" className="text-[9px] bg-gray-100 px-1 py-0.5 rounded" onClick={() => setConfirmDeleteId(null)}>Hủy</button>
+                                  </span>
+                                ) : (
+                                  actionBtns(() => setConfirmDeleteId(r.id))
+                                )}
+                              </td>
                             </tr>
                           );
                         })}
