@@ -328,369 +328,333 @@ export function ClassificationRulesTab({
     [selectedGaps, gapItems, pending],
   );
 
+  // ── datalists dùng chung cho cả 2 cột ──────────────────────────────────────
+  const sharedDataLists = (
+    <>
+      <datalist id="classify-market-list">{marketOptions.map((m) => <option key={m} value={m} />)}</datalist>
+      {[...routeNamesByMarket.entries()].map(([mk, names]) => (
+        <datalist key={mk} id={routeDatalistId(mk)}>
+          {names.map((name) => <option key={name} value={name} />)}
+        </datalist>
+      ))}
+    </>
+  );
+
   return (
-    <div className="space-y-4">
-      <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-        <strong>Ưu tiên khớp:</strong> (1) thị trường <strong>trên xuống</strong> — kéo thả để sắp xếp;
-        (2) trong mỗi TT, dòng có <strong>nhiều từ AND</strong> hơn được thử trước;
-        (3) cùng tuyến, nhiều dòng = OR. Bấm tên TT để mở/đóng danh sách tuyến.
-      </p>
+    <div className="grid lg:grid-cols-[3fr_2fr] gap-4 items-start">
 
-      {/* ── Preview keyword match (#6) ──────────────────────────────────── */}
-      <div className="card p-4 border-dashed border-2 border-blue-200 bg-blue-50/40">
-        <p className="text-sm font-medium text-blue-900 mb-2 flex items-center gap-2">
-          <Search size={14} /> Test keyword trước khi lưu rule
+      {/* ════════════════ LEFT — Bảng quy tắc tuyến ════════════════════════ */}
+      <div className="space-y-3">
+        <p className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+          <strong>Ưu tiên khớp:</strong> (1) thị trường <strong>trên xuống</strong> — kéo thả để sắp xếp;
+          (2) trong mỗi TT, dòng có <strong>nhiều từ AND</strong> hơn được thử trước;
+          (3) cùng tuyến, nhiều dòng = OR. Bấm tên TT để mở/đóng danh sách tuyến.
         </p>
-        <div className="flex gap-2 items-center flex-wrap">
-          <input
-            className="input text-sm font-mono flex-1 min-w-[200px] max-w-sm"
-            placeholder="Nhập keyword (vd: bangkok, osaka, europe) — dấu phẩy = AND"
-            value={previewKw}
-            onChange={(e) => setPreviewKw(e.target.value)}
-          />
-          {previewFetching && <span className="text-xs text-blue-600 animate-pulse">Đang tìm…</span>}
-          {previewResult && !previewFetching && (
-            <span className={cn("text-sm font-bold", previewResult.tour_count > 0 ? "text-blue-900" : "text-gray-500")}>
-              {previewResult.tour_count} tour sẽ match
-            </span>
-          )}
-        </div>
-        {previewResult && previewResult.samples.length > 0 && (
-          <div className="mt-2 max-h-40 overflow-auto space-y-1">
-            {previewResult.samples.map((t) => (
-              <div key={t.id} className="text-xs bg-white rounded px-2 py-1 border border-blue-100 flex items-start gap-2">
-                <span className="text-blue-700 shrink-0 font-mono">{t.thi_truong || "?"}</span>
-                <span className="flex-1 truncate text-gray-800" title={t.ten_tour}>{t.ten_tour}</span>
-                {t.tuyen_tour && <span className="text-gray-400 shrink-0 text-[10px]">{t.tuyen_tour}</span>}
-              </div>
-            ))}
-            {previewResult.tour_count > previewResult.samples.length && (
-              <p className="text-[10px] text-blue-600 px-1">…và {previewResult.tour_count - previewResult.samples.length} tour khác</p>
-            )}
-          </div>
-        )}
-        {previewResult && previewResult.tour_count === 0 && previewDebouncedKw.length >= 2 && (
-          <p className="text-xs text-gray-400 mt-1">Không có tour nào chứa tất cả keyword này.</p>
-        )}
-      </div>
 
-      <div className="card p-4 space-y-3 bg-primary-50/40 border-primary-100">
-        <p className="text-sm font-medium text-primary-900">
-          Thêm rule tuyến
-          <InfoTip text="Mỗi dòng = một điều kiện (OR). Trong dòng: dấu phẩy = AND. Thị trường chỉ là nhóm lưu trữ, không cần keyword TT." />
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-          <input className="input text-sm" placeholder="Thị trường (nhóm)" value={qMarket} onChange={(e) => setQMarket(e.target.value)} onKeyDown={keepInputKeys} list="classify-market-list" />
-          <input className="input text-sm" placeholder="Tên tuyến tour" value={qRoute} onChange={(e) => setQRoute(e.target.value)} onKeyDown={keepInputKeys} list={qMarket.trim() ? routeDatalistId(qMarket.trim()) : undefined} />
-          <input className="input text-sm font-mono" placeholder="Keyword tuyến (vd: kanazawa)" value={qRouteKw} onChange={(e) => setQRouteKw(e.target.value)} onKeyDown={keepInputKeys} />
-        </div>
-        <div className="flex flex-wrap gap-2 items-center">
-          <button
-            type="button"
-            onClick={() => void quickAdd()}
-            disabled={!qMarket.trim() || !qRouteKw.trim() || quickAdding || assigning}
-            className="btn-primary text-sm disabled:opacity-60"
-          >
-            <Plus size={14} className={quickAdding ? "animate-pulse" : ""} />
-            {quickAdding ? "Đang áp dụng…" : "Thêm & áp dụng"}
-          </button>
-          <button type="button" onClick={() => seedRouteDefaults().then((r) => onAfterSaved(r.message || "Đã import tuyến")).catch(onError)} className="btn-secondary text-sm">
-            <Database size={14} /> Import tuyến mặc định
-          </button>
-        </div>
-        {actionFeedback && (
-          <p
-            className={cn(
-              "text-sm px-3 py-2 rounded-lg border",
-              actionFeedback.kind === "loading" && "text-amber-900 bg-amber-50 border-amber-200",
-              actionFeedback.kind === "ok" && "text-green-800 bg-green-50 border-green-200",
-              actionFeedback.kind === "err" && "text-red-800 bg-red-50 border-red-200",
-            )}
-            role="status"
-          >
-            {actionFeedback.text}
+        {routeKeywordConflicts.size > 0 && (
+          <p className="text-sm text-red-800 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            {routeKeywordConflicts.size} từ keyword trùng nhiều tuyến (đỏ) — sort_order nhỏ hơn thắng.
           </p>
         )}
-      </div>
 
-      {routeKeywordConflicts.size > 0 && (
-        <p className="text-sm text-red-800 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-          {routeKeywordConflicts.size} từ keyword trùng nhiều tuyến (đỏ) — cùng mức ưu tiên thì sort_order nhỏ hơn thắng.
-        </p>
-      )}
-
-      <div className="card overflow-auto max-h-[420px]">
-        <p className="px-3 py-2 text-xs font-semibold text-gray-600 bg-gray-50 sticky top-0 z-10 border-b flex items-center justify-between gap-2">
-          <span className="inline-flex items-center gap-1">
-            Quy tắc theo thị trường
-            <InfoTip text="Kéo ⋮⋮ để đổi thứ tự TT. Trong nhóm: dòng nhiều «và» hơn được ưu tiên trước." />
-          </span>
-          {searchQuery.trim() && (
-            <span className="font-normal text-gray-500">{orderedMarkets.length} nhóm khớp</span>
-          )}
-        </p>
-        <div className="text-sm">
-          {orderedMarkets.length === 0 && searchQuery.trim() && (
-            <p className="p-4 text-sm text-gray-500">Không có rule khớp «{searchQuery.trim()}»</p>
-          )}
-          {orderedMarkets.map((mk, idx) => {
-            const rRulesAll = routesByMarket.get(mk) ?? [];
-            const showAll = matchRulesSearch(searchQuery, mk);
-            const filtered = showAll || !searchQuery.trim()
-              ? rRulesAll
-              : rRulesAll.filter((r) => matchRulesSearch(searchQuery, r.tuyen_tour, r.keywords));
-            const rRules = sortRouteRulesForDisplay(filtered);
-            if (!rRules.length) return null;
-            const open = expanded.has(mk);
-            const dragging = dragMarket === mk;
-            const dropHint = dropMarket === mk && dragMarket && dragMarket !== mk;
-            return (
-              <div
-                key={mk}
-                className={cn(
-                  "border-b border-gray-100",
-                  dragging && "opacity-40",
-                  dropHint && "bg-primary-50 ring-1 ring-inset ring-primary-200",
-                )}
-                onDragOver={(e) => { e.preventDefault(); setDropMarket(mk); }}
-                onDragLeave={() => setDropMarket((d) => (d === mk ? null : d))}
-                onDrop={(e) => { e.preventDefault(); onDropMarket(mk); }}
-              >
-                <div className="flex items-center gap-1 px-2 py-2 bg-gray-50/80">
-                  <span
-                    draggable
-                    onDragStart={() => setDragMarket(mk)}
-                    onDragEnd={() => { setDragMarket(null); setDropMarket(null); }}
-                    className="cursor-grab text-gray-400 hover:text-gray-600 shrink-0 touch-none"
-                    title="Kéo để đổi thứ tự thị trường"
-                  >
-                    <GripVertical size={14} />
-                  </span>
-                  <button
-                    type="button"
-                    className="flex-1 flex items-center gap-1 text-left font-medium text-gray-900 min-w-0"
-                    onClick={() => toggleMarket(mk)}
-                  >
-                    {open ? <ChevronDown size={14} className="shrink-0" /> : <ChevronRight size={14} className="shrink-0" />}
-                    <span className="truncate">{idx + 1}. {mk}</span>
-                    <span className="text-gray-400 font-normal text-xs shrink-0">({rRules.length} dòng)</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="text-red-500 hover:text-red-700 shrink-0 p-1"
-                    title="Xóa nhóm"
-                    onClick={() => deleteMarketGroup(mk).catch(onError)}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-                {open && (
-                  <div className="px-3 pb-3">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="text-gray-500">
-                          <th className="text-left py-1 w-6">#</th>
-                          <th className="text-left py-1">Tuyến</th>
-                          <th className="text-left">Keywords (AND — nhiều từ ưu tiên trước)</th>
-                          <th className="text-right pr-1 w-14">
-                            <span className="inline-flex items-center gap-0.5 text-gray-400" title="Số tour hiện đang dùng rule này">
-                              <Users size={9} /> Tour
-                            </span>
-                          </th>
-                          <th className="w-14" />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {rRules.map((r, ri) => {
-                          const dropKey = `route-${r.id}`;
-                          const kwCount = parseRouteKeywordList(r.keywords).length;
-                          const { dropClassName, ...drop } = dropHandlers(dropKey, dropTarget, setDropTarget, (raw) =>
-                            appendKeywordToRouteRule(r, raw),
-                          );
-                          const tourCount = routeStats?.[String(r.id)];
-                          return (
-                            <tr key={r.id} className="border-t border-gray-100">
-                              <td className="py-1 text-gray-400 text-[10px]">{ri + 1}</td>
-                              <td className={cn("py-1 pr-2", dropClassName)} {...drop}>{r.tuyen_tour}</td>
-                              <td className="py-1 font-mono">
-                                <RouteKeywordsCell keywords={r.keywords} conflicts={routeKeywordConflicts} />
-                                {kwCount > 1 && (
-                                  <span className="text-[10px] text-gray-500 font-sans ml-1">({kwCount} AND)</span>
-                                )}
-                              </td>
-                              <td className="py-1 text-right pr-1">
-                                {tourCount != null ? (
-                                  <span className={cn("text-[10px] font-medium", tourCount > 0 ? "text-primary-700" : "text-gray-300")}>
-                                    {tourCount}
-                                  </span>
-                                ) : <span className="text-gray-200 text-[10px]">—</span>}
-                              </td>
-                              <td className="py-1">
-                                {confirmDeleteId === r.id ? (
-                                  <span className="flex gap-1 items-center">
-                                    <button type="button" className="text-[9px] bg-red-600 text-white px-1 py-0.5 rounded" onClick={() => { setConfirmDeleteId(null); deleteRouteRule(r.id).then(() => onAfterSaved("Đã xóa")); }}>Xóa</button>
-                                    <button type="button" className="text-[9px] bg-gray-100 px-1 py-0.5 rounded" onClick={() => setConfirmDeleteId(null)}>Hủy</button>
-                                  </span>
-                                ) : (
-                                  actionBtns(() => setConfirmDeleteId(r.id))
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="card overflow-auto max-h-[480px]">
-        <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b bg-amber-50/80 sticky top-0 z-20">
-          <button
-            type="button"
-            className="btn-secondary text-xs py-1"
-            disabled={gapLoading || !gapItems.length}
-            onClick={selectAllReadyGaps}
-          >
-            Chọn tất cả (đủ ô)
-          </button>
-          <button
-            type="button"
-            className="btn-secondary text-xs py-1"
-            disabled={!selectedGaps.size}
-            onClick={() => setSelectedGaps(new Set())}
-          >
-            Bỏ chọn
-          </button>
-          <button
-            type="button"
-            className="btn-primary text-xs py-1"
-            disabled={assigning || selectedReadyCount < 1}
-            onClick={() => assignSelected().catch(onError)}
-          >
-            {assigning ? "Đang gán…" : `Gán ${selectedReadyCount} dòng đã chọn`}
-          </button>
-          <span className="text-xs text-gray-500 ml-auto">
-            Gán keyword → cập nhật <strong>mọi tour trống tuyến</strong> có keyword trong tên, rồi điều chỉnh tour <strong>đã có tuyến</strong> khớp keyword
-          </span>
-        </div>
-        <table className="w-full text-sm">
-          <thead className="bg-amber-50 sticky top-0 z-10">
-            <tr>
-              <th className="px-1 py-2 w-8" />
-              <th className="px-2 py-2 text-left w-[28%]">Tour chưa khớp tuyến</th>
-              <th className="px-2 py-2 text-left">Thị trường (nhóm)</th>
-              <th className="px-2 py-2 text-left">Tuyến tour</th>
-              <th className="px-2 py-2 text-left">
-                <span className="inline-flex items-center gap-1">
-                  Keyword tuyến (dòng mới)
-                  <InfoTip text="Gán = thêm rule OR + áp dụng (1) tour trống tuyến, (2) tour đã có tuyến. Khớp keyword không phân biệt dấu (chùa = chua). Dấu phẩy = AND." />
-                </span>
-              </th>
-              <th className="px-2 py-2 w-20" />
-            </tr>
-          </thead>
-          <tbody>
-            {gapLoading && (
-              <tr><td colSpan={6} className="px-3 py-6 text-center text-gray-400">Đang tải tour chưa có tuyến (DB)…</td></tr>
+        <div className="card overflow-auto" style={{ maxHeight: "calc(100vh - 260px)" }}>
+          <p className="px-3 py-2 text-xs font-semibold text-gray-600 bg-gray-50 sticky top-0 z-10 border-b flex items-center justify-between gap-2">
+            <span className="inline-flex items-center gap-1">
+              Quy tắc theo thị trường
+              <InfoTip text="Kéo ⋮⋮ để đổi thứ tự TT. Trong nhóm: dòng nhiều «và» hơn được ưu tiên trước." />
+            </span>
+            {searchQuery.trim() && (
+              <span className="font-normal text-gray-500">{orderedMarkets.length} nhóm khớp</span>
             )}
-            {!gapLoading && gapItems.length === 0 && (
-              <tr><td colSpan={6} className="px-3 py-6 text-center text-green-700">Mọi tour đã khớp ít nhất một rule tuyến</td></tr>
+          </p>
+          <div className="text-sm">
+            {orderedMarkets.length === 0 && searchQuery.trim() && (
+              <p className="p-4 text-sm text-gray-500">Không có rule khớp «{searchQuery.trim()}»</p>
             )}
-            {gapItems.map((item) => {
-              const title = item.value;
-              const d = rowDraft(title, item);
-              const rowConflict = conflictHintForKeyword(parseRouteKeywordList(d.routeKw)[0] ?? "", routeKeywordConflicts);
-
-              const ready = isRowReady(title, item);
+            {orderedMarkets.map((mk, idx) => {
+              const rRulesAll = routesByMarket.get(mk) ?? [];
+              const showAll = matchRulesSearch(searchQuery, mk);
+              const filtered = showAll || !searchQuery.trim()
+                ? rRulesAll
+                : rRulesAll.filter((r) => matchRulesSearch(searchQuery, r.tuyen_tour, r.keywords));
+              const rRules = sortRouteRulesForDisplay(filtered);
+              if (!rRules.length) return null;
+              const open = expanded.has(mk);
+              const dragging = dragMarket === mk;
+              const dropHint = dropMarket === mk && dragMarket && dragMarket !== mk;
               return (
-                <tr key={title} className={cn("border-t bg-amber-50/50 align-top", selectedGaps.has(title) && "ring-1 ring-primary-400")}>
-                  <td className="px-1 py-2 text-center">
-                    <input
-                      type="checkbox"
-                      className="rounded"
-                      checked={selectedGaps.has(title)}
-                      disabled={!ready || assigning}
-                      title={ready ? "Chọn để gán hàng loạt" : "Điền đủ thị trường, tuyến, keyword"}
-                      onChange={() => toggleGapSelect(title)}
-                    />
-                  </td>
-                  <td className="px-2 py-2 text-xs">
-                    {item.count > 1 && <span className="text-gray-500 block mb-0.5">{item.count} tour</span>}
-                    <span className="line-clamp-3" title={item.sample}>{item.sample || title}</span>
-                  </td>
-                  <td className="px-2 py-2">
-                    <input
-                      className="input text-xs py-1 w-full"
-                      list="classify-market-list"
-                      placeholder="Nhóm TT"
-                      value={d.market}
-                      onKeyDown={keepInputKeys}
-                      onChange={(e) => setPending((prev) => ({
-                        ...prev,
-                        [title]: { market: e.target.value, route: d.route, routeKw: d.routeKw },
-                      }))}
-                    />
-                  </td>
-                  <td className="px-2 py-2">
-                    <input
-                      className="input text-xs py-1 w-full"
-                      list={d.market.trim() ? routeDatalistId(d.market.trim()) : undefined}
-                      placeholder="Tên tuyến"
-                      value={d.route}
-                      onKeyDown={keepInputKeys}
-                      onChange={(e) => setPending((prev) => ({
-                        ...prev,
-                        [title]: { market: d.market, route: e.target.value, routeKw: d.routeKw },
-                      }))}
-                    />
-                  </td>
-                  <td className="px-2 py-2">
-                    <input
-                      className="input text-xs py-1 w-full font-mono"
-                      value={d.routeKw}
-                      onKeyDown={keepInputKeys}
-                      onChange={(e) => setPending((prev) => ({
-                        ...prev,
-                        [title]: { market: d.market, route: d.route, routeKw: e.target.value },
-                      }))}
-                    />
-                    {rowConflict && <p className="text-[10px] text-red-700 mt-0.5">{rowConflict}</p>}
-                    <span {...dragAliasProps(d.routeKw)} className="text-[10px] text-amber-700 cursor-grab inline-flex items-center gap-0.5 mt-1">
-                      <GripVertical size={10} /> kéo keyword
+                <div
+                  key={mk}
+                  className={cn(
+                    "border-b border-gray-100",
+                    dragging && "opacity-40",
+                    dropHint && "bg-primary-50 ring-1 ring-inset ring-primary-200",
+                  )}
+                  onDragOver={(e) => { e.preventDefault(); setDropMarket(mk); }}
+                  onDragLeave={() => setDropMarket((d) => (d === mk ? null : d))}
+                  onDrop={(e) => { e.preventDefault(); onDropMarket(mk); }}
+                >
+                  <div className="flex items-center gap-1 px-2 py-2 bg-gray-50/80">
+                    <span
+                      draggable
+                      onDragStart={() => setDragMarket(mk)}
+                      onDragEnd={() => { setDragMarket(null); setDropMarket(null); }}
+                      className="cursor-grab text-gray-400 hover:text-gray-600 shrink-0 touch-none"
+                      title="Kéo để đổi thứ tự thị trường"
+                    >
+                      <GripVertical size={14} />
                     </span>
-                  </td>
-                  <td className="px-2 py-2">
                     <button
                       type="button"
-                      className="btn-primary text-[10px] py-1 px-2 w-full"
-                      disabled={assigning || !ready}
-                      onClick={() => assignOne(title, item).catch(onError)}
+                      className="flex-1 flex items-center gap-1 text-left font-medium text-gray-900 min-w-0"
+                      onClick={() => toggleMarket(mk)}
                     >
-                      Gán
+                      {open ? <ChevronDown size={14} className="shrink-0" /> : <ChevronRight size={14} className="shrink-0" />}
+                      <span className="truncate">{idx + 1}. {mk}</span>
+                      <span className="text-gray-400 font-normal text-xs shrink-0">({rRules.length} dòng)</span>
                     </button>
-                  </td>
-                </tr>
+                    <button
+                      type="button"
+                      className="text-red-500 hover:text-red-700 shrink-0 p-1"
+                      title="Xóa nhóm"
+                      onClick={() => deleteMarketGroup(mk).catch(onError)}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                  {open && (
+                    <div className="px-3 pb-3">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-gray-500">
+                            <th className="text-left py-1 w-6">#</th>
+                            <th className="text-left py-1">Tuyến</th>
+                            <th className="text-left">Keywords (AND)</th>
+                            <th className="text-right pr-1 w-14">
+                              <span className="inline-flex items-center gap-0.5 text-gray-400" title="Số tour đang dùng rule này">
+                                <Users size={9} /> Tour
+                              </span>
+                            </th>
+                            <th className="w-14" />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rRules.map((r, ri) => {
+                            const dropKey = `route-${r.id}`;
+                            const kwCount = parseRouteKeywordList(r.keywords).length;
+                            const { dropClassName, ...drop } = dropHandlers(dropKey, dropTarget, setDropTarget, (raw) =>
+                              appendKeywordToRouteRule(r, raw),
+                            );
+                            const tourCount = routeStats?.[String(r.id)];
+                            return (
+                              <tr key={r.id} className="border-t border-gray-100">
+                                <td className="py-1 text-gray-400 text-[10px]">{ri + 1}</td>
+                                <td className={cn("py-1 pr-2", dropClassName)} {...drop}>{r.tuyen_tour}</td>
+                                <td className="py-1 font-mono">
+                                  <RouteKeywordsCell keywords={r.keywords} conflicts={routeKeywordConflicts} />
+                                  {kwCount > 1 && (
+                                    <span className="text-[10px] text-gray-500 font-sans ml-1">({kwCount} AND)</span>
+                                  )}
+                                </td>
+                                <td className="py-1 text-right pr-1">
+                                  {tourCount != null ? (
+                                    <span className={cn("text-[10px] font-medium", tourCount > 0 ? "text-primary-700" : "text-gray-300")}>
+                                      {tourCount}
+                                    </span>
+                                  ) : <span className="text-gray-200 text-[10px]">—</span>}
+                                </td>
+                                <td className="py-1">
+                                  {confirmDeleteId === r.id ? (
+                                    <span className="flex gap-1 items-center">
+                                      <button type="button" className="text-[9px] bg-red-600 text-white px-1 py-0.5 rounded"
+                                        onClick={() => { setConfirmDeleteId(null); deleteRouteRule(r.id).then(() => onAfterSaved("Đã xóa")); }}>Xóa</button>
+                                      <button type="button" className="text-[9px] bg-gray-100 px-1 py-0.5 rounded"
+                                        onClick={() => setConfirmDeleteId(null)}>Hủy</button>
+                                    </span>
+                                  ) : (
+                                    actionBtns(() => setConfirmDeleteId(r.id))
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               );
             })}
-          </tbody>
-        </table>
-        <datalist id="classify-market-list">{marketOptions.map((m) => <option key={m} value={m} />)}</datalist>
-        {[...routeNamesByMarket.entries()].map(([mk, names]) => (
-          <datalist key={mk} id={routeDatalistId(mk)}>
-            {names.map((name) => (
-              <option key={name} value={name} />
-            ))}
-          </datalist>
-        ))}
-        <p className="text-xs text-gray-400 p-3">
-          {gapLoading ? "Đang tải…" : `${gapItems.length} tên tour chưa có tuyến trong DB`}
-        </p>
+          </div>
+        </div>
       </div>
+      {/* ════ END LEFT ════ */}
+
+      {/* ════════════════ RIGHT — Thêm rule + Preview + Chưa khớp ══════════ */}
+      <div className="space-y-3">
+
+        {/* Preview keyword */}
+        <div className="card p-4 border-dashed border-2 border-blue-200 bg-blue-50/40">
+          <p className="text-sm font-medium text-blue-900 mb-2 flex items-center gap-2">
+            <Search size={14} /> Test keyword trước khi lưu rule
+          </p>
+          <div className="flex gap-2 items-center flex-wrap">
+            <input
+              className="input text-sm font-mono flex-1 min-w-[160px]"
+              placeholder="bangkok, osaka — phẩy = AND"
+              value={previewKw}
+              onChange={(e) => setPreviewKw(e.target.value)}
+            />
+            {previewFetching && <span className="text-xs text-blue-600 animate-pulse">Đang tìm…</span>}
+            {previewResult && !previewFetching && (
+              <span className={cn("text-sm font-bold", previewResult.tour_count > 0 ? "text-blue-900" : "text-gray-500")}>
+                {previewResult.tour_count} tour match
+              </span>
+            )}
+          </div>
+          {previewResult && previewResult.samples.length > 0 && (
+            <div className="mt-2 max-h-36 overflow-auto space-y-1">
+              {previewResult.samples.map((t) => (
+                <div key={t.id} className="text-xs bg-white rounded px-2 py-1 border border-blue-100 flex items-start gap-2">
+                  <span className="text-blue-700 shrink-0 font-mono">{t.thi_truong || "?"}</span>
+                  <span className="flex-1 truncate text-gray-800" title={t.ten_tour}>{t.ten_tour}</span>
+                  {t.tuyen_tour && <span className="text-gray-400 shrink-0 text-[10px]">{t.tuyen_tour}</span>}
+                </div>
+              ))}
+              {previewResult.tour_count > previewResult.samples.length && (
+                <p className="text-[10px] text-blue-600 px-1">…và {previewResult.tour_count - previewResult.samples.length} tour khác</p>
+              )}
+            </div>
+          )}
+          {previewResult && previewResult.tour_count === 0 && previewDebouncedKw.length >= 2 && (
+            <p className="text-xs text-gray-400 mt-1">Không có tour nào chứa tất cả keyword này.</p>
+          )}
+        </div>
+
+        {/* Quick-add form */}
+        <div className="card p-4 space-y-3 bg-primary-50/40 border-primary-100">
+          <p className="text-sm font-medium text-primary-900">
+            Thêm rule tuyến
+            <InfoTip text="Mỗi dòng = một điều kiện (OR). Trong dòng: dấu phẩy = AND. Thị trường chỉ là nhóm lưu trữ, không cần keyword TT." />
+          </p>
+          <div className="space-y-2">
+            <input className="input text-sm w-full" placeholder="Thị trường (nhóm)" value={qMarket} onChange={(e) => setQMarket(e.target.value)} onKeyDown={keepInputKeys} list="classify-market-list" />
+            <input className="input text-sm w-full" placeholder="Tên tuyến tour" value={qRoute} onChange={(e) => setQRoute(e.target.value)} onKeyDown={keepInputKeys} list={qMarket.trim() ? routeDatalistId(qMarket.trim()) : undefined} />
+            <input className="input text-sm font-mono w-full" placeholder="Keyword tuyến (vd: kanazawa)" value={qRouteKw} onChange={(e) => setQRouteKw(e.target.value)} onKeyDown={keepInputKeys} />
+          </div>
+          <div className="flex flex-wrap gap-2 items-center">
+            <button
+              type="button"
+              onClick={() => void quickAdd()}
+              disabled={!qMarket.trim() || !qRouteKw.trim() || quickAdding || assigning}
+              className="btn-primary text-sm disabled:opacity-60"
+            >
+              <Plus size={14} className={quickAdding ? "animate-pulse" : ""} />
+              {quickAdding ? "Đang áp dụng…" : "Thêm & áp dụng"}
+            </button>
+            <button type="button" onClick={() => seedRouteDefaults().then((r) => onAfterSaved(r.message || "Đã import tuyến")).catch(onError)} className="btn-secondary text-sm">
+              <Database size={14} /> Import mặc định
+            </button>
+          </div>
+          {actionFeedback && (
+            <p
+              className={cn(
+                "text-sm px-3 py-2 rounded-lg border",
+                actionFeedback.kind === "loading" && "text-amber-900 bg-amber-50 border-amber-200",
+                actionFeedback.kind === "ok" && "text-green-800 bg-green-50 border-green-200",
+                actionFeedback.kind === "err" && "text-red-800 bg-red-50 border-red-200",
+              )}
+              role="status"
+            >
+              {actionFeedback.text}
+            </p>
+          )}
+        </div>
+
+        {/* Chưa khớp tuyến */}
+        <div className="card overflow-auto" style={{ maxHeight: "calc(100vh - 260px)" }}>
+          <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b bg-amber-50/80 sticky top-0 z-20">
+            <span className="text-xs font-semibold text-amber-900">
+              Chưa khớp tuyến {gapItems.length > 0 && `(${gapItems.length})`}
+            </span>
+            <button type="button" className="btn-secondary text-xs py-0.5 ml-auto" disabled={gapLoading || !gapItems.length} onClick={selectAllReadyGaps}>
+              Chọn tất cả
+            </button>
+            <button type="button" className="btn-secondary text-xs py-0.5" disabled={!selectedGaps.size} onClick={() => setSelectedGaps(new Set())}>
+              Bỏ chọn
+            </button>
+            <button type="button" className="btn-primary text-xs py-0.5" disabled={assigning || selectedReadyCount < 1} onClick={() => assignSelected().catch(onError)}>
+              {assigning ? "Đang gán…" : `Gán ${selectedReadyCount} dòng`}
+            </button>
+          </div>
+          <table className="w-full text-xs">
+            <thead className="bg-amber-50 sticky top-[41px] z-10">
+              <tr>
+                <th className="px-1 py-2 w-7" />
+                <th className="px-2 py-2 text-left">Tour chưa khớp</th>
+                <th className="px-2 py-2 text-left">TT · Tuyến · Keyword</th>
+                <th className="px-2 py-2 w-14" />
+              </tr>
+            </thead>
+            <tbody>
+              {gapLoading && (
+                <tr><td colSpan={4} className="px-3 py-6 text-center text-gray-400">Đang tải…</td></tr>
+              )}
+              {!gapLoading && gapItems.length === 0 && (
+                <tr><td colSpan={4} className="px-3 py-6 text-center text-green-700">Tất cả tour đã có tuyến</td></tr>
+              )}
+              {gapItems.map((item) => {
+                const title = item.value;
+                const d = rowDraft(title, item);
+                const rowConflict = conflictHintForKeyword(parseRouteKeywordList(d.routeKw)[0] ?? "", routeKeywordConflicts);
+                const ready = isRowReady(title, item);
+                return (
+                  <tr key={title} className={cn("border-t bg-amber-50/40 align-top", selectedGaps.has(title) && "ring-1 ring-primary-400")}>
+                    <td className="px-1 py-2 text-center">
+                      <input type="checkbox" className="rounded" checked={selectedGaps.has(title)} disabled={!ready || assigning}
+                        title={ready ? "Chọn để gán hàng loạt" : "Điền đủ thị trường, tuyến, keyword"}
+                        onChange={() => toggleGapSelect(title)} />
+                    </td>
+                    <td className="px-2 py-2 text-xs max-w-[120px]">
+                      {item.count > 1 && <span className="text-gray-500 block mb-0.5">{item.count} tour</span>}
+                      <span className="line-clamp-3" title={item.sample}>{item.sample || title}</span>
+                    </td>
+                    <td className="px-2 py-2 space-y-1">
+                      <input className="input text-xs py-1 w-full" list="classify-market-list" placeholder="Nhóm TT"
+                        value={d.market} onKeyDown={keepInputKeys}
+                        onChange={(e) => setPending((prev) => ({ ...prev, [title]: { market: e.target.value, route: d.route, routeKw: d.routeKw } }))} />
+                      <input className="input text-xs py-1 w-full" list={d.market.trim() ? routeDatalistId(d.market.trim()) : undefined} placeholder="Tên tuyến"
+                        value={d.route} onKeyDown={keepInputKeys}
+                        onChange={(e) => setPending((prev) => ({ ...prev, [title]: { market: d.market, route: e.target.value, routeKw: d.routeKw } }))} />
+                      <input className="input text-xs py-1 w-full font-mono" placeholder="keyword"
+                        value={d.routeKw} onKeyDown={keepInputKeys}
+                        onChange={(e) => setPending((prev) => ({ ...prev, [title]: { market: d.market, route: d.route, routeKw: e.target.value } }))} />
+                      {rowConflict && <p className="text-[10px] text-red-700">{rowConflict}</p>}
+                      <span {...dragAliasProps(d.routeKw)} className="text-[10px] text-amber-700 cursor-grab inline-flex items-center gap-0.5">
+                        <GripVertical size={10} /> kéo keyword
+                      </span>
+                    </td>
+                    <td className="px-2 py-2">
+                      <button type="button" className="btn-primary text-[10px] py-1 px-2 w-full"
+                        disabled={assigning || !ready}
+                        onClick={() => assignOne(title, item).catch(onError)}>
+                        Gán
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {sharedDataLists}
+          <p className="text-xs text-gray-400 p-3">
+            {gapLoading ? "Đang tải…" : `${gapItems.length} tên tour chưa có tuyến trong DB`}
+          </p>
+        </div>
+
+      </div>
+      {/* ════ END RIGHT ════ */}
+
     </div>
   );
 }
