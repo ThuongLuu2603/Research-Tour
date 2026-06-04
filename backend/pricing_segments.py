@@ -103,3 +103,36 @@ def recompute_all_phan_khuc(db: Session) -> dict:
     if updated:
         db.commit()
     return {"updated": updated, "route_buckets": len(route_avg)}
+
+
+def recompute_missing_phan_khuc(db: Session) -> int:
+    """Tính phân khúc cho tour có giá nhưng chưa có nhãn (vd. Vietravel mới scrape)."""
+    from data_sources import DB_CANONICAL_NGUON
+    from models import Tour
+    from sqlalchemy import or_
+
+    tours = (
+        db.query(Tour)
+        .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
+        .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+        .filter(or_(Tour.phan_khuc.is_(None), Tour.phan_khuc == "", Tour.phan_khuc == "Chưa có giá"))
+        .all()
+    )
+    if not tours:
+        return 0
+    all_priced = (
+        db.query(Tour)
+        .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
+        .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+        .all()
+    )
+    route_avg = build_route_market_avg_price_day(all_priced)
+    updated = 0
+    for t in tours:
+        label = phan_khuc_relative_for_tour(t, route_avg)
+        if label and t.phan_khuc != label:
+            t.phan_khuc = label[:64]
+            updated += 1
+    if updated:
+        db.commit()
+    return updated

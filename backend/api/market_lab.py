@@ -22,7 +22,7 @@ def overview(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    return get_market_lab_overview(
+    return get_market_lab_overview_cached(
         db, grain=grain, tab=tab, thi_truong=thi_truong or None, hide_suspect=hide_suspect,
     )
 

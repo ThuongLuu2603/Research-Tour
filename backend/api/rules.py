@@ -223,7 +223,7 @@ def _auto_apply_tours(
     return {"started": True, "message": "Đang áp dụng quy tắc lên tour (chạy nền)…"}
 
 
-def _start_apply_all_rules_background(*, recompute_phan_khuc: bool = False) -> dict:
+def _start_apply_all_rules_background(*, recompute_phan_khuc: bool = False, incremental: bool = True) -> dict:
     """Full apply — chạy nền, trạng thái lưu Supabase (app_kv)."""
     import logging
     from datetime import datetime, timezone
@@ -251,11 +251,12 @@ def _start_apply_all_rules_background(*, recompute_phan_khuc: bool = False) -> d
 
         session = SessionLocal()
 
-        def _progress(n: int, msg: str) -> None:
+        def _progress(n: int, total: int, msg: str) -> None:
             set_apply_status({
                 "running": True,
                 "started_at": started_at,
                 "progress": n,
+                "total": total,
                 "message": msg,
             })
 
@@ -263,6 +264,7 @@ def _start_apply_all_rules_background(*, recompute_phan_khuc: bool = False) -> d
             result = apply_all_rules_to_tours(
                 session,
                 recompute_phan_khuc=recompute_phan_khuc,
+                incremental=incremental,
                 progress_cb=_progress,
             )
             log.info("apply_all_rules_to_tours finished: %s", result.get("message"))
@@ -743,12 +745,16 @@ def apply_departure_rules_to_tours(_: User = Depends(require_admin), db: Session
 
 @router.post("/apply-classification-to-tours")
 def apply_classification_endpoint(
-    recompute_phan_khuc: bool = Query(False, description="Tính lại phân khúc (chậm, ~toàn DB)"),
+    recompute_phan_khuc: bool = Query(False, description="Tính lại phân khúc toàn DB (chậm)"),
+    full_scan: bool = Query(False, description="Quét lại toàn bộ ~9k tour (mặc định: chỉ tour mới/cần cập nhật)"),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """Áp dụng toàn bộ quy tắc — async (tránh HTTP 503 khi ~8k tour)."""
-    return _start_apply_all_rules_background(recompute_phan_khuc=recompute_phan_khuc)
+    """Áp dụng quy tắc — async (tránh HTTP 503 khi ~8k tour)."""
+    return _start_apply_all_rules_background(
+        recompute_phan_khuc=recompute_phan_khuc,
+        incremental=not full_scan,
+    )
 
 
 @router.get("/apply-classification-status")
@@ -759,6 +765,10 @@ def apply_classification_status(_: User = Depends(require_admin)):
     out: dict = {"running": bool(st.get("running"))}
     if st.get("message"):
         out["message"] = st["message"]
+    if st.get("progress") is not None:
+        out["progress"] = st["progress"]
+    if st.get("total") is not None:
+        out["total"] = st["total"]
     if st.get("last_result"):
         out["last_result"] = st["last_result"]
     if st.get("error"):

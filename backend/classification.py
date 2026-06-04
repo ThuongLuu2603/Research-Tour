@@ -224,12 +224,35 @@ def _apply_route_state_filter(q, route_state: str | None):
     return q
 
 
+def _apply_incremental_filter(q):
+    """Chỉ tour chưa phân loại ổn định hoặc dữ liệu đổi sau lần classify."""
+    from sqlalchemy import and_, func, or_
+
+    from models import Tour
+
+    return q.filter(
+        or_(
+            Tour.classification_rule_id.is_(None),
+            func.coalesce(func.trim(Tour.tuyen_tour), "") == "",
+            and_(Tour.classified_at.isnot(None), Tour.updated_at > Tour.classified_at),
+        )
+    )
+
+
+def count_canonical_tours(db, *, incremental: bool = False) -> int:
+    q = _canonical_tour_query(db)
+    if incremental:
+        q = _apply_incremental_filter(q)
+    return q.count()
+
+
 def _iter_canonical_tour_batches(
     db,
     batch_size: int = 1000,
     *,
     keyword_filter: list[str] | None = None,
     route_state: str | None = None,
+    incremental: bool = False,
 ):
     """Phân trang theo id — chỉ cột cần cho apply rule."""
     from sqlalchemy.orm import load_only
@@ -261,6 +284,8 @@ def _iter_canonical_tour_batches(
             .order_by(Tour.id)
         )
         q = _apply_route_state_filter(q, route_state)
+        if incremental:
+            q = _apply_incremental_filter(q)
         if keyword_filter:
             from tour_search import apply_keyword_prefilter
 
@@ -995,6 +1020,7 @@ def apply_all_rules_to_tours(
     db,
     *,
     recompute_phan_khuc: bool = False,
+    incremental: bool = True,
     progress_cb: callable | None = None,
 ) -> dict:
     """Một lượt quét tour — classification + alias công ty/KH/thời gian."""
@@ -1004,8 +1030,9 @@ def apply_all_rules_to_tours(
 
     market_n = route_n = link_n = company_n = dep_n = dur_n = 0
     processed = 0
+    total = count_canonical_tours(db, incremental=incremental)
 
-    for batch in _iter_canonical_tour_batches(db):
+    for batch in _iter_canonical_tour_batches(db, incremental=incremental):
         for t in batch:
             mk, rt, from_rule, rule_id = matcher.resolve(t.ten_tour or "", t.lich_trinh or "")
             m_delta, r_delta = _apply_rule_result_to_tour(t, mk, rt, from_rule, rule_id)
@@ -1035,7 +1062,7 @@ def apply_all_rules_to_tours(
         _commit_tour_batch(db, batch)
         processed += len(batch)
         if progress_cb:
-            progress_cb(processed, f"Đã áp dụng {processed} tour…")
+            progress_cb(processed, total, f"Đang quét {processed}/{total} tour…")
 
     result = {
         "market_updated": market_n,
@@ -1044,6 +1071,9 @@ def apply_all_rules_to_tours(
         "company_updated": company_n,
         "departure_updated": dep_n,
         "duration_updated": dur_n,
+        "tours_scanned": processed,
+        "tours_total": total,
+        "incremental": incremental,
     }
     try:
         from segment_mv import refresh_segment_mv
@@ -1061,9 +1091,17 @@ def apply_all_rules_to_tours(
             result["phan_khuc"] = {"error": str(e)}
     else:
         result["phan_khuc"] = {"skipped": True}
+        try:
+            from pricing_segments import recompute_missing_phan_khuc
+
+            result["phan_khuc_filled"] = recompute_missing_phan_khuc(db)
+        except Exception as e:
+            logger.warning("recompute missing phan_khuc failed: %s", e)
     result["message"] = (
-        f"Thị trường {market_n}, tuyến {route_n}, "
-        f"công ty {company_n}, điểm KH {dep_n}, thời gian {dur_n} tour"
+        f"Đã quét {processed}/{total} tour"
+        f"{' (chỉ tour mới/cần cập nhật)' if incremental else ''} — "
+        f"cập nhật thị trường {market_n}, tuyến {route_n}, "
+        f"công ty {company_n}, điểm KH {dep_n}, thời gian {dur_n}"
     )
     try:
         from compare_cache import invalidate_compare_cache

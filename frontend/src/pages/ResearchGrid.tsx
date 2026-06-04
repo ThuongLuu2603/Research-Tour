@@ -55,9 +55,12 @@ export default function ResearchGrid() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [selMarkets, setSelMarkets] = useState<string[]>([]);
+  const [selRoutes, setSelRoutes] = useState<string[]>([]);
   const [selCompanies, setSelCompanies] = useState<string[]>([]);
+  const [selPhanKhuc, setSelPhanKhuc] = useState<string[]>([]);
   const [selNguon, setSelNguon] = useState<string[]>([]);
   const [onlyFlagged, setOnlyFlagged] = useState(false);
+  const [pageInput, setPageInput] = useState("");
   const [toast, setToast] = useState("");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkMarket, setBulkMarket] = useState("");
@@ -81,10 +84,11 @@ export default function ResearchGrid() {
 
   const { data: opts } = useQuery({ queryKey: ["filter-options"], queryFn: getFilterOptions, staleTime: 60000 });
   const { data, isFetching } = useQuery({
-    queryKey: ["workspace-tours", workspaceId, page, search, selMarkets, selCompanies, selNguon, onlyFlagged],
+    queryKey: ["workspace-tours", workspaceId, page, search, selMarkets, selRoutes, selCompanies, selPhanKhuc, selNguon, onlyFlagged],
     queryFn: () => getWorkspaceTours(workspaceId!, {
       page, page_size: PAGE_SIZE, search,
-      thi_truong: selMarkets, cong_ty: selCompanies, nguon: selNguon,
+      thi_truong: selMarkets, tuyen_tour: selRoutes, cong_ty: selCompanies,
+      phan_khuc: selPhanKhuc, nguon: selNguon,
       flagged: onlyFlagged || undefined,
     }),
     enabled: !!workspaceId,
@@ -160,7 +164,9 @@ export default function ResearchGrid() {
       await downloadWorkspaceCsv(workspaceId, {
         search,
         thi_truong: selMarkets,
+        tuyen_tour: selRoutes,
         cong_ty: selCompanies,
+        phan_khuc: selPhanKhuc,
         nguon: selNguon,
         flagged: onlyFlagged || undefined,
       });
@@ -308,6 +314,22 @@ export default function ResearchGrid() {
         <select
           className="input text-xs py-1.5 max-w-[160px]"
           value=""
+          onChange={(e) => { if (e.target.value) toggleFilter(selRoutes, setSelRoutes, e.target.value); e.target.value = ""; }}
+        >
+          <option value="">{COL.tuyenTour}{selRoutes.length ? ` (${selRoutes.length})` : ""}</option>
+          {(opts?.tuyen_tour ?? []).filter((r: string) => !selRoutes.includes(r)).slice(0, 300).map((r: string) => (
+            <option key={r} value={r}>{r}</option>
+          ))}
+        </select>
+        {selRoutes.map((r) => (
+          <button key={r} onClick={() => toggleFilter(selRoutes, setSelRoutes, r)} className="text-xs px-2 py-1 rounded-full bg-teal-100 text-teal-800 flex items-center gap-1">
+            {r}<X size={10} />
+          </button>
+        ))}
+
+        <select
+          className="input text-xs py-1.5 max-w-[160px]"
+          value=""
           onChange={(e) => { if (e.target.value) toggleFilter(selCompanies, setSelCompanies, e.target.value); e.target.value = ""; }}
         >
           <option value="">{COL.congTy}{selCompanies.length ? ` (${selCompanies.length})` : ""}</option>
@@ -321,6 +343,22 @@ export default function ResearchGrid() {
           </button>
         ))}
 
+        <select
+          className="input text-xs py-1.5 max-w-[140px]"
+          value=""
+          onChange={(e) => { if (e.target.value) toggleFilter(selPhanKhuc, setSelPhanKhuc, e.target.value); e.target.value = ""; }}
+        >
+          <option value="">Phân khúc{selPhanKhuc.length ? ` (${selPhanKhuc.length})` : ""}</option>
+          {(opts?.phan_khuc ?? []).filter((p: string) => p && !selPhanKhuc.includes(p)).map((p: string) => (
+            <option key={p} value={p}>{formatPhanKhuc(p) || p}</option>
+          ))}
+        </select>
+        {selPhanKhuc.map((p) => (
+          <button key={p} onClick={() => toggleFilter(selPhanKhuc, setSelPhanKhuc, p)} className="text-xs px-2 py-1 rounded-full bg-rose-100 text-rose-800 flex items-center gap-1">
+            {formatPhanKhuc(p) || p}<X size={10} />
+          </button>
+        ))}
+
         <button
           onClick={() => { setOnlyFlagged((v) => !v); setPage(1); }}
           className={cn("text-xs flex items-center gap-1 px-3 py-1.5 rounded-lg border transition-colors", onlyFlagged ? "bg-amber-50 text-amber-700 border-amber-400" : "bg-white text-gray-600 border-gray-300")}
@@ -328,9 +366,9 @@ export default function ResearchGrid() {
           <Flag size={12} /> Flagged
         </button>
 
-        {(selMarkets.length > 0 || selCompanies.length > 0 || selNguon.length > 0 || onlyFlagged || search) && (
+        {(selMarkets.length > 0 || selRoutes.length > 0 || selCompanies.length > 0 || selPhanKhuc.length > 0 || selNguon.length > 0 || onlyFlagged || search) && (
           <button
-            onClick={() => { setSelMarkets([]); setSelCompanies([]); setSelNguon([]); setOnlyFlagged(false); setSearch(""); setPage(1); }}
+            onClick={() => { setSelMarkets([]); setSelRoutes([]); setSelCompanies([]); setSelPhanKhuc([]); setSelNguon([]); setOnlyFlagged(false); setSearch(""); setPage(1); }}
             className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1"
           >
             <X size={12} /> Xoá bộ lọc
@@ -398,8 +436,10 @@ export default function ResearchGrid() {
                   {tour.gia ? `${fmtVND(tour.gia)}` : tour.gia_raw || "—"}
                 </td>
                 <td className="px-3 py-2">
-                  {tour.phan_khuc && formatPhanKhuc(tour.phan_khuc) && (
-                    <Badge className={segmentColor(tour.phan_khuc)}>{formatPhanKhuc(tour.phan_khuc)}</Badge>
+                  {tour.phan_khuc ? (
+                    <Badge className={segmentColor(tour.phan_khuc)}>{formatPhanKhuc(tour.phan_khuc) || tour.phan_khuc}</Badge>
+                  ) : (
+                    <span className="text-xs text-gray-400">—</span>
                   )}
                 </td>
                 <td className="px-3 py-2 text-xs text-gray-500">{tour.nguon}</td>
@@ -428,11 +468,11 @@ export default function ResearchGrid() {
         </table>
       </div>
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <p className="text-xs text-gray-500">
           Trang {page}/{totalPages || 1} · {(data?.total ?? 0).toLocaleString("vi-VN")} kết quả
         </p>
-        <div className="flex gap-1">
+        <div className="flex gap-1 items-center flex-wrap">
           <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="btn-secondary px-2 py-1.5 text-xs">
             <ChevronLeft size={14} />
           </button>
@@ -448,6 +488,24 @@ export default function ResearchGrid() {
           <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages || totalPages === 0} className="btn-secondary px-2 py-1.5 text-xs">
             <ChevronRight size={14} />
           </button>
+          {totalPages > 5 && (
+            <form
+              className="flex items-center gap-1 ml-1"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const n = Number(pageInput);
+                if (n >= 1 && n <= totalPages) setPage(n);
+              }}
+            >
+              <input
+                className="input text-xs py-1 w-14 text-center"
+                placeholder="Trang"
+                value={pageInput}
+                onChange={(e) => setPageInput(e.target.value.replace(/\D/g, ""))}
+              />
+              <button type="submit" className="btn-secondary text-xs py-1 px-2">Đi</button>
+            </form>
+          )}
         </div>
       </div>
     </div>

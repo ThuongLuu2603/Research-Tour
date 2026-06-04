@@ -51,6 +51,7 @@ export default function RulesAdminPage() {
   const [search, setSearch] = useState("");
   const [syncMsg, setSyncMsg] = useState("");
   const [applying, setApplying] = useState(false);
+  const [fullScanApply, setFullScanApply] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<Record<string, string>>({});
 
@@ -170,7 +171,10 @@ export default function RulesAdminPage() {
     getApplyClassificationStatus()
       .then((st) => {
         if (st.running && attempt < 120) {
-          setSyncMsg(st.message || (st.progress ? `Đang áp dụng… ${st.progress} tour` : "Đang áp dụng quy tắc…"));
+          const prog = st.progress != null && st.total
+            ? `Đang quét ${st.progress}/${st.total} tour…`
+            : st.message || "Đang áp dụng quy tắc…";
+          setSyncMsg(prog);
           window.setTimeout(() => pollApplyStatus(attempt + 1), 2000);
           return;
         }
@@ -199,8 +203,8 @@ export default function RulesAdminPage() {
 
   const onApplyTours = () => {
     setApplying(true);
-    setSyncMsg("Đang khởi chạy áp dụng quy tắc lên tour…");
-    applyClassificationToTours()
+    setSyncMsg(fullScanApply ? "Đang quét toàn bộ tour…" : "Đang quét tour mới / cần cập nhật…");
+    applyClassificationToTours({ fullScan: fullScanApply })
       .then((r) => {
         setSyncMsg(r.message || "Đang áp dụng quy tắc (chạy nền)…");
         pollApplyStatus();
@@ -321,16 +325,25 @@ export default function RulesAdminPage() {
         </p>
       </div>
 
-      <div className="card p-4 space-y-2 bg-slate-50 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-gray-600">Áp dụng lại toàn bộ quy tắc lên mọi tour trong database (toàn hệ thống).</p>
-        <button type="button" onClick={onApplyTours} disabled={applying} className="btn-primary text-xs flex items-center gap-1 shrink-0 disabled:opacity-60">
-          <RefreshCw size={13} className={applying ? "animate-spin" : ""} /> {applying ? "Đang áp dụng…" : "Áp dụng ngay lên tour"}
-        </button>
+      <div className="card p-4 space-y-3 bg-slate-50">
+        <p className="text-sm text-gray-600">
+          Mặc định chỉ quét <strong>tour mới</strong> hoặc tour <strong>đã đổi sau lần phân loại</strong> (nhanh hơn ~9k tour).
+          Bật «Quét toàn bộ» khi đổi quy tắc lớn và cần áp lại mọi tour.
+        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <label className="text-xs text-gray-700 flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={fullScanApply} onChange={(e) => setFullScanApply(e.target.checked)} />
+            Quét toàn bộ ~9k tour
+          </label>
+          <button type="button" onClick={onApplyTours} disabled={applying} className="btn-primary text-xs flex items-center gap-1 shrink-0 disabled:opacity-60">
+            <RefreshCw size={13} className={applying ? "animate-spin" : ""} /> {applying ? "Đang áp dụng…" : "Áp dụng ngay lên tour"}
+          </button>
+        </div>
         {syncMsg && (
           <p
             className={cn(
               "text-sm px-3 py-2 rounded w-full border",
-              applying || syncMsg.includes("Đang ")
+              applying || syncMsg.includes("Đang quét") || syncMsg.includes("Đang áp dụng")
                 ? "text-amber-900 bg-amber-50 border-amber-200"
                 : syncMsg.includes("thất bại") || syncMsg.includes("Lỗi") || syncMsg.includes("error")
                   ? "text-red-800 bg-red-50 border-red-200"

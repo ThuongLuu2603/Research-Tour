@@ -110,7 +110,7 @@ def _upsert_override(db: Session, workspace_id: int, tour_id: int, user_id: int,
     return row
 
 
-def _apply_tour_filters(q, search, thi_truong, tuyen_tour, cong_ty, nguon, flagged):
+def _apply_tour_filters(q, search, thi_truong, tuyen_tour, cong_ty, nguon, flagged, phan_khuc=None):
     if search:
         from tour_search import apply_search_filter
 
@@ -123,6 +123,8 @@ def _apply_tour_filters(q, search, thi_truong, tuyen_tour, cong_ty, nguon, flagg
         q = q.filter(Tour.cong_ty.in_(cong_ty))
     if nguon:
         q = q.filter(Tour.nguon.in_(nguon))
+    if phan_khuc:
+        q = q.filter(Tour.phan_khuc.in_(phan_khuc))
     if flagged is not None:
         q = q.filter(Tour.flagged == flagged)
     return q
@@ -143,6 +145,7 @@ def list_workspace_tours(
     tuyen_tour: list[str] = Query([]),
     cong_ty: list[str] = Query([]),
     nguon: list[str] = Query([]),
+    phan_khuc: list[str] = Query([]),
     flagged: bool | None = Query(None),
     only_overridden: bool = Query(False),
     sort_by: str = Query("id"),
@@ -155,7 +158,7 @@ def list_workspace_tours(
 
     from data_sources import DB_CANONICAL_NGUON
 
-    q = _apply_tour_filters(db.query(Tour), search, thi_truong, tuyen_tour, cong_ty, nguon, flagged)
+    q = _apply_tour_filters(db.query(Tour), search, thi_truong, tuyen_tour, cong_ty, nguon, flagged, phan_khuc)
     q = q.filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
 
     if only_overridden:
@@ -363,6 +366,7 @@ def export_workspace_csv(
     tuyen_tour: list[str] = Query([]),
     cong_ty: list[str] = Query([]),
     nguon: list[str] = Query([]),
+    phan_khuc: list[str] = Query([]),
     flagged: bool | None = Query(None),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -371,7 +375,7 @@ def export_workspace_csv(
     require_permission(db, ws, user, "view")
     from data_sources import DB_CANONICAL_NGUON
 
-    q = _apply_tour_filters(db.query(Tour), search, thi_truong, tuyen_tour, cong_ty, nguon, flagged)
+    q = _apply_tour_filters(db.query(Tour), search, thi_truong, tuyen_tour, cong_ty, nguon, flagged, phan_khuc)
     q = q.filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
     tours = q.limit(5000).all()
     overrides = _override_map(db, workspace_id, [t.id for t in tours])

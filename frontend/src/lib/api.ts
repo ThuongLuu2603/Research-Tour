@@ -939,7 +939,7 @@ export interface WorkspaceInfo {
 export interface WorkspaceTourFilters {
   page?: number; page_size?: number; search?: string;
   thi_truong?: string[]; tuyen_tour?: string[]; cong_ty?: string[];
-  nguon?: string[]; flagged?: boolean; only_overridden?: boolean;
+  nguon?: string[]; phan_khuc?: string[]; flagged?: boolean; only_overridden?: boolean;
   sort_by?: string; sort_dir?: string;
 }
 
@@ -1016,14 +1016,21 @@ export const copyWorkspaceOverrides = async (workspaceId: number, sourceWorkspac
   return data as { copied: number; destination_workspace_id: number };
 };
 
-export const applyClassificationToTours = async () => {
-  const { data } = await api.post("/admin/rules/apply-classification-to-tours");
+export const applyClassificationToTours = async (opts?: { fullScan?: boolean; recomputePhanKhuc?: boolean }) => {
+  const params = new URLSearchParams();
+  if (opts?.fullScan) params.set("full_scan", "true");
+  if (opts?.recomputePhanKhuc) params.set("recompute_phan_khuc", "true");
+  const q = params.toString();
+  const { data } = await api.post(`/admin/rules/apply-classification-to-tours${q ? `?${q}` : ""}`);
   return data as { started?: boolean; running?: boolean; message?: string };
 };
 
 export const getApplyClassificationStatus = async () => {
   const { data } = await api.get("/admin/rules/apply-classification-status");
-  return data as { running: boolean; message?: string; error?: string; progress?: number; last_result?: Record<string, unknown> };
+  return data as {
+    running: boolean; message?: string; error?: string;
+    progress?: number; total?: number; last_result?: Record<string, unknown>;
+  };
 };
 
 export const assignMarketKeyword = async (market: string, keyword: string) => {
