@@ -207,10 +207,12 @@ def get_schedule(_: User = Depends(get_current_user)):
 def update_schedule(
     cfg: ScheduleConfig,
     _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
-    from scheduler import update_schedule_config
-    update_schedule_config(cfg.hour, cfg.minute)
-    return {"message": f"Lịch cập nhật: {cfg.hour:02d}:{cfg.minute:02d} hàng ngày"}
+    from scheduler import get_schedule_config, update_schedule_config
+
+    update_schedule_config(cfg.hour, cfg.minute, db=db)
+    return {"message": f"Lịch cập nhật: {cfg.hour:02d}:{cfg.minute:02d} hàng ngày", **get_schedule_config()}
 
 
 # ── Background worker ─────────────────────────────────────────────────────────

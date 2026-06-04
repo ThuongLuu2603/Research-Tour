@@ -25,3 +25,5 @@ services:
         value: "1sI34D88zsmSrN7Jf9fS3jh4aUvaep-blxnBR1CGq9eM"
       - key: GOOGLE_CREDENTIALS_JSON
         sync: false
+      - key: CRON_SECRET
+        generateValue: true

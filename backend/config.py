@@ -87,9 +87,12 @@ class Settings(BaseSettings):
     gid_route_rules: str = "58839224"
     market_rules_sheet_name: str = "Quy tắc Thị trường"
 
-    # Scraper schedule (cron, 24h format)
+    # Scraper schedule (cron, 24h format — giờ VN)
     scraper_schedule_hour: int = 7
     scraper_schedule_minute: int = 0
+
+    # Bearer token cho POST /api/cron/tick (GitHub Actions / cron ngoài)
+    cron_secret: str = ""
 
     # Công ty của bạn (dùng cho so sánh đối thủ)
     company_name: str = "Vietravel"

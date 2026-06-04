@@ -1,0 +1,23 @@
+name: Scraper schedule tick
+
+on:
+  schedule:
+    # Mỗi 15 phút — đánh thức Render free và chạy job đến giờ (VN)
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping OTA cron tick
+        env:
+          CRON_SECRET: ${{ secrets.OTA_CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "Skip: set GitHub secret OTA_CRON_SECRET = Render env CRON_SECRET"
+            exit 0
+          fi
+          curl -sf -X POST "https://ota-research-platform.onrender.com/api/cron/tick" \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            -H "Content-Type: application/json"

@@ -349,6 +349,7 @@ export default function ScraperHub() {
             <tr className="text-left text-gray-500 border-b">
               <th className="pb-2 font-medium">Tác vụ</th>
               <th className="pb-2 font-medium">Giờ VN</th>
+              <th className="pb-2 font-medium">Lần chạy gần nhất</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -362,10 +363,18 @@ export default function ScraperHub() {
               <tr key={j.label}>
                 <td className="py-2 text-gray-800">{j.label}</td>
                 <td className="py-2 font-mono text-gray-600">{j.time_vn}</td>
+                <td className="py-2 text-gray-500 whitespace-nowrap">
+                  {"last_run_at" in j && j.last_run_at ? fmtDate(String(j.last_run_at)) : "—"}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
+        {schedule?.note && (
+          <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            {schedule.note}
+          </p>
+        )}
         <div className="border-t border-gray-100 pt-4">
           <p className="text-xs text-gray-600 mb-2">Chỉnh giờ 2 scraper (Vietravel + FindTourGo +20 phút):</p>
           <div className="flex flex-wrap items-center gap-3">
