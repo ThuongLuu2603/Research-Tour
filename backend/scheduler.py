@@ -89,10 +89,6 @@ def get_schedule_config() -> dict:
         "timezone_label": "Giờ Việt Nam (UTC+7)",
         "enabled": _scheduler is not None,
         "jobs": jobs,
-        "note": (
-            "Render free có thể tắt server khi không có truy cập — lịch in-process chỉ chạy khi app đang bật. "
-            "Dùng cron ngoài (GitHub Actions / cron-job.org) gọi POST /api/cron/tick để đảm bảo chạy đúng giờ."
-        ),
     }
 
 
