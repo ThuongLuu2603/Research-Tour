@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -64,13 +66,44 @@ def sync_data(_: User = Depends(get_current_user)):
 
 
 @router.post("/sync-main-sheet-live")
-def sync_main_sheet_live(_: User = Depends(get_current_user)):
+def sync_main_sheet_live(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Kéo tab Main từ Google Sheet (live) → DB + phân loại lại bằng matcher."""
+    from models import ScrapeJob
+    from scrape_job_utils import reconcile_stale_scrape_jobs
     from seed import start_sheet_sync_background
 
-    if not start_sheet_sync_background(main_only=True):
+    reconcile_stale_scrape_jobs(db)
+    running = (
+        db.query(ScrapeJob)
+        .filter(ScrapeJob.scraper_name == "sync_main", ScrapeJob.status == "running")
+        .first()
+    )
+    if running:
+        raise HTTPException(status_code=409, detail=f"Đang đồng bộ Main (job #{running.id})")
+
+    job = ScrapeJob(
+        scraper_name="sync_main",
+        status="running",
+        progress_pct=0,
+        message="Đang đọc Google Sheet…",
+        triggered_by=current_user.username,
+        started_at=datetime.utcnow(),
+        heartbeat_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    if not start_sheet_sync_background(main_only=True, triggered_by=current_user.username, job_id=job.id):
+        job.status = "failed"
+        job.message = "Đồng bộ khác đang chạy"
+        job.finished_at = datetime.utcnow()
+        db.commit()
         raise HTTPException(status_code=409, detail="Đồng bộ đang chạy, vui lòng đợi...")
-    return {"started": True, "message": "Đang đồng bộ tab Main từ Google Sheet → DB…"}
+    return {"started": True, "job_id": job.id, "message": "Đang đồng bộ tab Main từ Google Sheet → DB…"}
 
 
 @router.get("/data-status")

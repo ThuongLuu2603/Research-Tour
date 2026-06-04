@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 _STALE_HOURS: dict[str, float] = {
     "vietravel": 4.0,
     "findtourgo": 3.0,
+    "sync_main": 2.0,
 }
 _DEFAULT_STALE_HOURS = 2.0
 

@@ -535,6 +535,7 @@ def merge_sheet_source_to_db(
     mirror_delete: bool | None = None,
     recompute_segments: bool = True,
     force_reclassify_all: bool = False,
+    progress_cb: Callable[[int, int, str], None] | None = None,
 ) -> dict:
     from data_sources import is_db_canonical_source, should_mirror_prune
 
@@ -567,7 +568,12 @@ def merge_sheet_source_to_db(
     synced_tour_ids: set[int] = set()
     affected_tour_ids: set[int] = set()
     now = datetime.utcnow()
-    for row_idx, row in enumerate(rows[1:], start=2):
+    data_rows = rows[1:]
+    total_rows = len(data_rows)
+    if progress_cb and total_rows:
+        progress_cb(0, total_rows, f"Đang đồng bộ {nguon}: 0/{total_rows} dòng Sheet…")
+    for row_num, row in enumerate(data_rows, start=1):
+        row_idx = row_num + 1
         fields = _row_to_fields(row, nguon=nguon)
         if not fields:
             skipped += 1
@@ -637,6 +643,15 @@ def merge_sheet_source_to_db(
             sheet_row=row_idx,
         )
 
+        if progress_cb and total_rows and (row_num % 100 == 0 or row_num == total_rows):
+            progress_cb(
+                row_num,
+                total_rows,
+                f"Đang đồng bộ {nguon}: {row_num}/{total_rows} (matcher + ghi DB)…",
+            )
+
+    if progress_cb and total_rows:
+        progress_cb(total_rows, total_rows, f"Đang commit & phân khúc giá ({nguon})…")
     db.commit()
     _flush_search_after_commit(db, synced_tour_ids)
 

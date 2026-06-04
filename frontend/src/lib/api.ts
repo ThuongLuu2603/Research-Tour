@@ -343,6 +343,9 @@ export interface DataStatus {
     message: string;
     current_source: string;
     rows_done: number;
+    rows_total?: number;
+    progress_pct?: number;
+    job_id?: number | null;
     error: string | null;
   };
 }

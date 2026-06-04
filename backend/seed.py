@@ -63,6 +63,9 @@ _import_status: dict = {
     "message": "",
     "current_source": "",
     "rows_done": 0,
+    "rows_total": 0,
+    "progress_pct": 0,
+    "job_id": None,
     "error": None,
 }
 
@@ -360,41 +363,130 @@ def import_missing_sheets() -> dict[str, int]:
     return results
 
 
-def start_sheet_sync_background(*, main_only: bool = True) -> bool:
+def start_sheet_sync_background(
+    *,
+    main_only: bool = True,
+    triggered_by: str = "manual",
+    job_id: int | None = None,
+) -> bool:
     """Kéo Google Sheet (live) → DB — không dùng file CSV gói."""
     with _import_lock:
         if _import_status["running"]:
             return False
         _import_status.update({
             "running": True,
-            "message": "Đang đồng bộ Google Sheet → DB…",
-            "current_source": "Sheet",
+            "message": "Đang đọc Google Sheet…",
+            "current_source": "Main" if main_only else "Sheet",
             "rows_done": 0,
+            "rows_total": 0,
+            "progress_pct": 0,
+            "job_id": job_id,
             "error": None,
         })
+
+    def _sync_progress(done: int, total: int, msg: str) -> None:
+        pct = int(done * 100 / total) if total else 0
+        with _import_lock:
+            _import_status["rows_done"] = done
+            _import_status["rows_total"] = total
+            _import_status["progress_pct"] = pct
+            _import_status["message"] = msg
+        if not job_id:
+            return
+        jdb = SessionLocal()
+        try:
+            from models import ScrapeJob
+
+            job = jdb.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
+            if job and job.status == "running":
+                job.status = "running"
+                job.progress_pct = pct
+                job.message = msg[:512]
+                job.tours_total = total
+                job.heartbeat_at = datetime.utcnow()
+                jdb.commit()
+        except Exception:
+            jdb.rollback()
+        finally:
+            jdb.close()
+
+    def _finish_job(*, ok: bool, msg: str, added: int = 0, updated: int = 0, total: int = 0) -> None:
+        if not job_id:
+            return
+        jdb = SessionLocal()
+        try:
+            from models import ScrapeJob
+
+            job = jdb.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
+            if not job:
+                return
+            job.status = "success" if ok else "failed"
+            job.progress_pct = 100 if ok else (job.progress_pct or 0)
+            job.message = msg[:512]
+            job.tours_added = added
+            job.tours_updated = updated
+            job.tours_total = total or job.tours_total
+            job.finished_at = datetime.utcnow()
+            job.heartbeat_at = datetime.utcnow()
+            jdb.commit()
+        except Exception:
+            jdb.rollback()
+        finally:
+            jdb.close()
 
     def _run():
         db = SessionLocal()
         try:
             from sheets_tour_sync import merge_all_sheets_to_db, merge_sheet_source_to_db
 
+            if job_id:
+                jdb = SessionLocal()
+                try:
+                    from models import ScrapeJob
+
+                    job = jdb.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
+                    if job:
+                        job.status = "running"
+                        job.started_at = datetime.utcnow()
+                        job.heartbeat_at = datetime.utcnow()
+                        job.message = "Đang đọc Google Sheet…"
+                        jdb.commit()
+                finally:
+                    jdb.close()
+
             if main_only:
-                r = merge_sheet_source_to_db(db, "Main", force_reclassify_all=True)
+                r = merge_sheet_source_to_db(
+                    db,
+                    "Main",
+                    force_reclassify_all=True,
+                    progress_cb=_sync_progress,
+                )
                 msg = (
-                    f"Xong Main: +{r.get('inserted', 0)} mới, ~{r.get('updated', 0)} cập nhật, "
+                    f"+{r.get('inserted', 0)} mới, ~{r.get('updated', 0)} cập nhật, "
                     f"{r.get('unchanged', 0)} giữ nguyên"
                 )
+                synced = int(r.get("synced", 0))
             else:
                 r = merge_all_sheets_to_db(db)
-                msg = f"Xong đồng bộ Sheet: {r.get('total_updated', 0)} cập nhật"
+                msg = f"{r.get('total_updated', 0)} cập nhật"
+                synced = int(r.get("total_updated", 0))
             with _import_lock:
-                _import_status["message"] = msg
-                _import_status["rows_done"] = r.get("synced", r.get("total_updated", 0))
+                _import_status["message"] = f"Xong Main: {msg}" if main_only else f"Xong: {msg}"
+                _import_status["rows_done"] = synced
+                _import_status["progress_pct"] = 100
+            _finish_job(
+                ok=True,
+                msg=msg,
+                added=int(r.get("inserted", 0)),
+                updated=int(r.get("updated", 0)),
+                total=int(_import_status.get("rows_total") or synced),
+            )
         except Exception as e:
             logger.exception("Sheet sync failed")
             with _import_lock:
                 _import_status["error"] = str(e)[:500]
-                _import_status["message"] = f"Lỗi đồng bộ Sheet: {e}"
+                _import_status["message"] = f"Lỗi: {e}"
+            _finish_job(ok=False, msg=str(e)[:512])
         finally:
             db.close()
             gc.collect()

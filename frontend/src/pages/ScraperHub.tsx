@@ -164,8 +164,14 @@ function jobAgeHours(job: ScrapeJob): number {
 
 function isJobLikelyStale(job: ScrapeJob): boolean {
   if (job.status !== "running" && job.status !== "pending") return false;
-  const limitH = job.scraper_name === "vietravel" ? 3 : 2;
+  const limitH =
+    job.scraper_name === "vietravel" ? 3 : job.scraper_name === "sync_main" ? 2 : 2;
   return jobAgeHours(job) >= limitH;
+}
+
+function scraperLabel(name: string): string {
+  if (name === "sync_main") return "Sync Main → DB";
+  return name;
 }
 
 function fmtRunningDuration(job: ScrapeJob): string {
@@ -224,11 +230,17 @@ export default function ScraperHub() {
     mutationFn: syncMainSheetLive,
     onSuccess: () => {
       refetchDataStatus();
+      refetchJobs();
     },
   });
 
+  const sheetSyncRunning = dataStatus?.import?.running;
+  const sheetPct = dataStatus?.import?.progress_pct ?? 0;
+  const sheetDone = dataStatus?.import?.rows_done ?? 0;
+  const sheetTotal = dataStatus?.import?.rows_total ?? 0;
+
   useEffect(() => {
-    if (dataStatus?.import?.running) return;
+    if (sheetSyncRunning) return;
     if (dataStatus?.complete) {
       qc.invalidateQueries({ queryKey: ["kpi"] });
       qc.invalidateQueries({ queryKey: ["tours"] });
@@ -236,7 +248,10 @@ export default function ScraperHub() {
       qc.invalidateQueries({ queryKey: ["by-company"] });
       qc.invalidateQueries({ queryKey: ["by-segment"] });
     }
-  }, [dataStatus?.import?.running, dataStatus?.complete, qc]);
+    if (!sheetSyncRunning && syncData.isSuccess) {
+      refetchJobs();
+    }
+  }, [sheetSyncRunning, dataStatus?.complete, qc, syncData.isSuccess, refetchJobs]);
 
   useEffect(() => {
     if (schedule) {
@@ -303,20 +318,30 @@ export default function ScraperHub() {
             )}
           </button>
         </div>
-        {dataStatus?.import?.running && (
-          <p className="text-sm text-blue-700 mt-3">
-            ⏳ {dataStatus.import.message} — kéo Google Sheet tab Main (~8.410 tour), thường 3–10 phút trên Render free. Không tắt trang.
-          </p>
+        {sheetSyncRunning && (
+          <div className="mt-3 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-blue-700 font-medium">{dataStatus?.import?.message}</span>
+              <span className="text-gray-500">
+                {sheetTotal > 0
+                  ? `${sheetDone.toLocaleString("vi-VN")}/${sheetTotal.toLocaleString("vi-VN")} (${sheetPct}%)`
+                  : `${sheetPct}%`}
+              </span>
+            </div>
+            <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full bg-primary-600 transition-all duration-300"
+                style={{ width: `${Math.min(100, sheetPct)}%` }}
+              />
+            </div>
+          </div>
         )}
-        <p className="text-xs text-gray-500 mt-2">
-          Nút này đọc <strong>Google Sheet tab Main (live)</strong>, không phải file CSV gói trên server. Sau đồng bộ, matcher gán lại Thị trường/Tuyến (không lấy cột B/C từ Sheet).
-        </p>
         {dataStatus?.import?.error && (
-          <p className="text-sm text-red-600 mt-3">Lỗi import: {dataStatus.import.error}</p>
+          <p className="text-sm text-red-600 mt-3">Lỗi: {dataStatus.import.error}</p>
         )}
-        {!dataStatus?.import?.running && dataStatus?.complete && syncData.isSuccess && (
+        {!sheetSyncRunning && dataStatus?.complete && syncData.isSuccess && (
           <p className="text-sm text-green-700 mt-3">
-            ✓ Đồng bộ xong — tổng {dataStatus.total.toLocaleString("vi-VN")} tour. Refresh Research Grid để xem.
+            ✓ Đồng bộ xong — tổng {dataStatus.total.toLocaleString("vi-VN")} tour.
           </p>
         )}
         {syncData.isError && !dataStatus?.import?.running && (
@@ -427,7 +452,7 @@ export default function ScraperHub() {
               return (
               <tr key={job.id} className={cn("hover:bg-blue-50 transition-colors", stale && "bg-amber-50/80")}>
                 <td className="px-4 py-2.5 text-xs text-gray-400">{job.id}</td>
-                <td className="px-4 py-2.5 text-xs font-medium text-gray-700 capitalize">{job.scraper_name}</td>
+                <td className="px-4 py-2.5 text-xs font-medium text-gray-700">{scraperLabel(job.scraper_name)}</td>
                 <td className="px-4 py-2.5">
                   <JobStatusBadge status={job.status} />
                   {stale && job.status === "running" && (
