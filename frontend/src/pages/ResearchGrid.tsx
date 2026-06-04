@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getFilterOptions, Tour,
@@ -83,6 +83,24 @@ export default function ResearchGrid() {
   }, [workspaces, workspaceId]);
 
   const { data: opts } = useQuery({ queryKey: ["filter-options"], queryFn: getFilterOptions, staleTime: 60000 });
+
+  const availableRoutes = useMemo(() => {
+    const byMarket = (opts?.routes_by_market ?? {}) as Record<string, string[]>;
+    if (!selMarkets.length) return (opts?.tuyen_tour ?? []) as string[];
+    const routes = new Set<string>();
+    selMarkets.forEach((m) => (byMarket[m] ?? []).forEach((r) => routes.add(r)));
+    return [...routes].sort((a, b) => a.localeCompare(b, "vi"));
+  }, [opts, selMarkets]);
+
+  useEffect(() => {
+    setSelRoutes((prev) => {
+      if (!prev.length) return prev;
+      const valid = new Set(availableRoutes);
+      const next = prev.filter((r) => valid.has(r));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [availableRoutes]);
+
   const { data, isFetching } = useQuery({
     queryKey: ["workspace-tours", workspaceId, page, search, selMarkets, selRoutes, selCompanies, selPhanKhuc, selNguon, onlyFlagged],
     queryFn: () => getWorkspaceTours(workspaceId!, {
@@ -316,8 +334,8 @@ export default function ResearchGrid() {
           value=""
           onChange={(e) => { if (e.target.value) toggleFilter(selRoutes, setSelRoutes, e.target.value); e.target.value = ""; }}
         >
-          <option value="">{COL.tuyenTour}{selRoutes.length ? ` (${selRoutes.length})` : ""}</option>
-          {(opts?.tuyen_tour ?? []).filter((r: string) => !selRoutes.includes(r)).slice(0, 300).map((r: string) => (
+          <option value="">{COL.tuyenTour}{selRoutes.length ? ` (${selRoutes.length})` : ""}{selMarkets.length ? " — theo TT" : ""}</option>
+          {availableRoutes.filter((r: string) => !selRoutes.includes(r)).map((r: string) => (
             <option key={r} value={r}>{r}</option>
           ))}
         </select>

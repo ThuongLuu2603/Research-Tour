@@ -64,6 +64,7 @@ class PaginatedTours(BaseModel):
 class FilterOptions(BaseModel):
     thi_truong: list[str]
     tuyen_tour: list[str]
+    routes_by_market: dict[str, list[str]] = {}
     cong_ty: list[str]
     diem_kh: list[str]
     nguon: list[str]

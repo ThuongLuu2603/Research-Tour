@@ -32,9 +32,23 @@ def get_tour_filter_options(db: Session) -> dict[str, list[str]]:
     def distinct(col):
         return [r[0] for r in db.query(col).filter(col != "").distinct().order_by(col).all()]
 
+    pairs = (
+        db.query(Tour.thi_truong, Tour.tuyen_tour)
+        .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
+        .filter(Tour.thi_truong != "", Tour.tuyen_tour != "")
+        .distinct()
+        .order_by(Tour.thi_truong, Tour.tuyen_tour)
+        .all()
+    )
+    routes_by_market: dict[str, list[str]] = {}
+    for mk, rt in pairs:
+        if mk and rt:
+            routes_by_market.setdefault(mk, []).append(rt)
+
     data = {
         "thi_truong": distinct(Tour.thi_truong),
         "tuyen_tour": distinct(Tour.tuyen_tour),
+        "routes_by_market": routes_by_market,
         "cong_ty": distinct(Tour.cong_ty),
         "diem_kh": distinct(Tour.diem_kh),
         "nguon": [n for n in distinct(Tour.nguon) if n in DB_CANONICAL_NGUON],
