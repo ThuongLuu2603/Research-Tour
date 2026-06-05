@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { User, getMe } from "@/lib/api";
+import { clearPersistedQueryCache } from "@/lib/queryPersist";
 
 interface AuthCtx {
   user: User | null;
@@ -20,6 +22,7 @@ const AuthContext = createContext<AuthCtx>({
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     const token = localStorage.getItem("access_token");
@@ -30,11 +33,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setToken = (token: string, u: User) => {
+    // Đăng nhập mới → xoá cache của phiên/người dùng trước (tránh lẫn dữ liệu trên máy chung).
+    clearPersistedQueryCache();
+    queryClient.clear();
     localStorage.setItem("access_token", token);
     setUser(u);
   };
 
   const logout = () => {
+    clearPersistedQueryCache();
+    queryClient.clear();
     localStorage.removeItem("access_token");
     setUser(null);
     window.location.href = "/login";

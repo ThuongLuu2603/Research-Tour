@@ -8,4 +8,17 @@ export default defineConfig({
   server: {
     proxy: { "/api": { target: "http://localhost:8000", changeOrigin: true } },
   },
+  build: {
+    // Tách vendor nặng ra chunk riêng → cache lâu, tải lần đầu nhẹ hơn.
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "react-vendor": ["react", "react-dom", "react-router-dom"],
+          charts: ["recharts"],
+          query: ["@tanstack/react-query"],
+        },
+      },
+    },
+    chunkSizeWarningLimit: 900,
+  },
 });

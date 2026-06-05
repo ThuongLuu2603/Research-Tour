@@ -188,9 +188,18 @@ app.include_router(cron_api.router)
 @app.api_route("/health", methods=["GET", "HEAD"], include_in_schema=False)
 def health(request: Request):
     """GET/HEAD for Render health check — HEAD luôn 200 kể cả DB đang bootstrap."""
+    ready = bool(getattr(request.app.state, "db_ready", False))
+    # Pinger ngoài (UptimeRobot mỗi 5') giữ dyno thức → tranh thủ giữ ấm cache.
+    # Throttle 5 phút, chạy nền, không bao giờ làm chậm /health.
+    if ready:
+        try:
+            from cache_warm import warm_caches_async
+
+            warm_caches_async(min_interval=300.0)
+        except Exception:  # noqa: BLE001
+            pass
     if request.method == "HEAD":
         return Response(status_code=200)
-    ready = bool(getattr(request.app.state, "db_ready", False))
     out: dict = {"status": "ok", "db_ready": ready}
     if request.method == "GET":
         try:

@@ -1,23 +1,41 @@
-name: Scraper schedule tick
+name: Keepalive + scraper tick
 
 on:
   schedule:
-    # Mỗi 15 phút — đánh thức Render free và chạy job đến giờ (VN)
-    - cron: "*/15 * * * *"
+    # Mỗi 10 phút — Render free ngủ sau 15 phút idle, ping 10 phút để không cold start.
+    # (GitHub Actions cron hay trễ vài phút nên để 10 thay vì 15 cho chắc.)
+    - cron: "*/10 * * * *"
   workflow_dispatch:
 
 jobs:
   tick:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping OTA cron tick
+      - name: Ping + warm Render services
         env:
           CRON_SECRET: ${{ secrets.OTA_CRON_SECRET }}
+          # Danh sách base URL, cách nhau bởi dấu phẩy. Mặc định 2 service hiện có.
+          # Đặt secret OTA_SERVICE_URLS nếu hostname khác.
+          SERVICE_URLS: ${{ secrets.OTA_SERVICE_URLS }}
         run: |
-          if [ -z "$CRON_SECRET" ]; then
-            echo "Skip: set GitHub secret OTA_CRON_SECRET = Render env CRON_SECRET"
-            exit 0
-          fi
-          curl -sf -X POST "https://ota-research-platform.onrender.com/api/cron/tick" \
-            -H "Authorization: Bearer ${CRON_SECRET}" \
-            -H "Content-Type: application/json"
+          urls="${SERVICE_URLS:-https://ota-research-platform.onrender.com,https://tour-research.onrender.com}"
+          IFS=',' read -ra LIST <<< "$urls"
+          for base in "${LIST[@]}"; do
+            base="$(echo "$base" | xargs)"   # trim
+            [ -z "$base" ] && continue
+            echo "== $base =="
+            # 1) Đánh thức dyno (HEAD /health luôn 200 kể cả khi DB đang bootstrap)
+            curl -sf -m 60 -I "$base/health" >/dev/null && echo "  health OK" || echo "  health unreachable (đang khởi động?)"
+            if [ -n "$CRON_SECRET" ]; then
+              # 2) Giữ ấm cache So sánh / Market Lab
+              curl -sf -m 60 -X POST "$base/api/cron/warm" \
+                -H "Authorization: Bearer ${CRON_SECRET}" \
+                -H "Content-Type: application/json" >/dev/null && echo "  warm OK" || echo "  warm skipped"
+              # 3) Chạy job scraper/sync đến giờ (VN)
+              curl -sf -m 120 -X POST "$base/api/cron/tick" \
+                -H "Authorization: Bearer ${CRON_SECRET}" \
+                -H "Content-Type: application/json" >/dev/null && echo "  tick OK" || echo "  tick skipped"
+            else
+              echo "  Skip cron: set GitHub secret OTA_CRON_SECRET = Render env CRON_SECRET"
+            fi
+          done

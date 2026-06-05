@@ -22,8 +22,22 @@ def _verify_cron_secret(authorization: str | None = Header(default=None)) -> Non
 def cron_tick(_: None = Depends(_verify_cron_secret)):
     """
     Gọi mỗi 10–15 phút từ GitHub Actions / cron-job.org.
-    Chạy các tác vụ scraper/sync đã đến giờ (VN) và chưa chạy trong ngày.
+    - Đánh thức dyno Render free (tránh cold start mấy chục giây cho người dùng).
+    - Giữ ấm cache So sánh / Market Lab để request đầu của người dùng là cache hit.
+    - Chạy các tác vụ scraper/sync đã đến giờ (VN) và chưa chạy trong ngày.
     """
     from scheduler import run_due_scheduled_jobs
+    from cache_warm import warm_caches_async
 
+    # Giữ ấm cache ở nền (throttle dùng chung) — không làm chậm response tick.
+    warm_caches_async(min_interval=120.0)
     return run_due_scheduled_jobs(triggered_by="cron")
+
+
+@router.post("/warm")
+def cron_warm(_: None = Depends(_verify_cron_secret)):
+    """Chỉ giữ ấm cache (không chạy job) — gọi thường xuyên hơn tick để cache không nguội."""
+    from cache_warm import warm_caches_async
+
+    started = warm_caches_async(min_interval=120.0)
+    return {"status": "warming" if started else "throttled"}

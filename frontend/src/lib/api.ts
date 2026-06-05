@@ -1,4 +1,5 @@
 import axios from "axios";
+import { clearPersistedQueryCache } from "@/lib/queryPersist";
 
 const api = axios.create({ baseURL: "/api" });
 
@@ -14,6 +15,7 @@ marketLabApi.interceptors.response.use(
   (err) => {
     if (err.response?.status === 401) {
       localStorage.removeItem("access_token");
+      clearPersistedQueryCache();
       window.location.href = "/login";
     }
     return Promise.reject(err);
@@ -29,6 +31,7 @@ compareApi.interceptors.response.use(
   (err) => {
     if (err.response?.status === 401) {
       localStorage.removeItem("access_token");
+      clearPersistedQueryCache();
       window.location.href = "/login";
     }
     return Promise.reject(err);
@@ -48,6 +51,7 @@ api.interceptors.response.use(
   (err) => {
     if (err.response?.status === 401) {
       localStorage.removeItem("access_token");
+      clearPersistedQueryCache();
       window.location.href = "/login";
     }
     return Promise.reject(err);
