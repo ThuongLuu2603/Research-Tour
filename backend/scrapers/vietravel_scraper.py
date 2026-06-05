@@ -5,6 +5,7 @@ Scrape tour listings from travel.com.vn (Vietravel) and sync to Google Sheets.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from datetime import datetime
@@ -12,6 +13,8 @@ from typing import Any, Callable
 
 import pandas as pd
 import requests
+
+logger = logging.getLogger(__name__)
 
 COMPANY = "Vietravel"
 SHEET_ID = "1sI34D88zsmSrN7Jf9fS3jh4aUvaep-blxnBR1CGq9eM"
@@ -34,15 +37,22 @@ HEADERS = {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8",
+    "Accept-Encoding": "gzip, deflate",
+    "Connection": "keep-alive",
+    "Referer": "https://travel.com.vn/",
+    "Upgrade-Insecure-Requests": "1",
 }
 
-# Card header (split chunks start right after \"pageId\":)
-_CARD_RE = re.compile(
-    r'^(\d+),\\"pageCode\\":\\"([^\\"]+)\\",\\"pageTitle\\":\\"([^\\"]*)\\"'
-    r'.*?\\"linkShare\\":\\"(https://travel\.com\.vn/chuong-trinh/[^\\"]+)\\"',
-    re.S,
-)
+# travel.com.vn (Next.js) nhúng dữ liệu tour dạng JSON escaped trong HTML. Mỗi card bắt đầu
+# bằng \"pageId\":. Thứ tự field thay đổi theo thời gian (pageTitle/linkShare nằm SAU mảng
+# lịch khởi hành), nên trích TỪNG field độc lập thay vì 1 regex theo vị trí (bản cũ vỡ khi
+# site đổi cấu trúc → "không quét được tour"). Card hợp lệ = có linkShare.
+_PAGEID_RE = re.compile(r"^(\d+)")
+_PAGECODE_RE = re.compile(r'\\"pageCode\\":\\"([^\\"]+)\\"')
+_PAGETITLE_RE = re.compile(r'\\"pageTitle\\":\\"([^\\"]*)\\"')
+_LINKSHARE_RE = re.compile(r'\\"linkShare\\":\\"(https://travel\.com\.vn/chuong-trinh/[^\\"]+)\\"')
 
 _FIELD_RE = {
     "departureName": re.compile(r'\\"departureName\\":\\"([^\\"]*)\\"'),
@@ -204,6 +214,14 @@ def _extract_destination(chunk: str, max_len: int = 8000) -> str:
     return ""
 
 
+def _extract_departure(block: str) -> str:
+    """Điểm khởi hành — bỏ giá trị '$undefined' (site mới để departureName rỗng ở cấp card)."""
+    v = _field_in_block(block, "departureName").strip()
+    if not v or v.lower() == "$undefined":
+        return ""
+    return v
+
+
 def scrape_listing_page(url: str) -> list[dict[str, Any]]:
     """Scrape all tour cards from a Vietravel listing page."""
     resp = requests.get(url, headers=HEADERS, timeout=90)
@@ -213,47 +231,54 @@ def scrape_listing_page(url: str) -> list[dict[str, Any]]:
 
     marker = '\\"pageId\\":'
     if marker not in text:
+        logger.warning(
+            "VTR scrape: không thấy marker pageId tại %s (status=%s, len=%s) — site có thể chặn bot/đổi cấu trúc",
+            url, resp.status_code, len(text),
+        )
         raise ValueError(f"Không tìm thấy dữ liệu tour trong trang: {url}")
 
     tours: list[dict[str, Any]] = []
     seen_links: set[str] = set()
 
     for chunk in text.split(marker)[1:]:
-        block = chunk[:15000]
-        m = _CARD_RE.search(block)
-        if not m:
+        # Card hợp lệ phải có linkShare (pageTitle/linkShare nằm sau mảng lịch KH → tìm cả chunk).
+        link_m = _LINKSHARE_RE.search(chunk)
+        if not link_m:
             continue
-
-        link = m.group(4)
+        link = link_m.group(1)
         if link in seen_links:
             continue
         seen_links.add(link)
 
-        title = _decode_json_str(m.group(3))
-        dep = _field_in_block(block, "departureName")
-        duration = _extract_duration(block, chunk)
-        lich_trinh = _extract_destination(block)
-        gia = _extract_prices(block)
-        lich_kh = _extract_schedule(chunk)
+        block = chunk[:40000]
+        title_m = _PAGETITLE_RE.search(chunk)
+        code_m = _PAGECODE_RE.search(chunk)
+        pid_m = _PAGEID_RE.match(chunk)
 
         tours.append(
             {
                 "cong_ty": COMPANY,
                 "thi_truong": "",
                 "tuyen_tour": "",
-                "ten_tour": title,
-                "lich_trinh": lich_trinh,
-                "diem_kh": dep,
-                "thoi_gian": duration,
-                "gia": _fmt_price(gia),
-                "lich_kh": lich_kh,
+                "ten_tour": _decode_json_str(title_m.group(1)) if title_m else "",
+                "lich_trinh": _extract_destination(block),
+                "diem_kh": _extract_departure(block),
+                "thoi_gian": _extract_duration(block, chunk),
+                "gia": _fmt_price(_extract_prices(block)),
+                "lich_kh": _extract_schedule(chunk),
                 "link_tour": _hyperlink_formula(link),
                 "link_url": link,
-                "page_id": m.group(1),
-                "page_code": m.group(2),
+                "page_id": pid_m.group(1) if pid_m else "",
+                "page_code": code_m.group(1) if code_m else "",
                 "nguon": url,
                 "cap_nhat": datetime.now().strftime("%d/%m/%Y %H:%M"),
             }
+        )
+
+    if not tours:
+        logger.warning(
+            "VTR scrape: có marker pageId nhưng 0 card khớp tại %s — JSON có thể đã đổi tên field",
+            url,
         )
 
     return tours
