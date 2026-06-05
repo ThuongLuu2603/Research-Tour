@@ -3,6 +3,37 @@ services:
     name: ota-research-platform
     runtime: python
     plan: free
+    region: oregon
+    buildCommand: >-
+      cd frontend &&
+      npm ci &&
+      npm run build &&
+      cd ../backend &&
+      pip install -r requirements.txt
+    preDeployCommand: cd backend && python seed.py --sync
+    startCommand: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: NODE_VERSION
+        value: "20.18.0"
+      - key: SHEET_ID
+        value: "1sI34D88zsmSrN7Jf9fS3jh4aUvaep-blxnBR1CGq9eM"
+      - key: GOOGLE_CREDENTIALS_JSON
+        sync: false
+      - key: CRON_SECRET
+        generateValue: true
+
+  - type: web
+    name: tour-research
+    runtime: python
+    plan: free
+    region: singapore
     buildCommand: >-
       cd frontend &&
       npm ci &&
