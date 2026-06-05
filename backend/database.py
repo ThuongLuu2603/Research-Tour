@@ -21,9 +21,17 @@ engine_kwargs: dict = {}
 if _is_sqlite:
     connect_args = {"check_same_thread": False}
 elif _is_cockroach:
-    # CockroachDB Serverless: dùng NullPool (serverless spin-up/down)
+    # CockroachDB Serverless: dùng NullPool (serverless spin-up/down).
+    # TCP keepalives + connect_timeout cao hơn để chịu được node/heartbeat chập chờn
+    # ở ap-southeast-1 (giảm lỗi "conn heartbeat timed out" khi sync lâu).
     from sqlalchemy.pool import NullPool
-    connect_args = {"connect_timeout": 15}
+    connect_args = {
+        "connect_timeout": 30,
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 5,
+    }
     engine_kwargs = {
         "poolclass": NullPool,
         "pool_pre_ping": True,

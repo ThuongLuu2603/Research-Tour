@@ -156,6 +156,17 @@ sheetSyncApi.interceptors.request.use((cfg) => {
   if (token) cfg.headers.Authorization = `Bearer ${token}`;
   return cfg;
 });
+sheetSyncApi.interceptors.response.use(
+  (r) => r,
+  (err) => {
+    if (err.response?.status === 401) {
+      localStorage.removeItem("access_token");
+      clearPersistedQueryCache();
+      window.location.href = "/login";
+    }
+    return Promise.reject(err);
+  }
+);
 
 export type SheetSyncSourceResult = {
   nguon: string;

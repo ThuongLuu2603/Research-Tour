@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { restoreQueryCache, startQueryPersist } from "@/lib/queryPersist";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import AppErrorBoundary from "@/components/AppErrorBoundary";
 import Layout from "@/components/Layout";
 import LoginPage from "@/pages/LoginPage";
 
@@ -55,8 +56,9 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
 export default function App() {
   useEffect(() => startQueryPersist(queryClient), []);
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
+    <AppErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
@@ -78,7 +80,8 @@ export default function App() {
             </Route>
           </Routes>
         </BrowserRouter>
-      </AuthProvider>
-    </QueryClientProvider>
+        </AuthProvider>
+      </QueryClientProvider>
+    </AppErrorBoundary>
   );
 }

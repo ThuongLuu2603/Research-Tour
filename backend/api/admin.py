@@ -115,9 +115,10 @@ def data_status(_: User = Depends(get_current_user)):
 def sync_tours_from_google_sheet(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Kéo thay đổi từ Google Sheet (live) → DB Research Grid (cả 3 tab)."""
     from sheets_tour_sync import merge_all_sheets_to_db
+    from db_retry import run_with_retry
 
     try:
-        return merge_all_sheets_to_db(db)
+        return run_with_retry(lambda: merge_all_sheets_to_db(db), db=db, label="sync-all-sheets")
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Lỗi đồng bộ Sheet → App: {e}") from e
 
@@ -131,6 +132,7 @@ def sync_sheet_source(
     """Đồng bộ tab Sheet → DB (Main | Vietravel). FindTourGo chỉ trên Sheet."""
     from data_sources import ALL_SHEET_TABS, is_db_canonical_source
     from sheets_tour_sync import merge_sheet_source_to_db
+    from db_retry import run_with_retry
 
     if nguon not in ALL_SHEET_TABS:
         raise HTTPException(status_code=400, detail=f"nguon không hợp lệ: {nguon}")
@@ -140,7 +142,9 @@ def sync_sheet_source(
             detail="FindTourGo chỉ lưu trên Google Sheet, không đồng bộ vào database",
         )
     try:
-        return merge_sheet_source_to_db(db, nguon)
+        return run_with_retry(
+            lambda: merge_sheet_source_to_db(db, nguon), db=db, label=f"sync-{nguon}"
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Lỗi đồng bộ tab {nguon}: {e}") from e
 
