@@ -1,15 +1,41 @@
 """Khớp rule tuyến nhanh — index theo keyword neo (dài nhất trong mỗi rule AND)."""
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 
 from text_fold import fold_vi
 
 
+def _word_match(kw: str, text: str) -> bool:
+    """
+    Kiểm tra keyword xuất hiện như một *từ hoàn chỉnh* trong text (đã fold_vi).
+    Tránh match giữa chừng: "my" KHÔNG được match trong "myanmar",
+    nhưng "my" vẫn match trong "du lich my", "my dong tay", "my, nhat ban".
+
+    Điều kiện biên:
+    - Trước keyword: không phải chữ cái hoặc chữ số (a-z, 0-9)
+    - Sau keyword: không phải chữ cái hoặc chữ số
+
+    Ví dụ:
+        "my"        in "du lich my"           → True   ✓
+        "my"        in "du lich myanmar"       → False  ✓  (theo sau là "a")
+        "my"        in "my nhat ban"           → True   ✓  (đầu chuỗi)
+        "da nang"   in "da nang, hoi an"       → True   ✓
+        "ha"        in "nha trang"             → False  ✓  (đứng trước là "n")
+        "nha trang" in "nha trang bien xanh"   → True   ✓
+    """
+    return bool(re.search(
+        r'(?<![a-z0-9])' + re.escape(kw) + r'(?![a-z0-9])',
+        text,
+    ))
+
+
 class RouteRuleMatcher:
     """
-    Thay vì thử 600+ rule/tour, chỉ thử rule có keyword neo xuất hiện trong tên+lịch trình.
-    So khớp trên bản đã bỏ dấu (côn đảo = con dao).
+    Thay vì thử 700+ rule/tour, chỉ thử rule có keyword neo xuất hiện trong tên+lịch trình.
+    So khớp trên bản đã bỏ dấu (côn đảo = con dao, my = mỹ).
+    Dùng word-boundary check để tránh "my" khớp nhầm trong "myanmar".
     """
 
     __slots__ = ("_rules", "_anchors")
@@ -37,6 +63,7 @@ class RouteRuleMatcher:
         if not combined:
             return "", "", False, None
 
+        # Bước 1: tìm candidates bằng substring (nhanh, có thể dư)
         candidates: set[int] = set()
         for anchor, indices in self._anchors:
             if anchor in combined:
@@ -44,9 +71,10 @@ class RouteRuleMatcher:
         if not candidates:
             return "", "", False, None
 
+        # Bước 2: kiểm tra word-boundary cho tất cả keywords của rule
         for i in sorted(candidates):
             rule_id, mkt, route, kws = self._rules[i]
-            if all(kw in combined for kw in kws):
+            if all(_word_match(kw, combined) for kw in kws):
                 return mkt, route, True, rule_id
         return "", "", False, None
 
