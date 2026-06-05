@@ -126,6 +126,11 @@ def sync_tours_from_google_sheet(_: User = Depends(get_current_user), db: Sessio
 @router.post("/sync-sheet-source")
 def sync_sheet_source(
     nguon: str = Query(..., description="Vietravel | FindTourGo | Main"),
+    recompute: bool = Query(
+        True,
+        description="Tính lại phân khúc ngay sau tab này. Khi đồng bộ nhiều tab, "
+        "đặt false cho từng tab rồi gọi /recompute-phan-khuc 1 lần ở cuối (nhanh hơn).",
+    ),
     _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -143,7 +148,9 @@ def sync_sheet_source(
         )
     try:
         return run_with_retry(
-            lambda: merge_sheet_source_to_db(db, nguon), db=db, label=f"sync-{nguon}"
+            lambda: merge_sheet_source_to_db(db, nguon, recompute_segments=recompute),
+            db=db,
+            label=f"sync-{nguon}",
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Lỗi đồng bộ tab {nguon}: {e}") from e
@@ -153,11 +160,25 @@ def sync_sheet_source(
 def recompute_phan_khuc(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Tính lại Phân khúc: TB/ngày tour vs TB/ngày TT trên cùng Thị trường + Tuyến + Điểm KH."""
     from pricing_segments import recompute_all_phan_khuc
+    from db_retry import run_with_retry
 
     try:
-        return recompute_all_phan_khuc(db)
+        result = run_with_retry(lambda: recompute_all_phan_khuc(db), db=db, label="recompute-phan-khuc")
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
+
+    # Sau khi phân khúc đổi → làm mới cache So sánh để số liệu phản ánh ngay (kết thúc luồng sync nhiều tab).
+    try:
+        from compare_cache import invalidate_compare_cache, prewarm_compare_cache
+        from segment_mv import refresh_segment_mv
+
+        invalidate_compare_cache()
+        refresh_segment_mv()
+        prewarm_compare_cache(db)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("recompute-phan-khuc cache refresh skipped: %s", e)
+    return result
 
 
 @router.post("/sync-main-sheet")

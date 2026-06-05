@@ -194,8 +194,9 @@ export const syncToursFromGoogleSheet = async (): Promise<SheetSyncResult> => {
   let total_inserted = 0;
   let total_deleted = 0;
   for (const nguon of order) {
+    // recompute=false cho từng tab → chỉ tính lại phân khúc 1 lần ở cuối (tránh chạy 3 lần).
     const { data } = await sheetSyncApi.post<SheetSyncSourceResult>(
-      `/admin/sync-sheet-source?nguon=${encodeURIComponent(nguon)}`
+      `/admin/sync-sheet-source?nguon=${encodeURIComponent(nguon)}&recompute=false`
     );
     sources.push(data);
     if (data.error) break;
