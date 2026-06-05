@@ -16,9 +16,29 @@ def _today() -> date:
 
 def capture_daily_snapshot(db: Session, tours: list[Tour] | None = None) -> DailySnapshot:
     if tours is None:
+        from sqlalchemy.orm import load_only
         tours = filter_tours_for_market_compare(
             apply_market_compare_source_filter(
-                db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+                db.query(Tour)
+                .options(load_only(
+                    Tour.id,
+                    Tour.cong_ty,
+                    Tour.ten_tour,
+                    Tour.lich_trinh,
+                    Tour.thi_truong,
+                    Tour.tuyen_tour,
+                    Tour.diem_kh,
+                    Tour.gia,
+                    Tour.gia_raw,
+                    Tour.thoi_gian,
+                    Tour.so_ngay,
+                    Tour.lich_kh,
+                    Tour.link_url,
+                    Tour.ma_tour,
+                    Tour.nguon,
+                    Tour.updated_at,
+                ))
+                .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
             ).all()
         )
 

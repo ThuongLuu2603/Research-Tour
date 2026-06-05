@@ -47,7 +47,7 @@ _inflight: dict[tuple, threading.Event] = {}
 def _db_fingerprint(db: Session) -> tuple[int, str | None]:
     global _fingerprint_cache
     now = time.time()
-    if _fingerprint_cache and now - _fingerprint_cache[0] < 60:
+    if _fingerprint_cache and now - _fingerprint_cache[0] < 120:  # tăng 60s→120s giảm query
         return _fingerprint_cache[1]
     row = (
         apply_market_compare_source_filter(
@@ -121,8 +121,34 @@ def load_tours(
     tuyen_tour: str = "",
     diem_kh: str = "",
 ) -> list[Tour]:
+    """Load chỉ cột cần cho compare engine — giảm Egress đáng kể.
+    Các cột dùng bởi compare_engine: id, cong_ty, ten_tour, lich_trinh, thi_truong,
+    tuyen_tour, diem_kh, gia, gia_raw, thoi_gian, so_ngay, lich_kh, link_url,
+    ma_tour, nguon, updated_at.
+    """
+    from sqlalchemy.orm import load_only
+
     q = apply_market_compare_source_filter(
-        db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+        db.query(Tour)
+        .options(load_only(
+            Tour.id,
+            Tour.cong_ty,
+            Tour.ten_tour,
+            Tour.lich_trinh,
+            Tour.thi_truong,
+            Tour.tuyen_tour,
+            Tour.diem_kh,
+            Tour.gia,
+            Tour.gia_raw,
+            Tour.thoi_gian,
+            Tour.so_ngay,
+            Tour.lich_kh,
+            Tour.link_url,
+            Tour.ma_tour,
+            Tour.nguon,
+            Tour.updated_at,
+        ))
+        .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
     )
     if thi_truong:
         q = q.filter(Tour.thi_truong.in_(thi_truong))

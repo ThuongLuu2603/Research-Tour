@@ -85,10 +85,14 @@ def _phan_khuc_absolute_fallback(gia: float | None) -> str:
 
 
 def recompute_all_phan_khuc(db: Session) -> dict:
+    from sqlalchemy.orm import load_only
     from data_sources import DB_CANONICAL_NGUON
 
+    _PRICE_COLS = (Tour.id, Tour.thi_truong, Tour.tuyen_tour, Tour.diem_kh,
+                   Tour.gia, Tour.thoi_gian, Tour.so_ngay, Tour.phan_khuc, Tour.nguon)
     tours = (
         db.query(Tour)
+        .options(load_only(*_PRICE_COLS))
         .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
         .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
         .all()
@@ -113,14 +117,18 @@ def recompute_phan_khuc_for_tour_ids(db: Session, tour_ids: list[int]) -> dict:
     if not ids:
         return {"updated": 0, "tours": 0}
 
+    from sqlalchemy.orm import load_only
+    _PRICE_COLS = (Tour.id, Tour.thi_truong, Tour.tuyen_tour, Tour.diem_kh,
+                   Tour.gia, Tour.thoi_gian, Tour.so_ngay, Tour.phan_khuc, Tour.nguon)
     all_priced = (
         db.query(Tour)
+        .options(load_only(*_PRICE_COLS))
         .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
         .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
         .all()
     )
     route_avg = build_route_market_avg_price_day(all_priced)
-    tours = db.query(Tour).filter(Tour.id.in_(ids)).all()
+    tours = db.query(Tour).options(load_only(*_PRICE_COLS)).filter(Tour.id.in_(ids)).all()
     updated = 0
     for t in tours:
         label = phan_khuc_relative_for_tour(t, route_avg)
@@ -150,8 +158,12 @@ def recompute_missing_phan_khuc(db: Session) -> int:
     from models import Tour
     from sqlalchemy import or_
 
+    from sqlalchemy.orm import load_only
+    _PRICE_COLS = (Tour.id, Tour.thi_truong, Tour.tuyen_tour, Tour.diem_kh,
+                   Tour.gia, Tour.thoi_gian, Tour.so_ngay, Tour.phan_khuc, Tour.nguon)
     tours = (
         db.query(Tour)
+        .options(load_only(*_PRICE_COLS))
         .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
         .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
         .filter(or_(Tour.phan_khuc.is_(None), Tour.phan_khuc == "", Tour.phan_khuc == "Chưa có giá"))
@@ -161,6 +173,7 @@ def recompute_missing_phan_khuc(db: Session) -> int:
         return 0
     all_priced = (
         db.query(Tour)
+        .options(load_only(*_PRICE_COLS))
         .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
         .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
         .all()

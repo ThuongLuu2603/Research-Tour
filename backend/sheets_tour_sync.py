@@ -206,6 +206,10 @@ def _phan_khuc_inputs_changed(tour: Tour, fields: dict) -> bool:
 
 
 def _build_tour_lookup(db, nguon: str) -> dict[str, dict[str, Tour]]:
+    """Load chỉ các cột cần cho matching + content_hash — giảm Egress ~50%.
+    Các cột nặng (lich_trinh, analyst_note, flagged, phan_khuc, thoi_gian, gia)
+    không cần thiết ở bước lookup; chỉ dùng khi _apply_fields_to_tour ghi đè.
+    """
     from sqlalchemy import or_
     from sqlalchemy.orm import load_only
 
@@ -216,14 +220,10 @@ def _build_tour_lookup(db, nguon: str) -> dict[str, dict[str, Tour]]:
         Tour.ma_tour,
         Tour.link_url,
         Tour.ten_tour,
-        Tour.lich_trinh,
+        # lich_trinh, phan_khuc, gia, thoi_gian, analyst_note, flagged
+        # → KHÔNG load ở đây; SQLAlchemy lazy-load khi _apply_fields_to_tour truy cập
         Tour.thi_truong,
         Tour.tuyen_tour,
-        Tour.phan_khuc,
-        Tour.gia,
-        Tour.thoi_gian,
-        Tour.analyst_note,
-        Tour.flagged,
         Tour.content_hash,
         Tour.sheet_source,
     ))
@@ -647,11 +647,35 @@ def merge_dataframe_to_db(
 
 
 def export_vietravel_tab_from_db(db) -> dict:
-    """DB (nguon=Vietravel) → ghi đè tab Sheet Vietravel."""
+    """DB (nguon=Vietravel) → ghi đè tab Sheet Vietravel.
+    Chỉ load đúng cột cần cho Sheet — giảm Egress đáng kể.
+    """
+    from sqlalchemy.orm import load_only
     from models import Tour
     from scrapers.vietravel_scraper import db_tours_to_dataframe, write_to_google_sheet
 
-    tours = db.query(Tour).filter(Tour.nguon == "Vietravel").order_by(Tour.id).all()
+    tours = (
+        db.query(Tour)
+        .options(load_only(
+            Tour.id,
+            Tour.cong_ty,
+            Tour.thi_truong,
+            Tour.tuyen_tour,
+            Tour.ten_tour,
+            Tour.lich_trinh,
+            Tour.diem_kh,
+            Tour.thoi_gian,
+            Tour.gia,
+            Tour.gia_raw,
+            Tour.lich_kh,
+            Tour.link_url,
+            Tour.ma_tour,
+            Tour.updated_at,
+        ))
+        .filter(Tour.nguon == "Vietravel")
+        .order_by(Tour.id)
+        .all()
+    )
     df = db_tours_to_dataframe(tours)
     write_to_google_sheet(df)
     return {"ok": True, "rows": len(tours)}
