@@ -22,8 +22,13 @@ logger = logging.getLogger(__name__)
 
 def _init_db_with_retry(*, max_attempts: int = 20, initial_wait: float = 20.0) -> None:
     import time
-
+    from config import settings
     from sqlalchemy.exc import OperationalError
+
+    # CockroachDB không cần chờ — chỉ Supabase Session pooler mới cần warm-up
+    _is_cockroach = "cockroachlabs.cloud" in settings.database_url
+    if _is_cockroach:
+        initial_wait = 0
 
     if initial_wait > 0:
         logger.info("init_db: chờ %.0fs để pool Supabase rảnh (deploy Render)...", initial_wait)
@@ -41,7 +46,7 @@ def _init_db_with_retry(*, max_attempts: int = 20, initial_wait: float = 20.0) -
                 raise
             wait = min(45, 5 + 2 ** attempt)
             logger.warning(
-                "init_db: pool Supabase đầy, thử lại %s/%s sau %ss",
+                "init_db: pool đầy, thử lại %s/%s sau %ss",
                 attempt + 1,
                 max_attempts,
                 wait,
