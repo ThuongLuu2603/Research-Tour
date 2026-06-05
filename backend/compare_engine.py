@@ -684,6 +684,54 @@ def build_segment_stats(tours: list[Tour], *, dedup: bool = True) -> list[Segmen
     return [s for s in buckets.values() if s.vtr_entries]
 
 
+def summarize_context(tours: list[Tour], segments: list[SegmentStats]) -> dict:
+    """KPI tổng hợp dùng CHUNG cho So sánh VTR, Trang chủ CI và Báo cáo BGĐ.
+
+    Một nguồn tính duy nhất → 3 module luôn khớp số liệu. Định nghĩa giống compare_summary:
+    rẻ ≤ -5%, đắt ≥ +5%, dẫn đầu tần suất ≥ +20%, tụt tần suất ≤ -20%.
+    """
+    from tour_sources import is_vietravel_tab
+
+    cheaper = expensive = similar = freq_lead = freq_lag = 0
+    gaps: list[float] = []
+    vtr_freq = market_freq = 0.0
+    for s in segments:
+        g = s.gap_pct
+        if g is not None:
+            gaps.append(g)
+            if g <= -5:
+                cheaper += 1
+            elif g >= 5:
+                expensive += 1
+            else:
+                similar += 1
+        vtr_freq += s.vtr_freq_monthly
+        market_freq += s.market_freq_monthly
+        fg = s.freq_gap_pct
+        if fg is not None:
+            if fg >= 20:
+                freq_lead += 1
+            elif fg <= -20:
+                freq_lag += 1
+
+    vtr_count = sum(1 for t in tours if is_vietravel_tab(t))
+    market_count = sum(1 for t in tours if not is_vietravel_tab(t))
+    return {
+        "total_tours": len(tours),
+        "vtr_count": vtr_count,
+        "market_count": market_count,
+        "segment_count": len(segments),
+        "cheaper": cheaper,
+        "expensive": expensive,
+        "similar": similar,
+        "avg_gap_pct": round(sum(gaps) / len(gaps), 1) if gaps else None,
+        "vtr_freq_monthly": round(vtr_freq, 1),
+        "market_freq_monthly": round(market_freq, 1),
+        "freq_leading": freq_lead,
+        "freq_lagging": freq_lag,
+    }
+
+
 def build_competitor_overview(tours: list[Tour], competitor: str) -> dict:
     """Profile đối thủ dùng cùng engine so sánh với Vietravel."""
     from classification import resolve_company_name

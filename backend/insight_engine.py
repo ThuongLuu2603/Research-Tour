@@ -162,21 +162,46 @@ def get_home_brief(db: Session) -> dict:
         .all()
     )
 
+    # KPI LẤY TỪ NGUỒN LIVE GIỐNG MODULE SO SÁNH (cùng cache get_compare_context) → luôn khớp nhau,
+    # không còn lệch do snapshot chụp 1 lần/ngày. Insights/alerts/trend vẫn lấy từ snapshot (lịch sử).
+    kpis = {
+        "total_tours": daily.total_tours,
+        "vtr_tours": daily.vtr_tours,
+        "segment_count": daily.segment_count,
+        "cheaper_segments": daily.cheaper_segments,
+        "expensive_segments": daily.expensive_segments,
+        "avg_gap_pct": daily.avg_gap_pct,
+        "freq_leading": daily.freq_leading_segments,
+        "freq_lagging": daily.freq_lagging_segments,
+        "unclassified_tours": daily.unclassified_tours,
+        "flagged_tours": daily.flagged_tours,
+    }
+    kpis_source = "snapshot"
+    try:
+        from compare_cache import get_compare_context
+        from compare_engine import summarize_context
+
+        ctx = get_compare_context(db, [], "", "")
+        live = summarize_context(ctx.tours, ctx.segments)
+        kpis.update({
+            "total_tours": live["total_tours"],
+            "vtr_tours": live["vtr_count"],
+            "segment_count": live["segment_count"],
+            "cheaper_segments": live["cheaper"],
+            "expensive_segments": live["expensive"],
+            "avg_gap_pct": live["avg_gap_pct"],
+            "freq_leading": live["freq_leading"],
+            "freq_lagging": live["freq_lagging"],
+        })
+        kpis_source = "live"
+    except Exception:
+        pass  # lỗi build context → giữ KPI snapshot làm fallback
+
     from snapshot_service import delta_vs_previous, get_trend
     return {
         "snapshot_date": daily.snapshot_date.isoformat(),
-        "kpis": {
-            "total_tours": daily.total_tours,
-            "vtr_tours": daily.vtr_tours,
-            "segment_count": daily.segment_count,
-            "cheaper_segments": daily.cheaper_segments,
-            "expensive_segments": daily.expensive_segments,
-            "avg_gap_pct": daily.avg_gap_pct,
-            "freq_leading": daily.freq_leading_segments,
-            "freq_lagging": daily.freq_lagging_segments,
-            "unclassified_tours": daily.unclassified_tours,
-            "flagged_tours": daily.flagged_tours,
-        },
+        "kpis_source": kpis_source,
+        "kpis": kpis,
         "delta": delta_vs_previous(db),
         "trend": get_trend(db, 14),
         "insights": insights,

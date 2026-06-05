@@ -7,6 +7,7 @@ export default function ReportsPage() {
   const { data: html, refetch, isFetching } = useQuery({
     queryKey: ["report-html"],
     queryFn: fetchReportHtml,
+    staleTime: 5 * 60_000, // báo cáo đổi chậm — không gọi lại mỗi lần mở (vẫn có nút Làm mới)
   });
 
   const printReport = () => {

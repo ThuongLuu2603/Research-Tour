@@ -6,11 +6,9 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
-from compare_engine import build_segment_stats, deduplicate_tours
 from coverage_engine import build_coverage_summary
 from data_quality import compute_data_quality
-from models import DailySnapshot, Tour
-from tour_sources import apply_market_compare_source_filter
+from models import DailySnapshot
 
 
 def _fmt(n: float | None) -> str:
@@ -76,11 +74,13 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
             .first()
         )
 
-    tours = apply_market_compare_source_filter(
-        db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
-    ).all()
-    tours = deduplicate_tours(tours)
-    segments = build_segment_stats(tours, dedup=False)
+    # Dùng CHUNG nguồn với module So sánh (cùng cache, cùng bộ lọc/dedup) → số liệu khớp nhau
+    # và không phải quét lại toàn bộ bảng Tour mỗi request (nhanh hơn nhiều khi cache đã ấm).
+    from compare_cache import get_compare_context
+
+    ctx = get_compare_context(db, [], "", "")
+    tours = ctx.tours
+    segments = ctx.segments
     quality = compute_data_quality(db, tours)
     coverage = build_coverage_summary(tours)
 
@@ -106,12 +106,16 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
     snap_date = daily.snapshot_date.isoformat() if daily else date.today().isoformat()
     title = "Báo cáo CI Vietravel — Hàng ngày" if report_type == "daily" else "Báo cáo CI Vietravel — Tuần"
 
-    # KPI với delta vs hôm qua
-    kpi_avg_gap = getattr(daily, "avg_gap_pct", None) if daily else None
-    kpi_expensive = getattr(daily, "expensive_segments", 0) if daily else len(expensive)
-    kpi_cheaper = getattr(daily, "cheaper_segments", 0) if daily else len(cheap)
-    kpi_segment = getattr(daily, "segment_count", len(segments)) if daily else len(segments)
-    kpi_freq_lag = getattr(daily, "freq_lagging_segments", 0) if daily else len(freq_lag)
+    # KPI LẤY LIVE (cùng nguồn So sánh) → số liệu khớp module So sánh.
+    # prev_* vẫn lấy từ snapshot hôm qua để tính delta ngày-qua-ngày.
+    from compare_engine import summarize_context
+
+    live_kpi = summarize_context(tours, segments)
+    kpi_avg_gap = live_kpi["avg_gap_pct"]
+    kpi_expensive = live_kpi["expensive"]
+    kpi_cheaper = live_kpi["cheaper"]
+    kpi_segment = live_kpi["segment_count"]
+    kpi_freq_lag = live_kpi["freq_lagging"]
     kpi_unclassified = getattr(daily, "unclassified_tours", 0) if daily else 0
 
     prev_gap = getattr(prev, "avg_gap_pct", None) if prev else None

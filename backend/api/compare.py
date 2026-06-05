@@ -162,52 +162,27 @@ def compare_summary(
     _: User = Depends(get_current_user),
 ):
     ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh)
-    segments = ctx.segments
-    cheaper = expensive = similar = freq_lead = freq_lag = 0
-    gaps = []
-    vtr_freq = market_freq = 0.0
+    from compare_engine import summarize_context
 
-    for s in segments:
-        g = s.gap_pct
-        if g is not None:
-            gaps.append(g)
-            if g <= -5:
-                cheaper += 1
-            elif g >= 5:
-                expensive += 1
-            else:
-                similar += 1
-        vtr_freq += s.vtr_freq_monthly
-        market_freq += s.market_freq_monthly
-        fg = s.freq_gap_pct
-        if fg is not None:
-            if fg >= 20:
-                freq_lead += 1
-            elif fg <= -20:
-                freq_lag += 1
-
-    from tour_sources import is_vietravel_tab
-
-    tours = ctx.tours
-    vtr_tab_count = sum(1 for t in tours if is_vietravel_tab(t))
-    vtr_count = vtr_tab_count
-    mkt_count = sum(1 for t in tours if not is_vietravel_tab(t))
+    k = summarize_context(ctx.tours, ctx.segments)
+    vtr_count = k["vtr_count"]
+    vtr_freq = k["vtr_freq_monthly"]
 
     return CompareSummary(
         company=settings.company_name,
         total_vietravel_tours=vtr_count,
-        vietravel_tab_tours=vtr_tab_count,
-        total_market_tours=mkt_count,
-        segments_with_vietravel=len(segments),
-        cheaper_count=cheaper,
-        expensive_count=expensive,
-        similar_count=similar,
-        avg_gap_pct=round(sum(gaps) / len(gaps), 1) if gaps else None,
-        vtr_freq_monthly_total=round(vtr_freq, 1),
+        vietravel_tab_tours=vtr_count,
+        total_market_tours=k["market_count"],
+        segments_with_vietravel=k["segment_count"],
+        cheaper_count=k["cheaper"],
+        expensive_count=k["expensive"],
+        similar_count=k["similar"],
+        avg_gap_pct=k["avg_gap_pct"],
+        vtr_freq_monthly_total=vtr_freq,
         vtr_avg_departures_per_month=round(vtr_freq / vtr_count, 1) if vtr_count else None,
-        market_freq_monthly_total=round(market_freq, 1),
-        freq_leading_segments=freq_lead,
-        freq_lagging_segments=freq_lag,
+        market_freq_monthly_total=k["market_freq_monthly"],
+        freq_leading_segments=k["freq_leading"],
+        freq_lagging_segments=k["freq_lagging"],
         methodology=METHODOLOGY,
     )
 
