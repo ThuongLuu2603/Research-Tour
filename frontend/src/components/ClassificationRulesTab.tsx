@@ -12,7 +12,7 @@ import {
 import { buildRouteKeywordConflicts, conflictHintForKeyword, parseRouteKeywordList } from "@/lib/rulesUnmatched";
 import { InfoTip } from "@/components/InfoTip";
 import { cn } from "@/lib/utils";
-import { ChevronDown, ChevronRight, Database, GripVertical, Plus, Trash2, Search, Users } from "lucide-react";
+import { ChevronDown, ChevronRight, Database, GripVertical, Plus, Trash2, Search, Users, Star, Pencil, Check, X } from "lucide-react";
 import {
   dropHandlers,
   dragAliasProps,
@@ -41,6 +41,8 @@ type Props = {
   onError: (e: unknown) => void;
   appendKeywordToRouteRule: (rule: RouteRule, raw: string) => Promise<void>;
   deleteRouteRule: (id: number) => Promise<void>;
+  toggleRoutePriority: (rule: RouteRule) => Promise<void>;
+  editRouteKeywords: (rule: RouteRule, newKeywords: string) => Promise<void>;
   actionBtns: (onDelete: () => void, onSave?: () => void) => React.ReactNode;
 };
 
@@ -71,6 +73,8 @@ export function ClassificationRulesTab({
   onError,
   appendKeywordToRouteRule,
   deleteRouteRule,
+  toggleRoutePriority,
+  editRouteKeywords,
   actionBtns,
 }: Props) {
   const [qMarket, setQMarket] = useState("");
@@ -96,6 +100,37 @@ export function ClassificationRulesTab({
   const [previewKw, setPreviewKw] = useState("");
   const [previewDebouncedKw, setPreviewDebouncedKw] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null); // confirm delete 2-step (#4)
+  const [editingRuleId, setEditingRuleId] = useState<number | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [togglingPriorityId, setTogglingPriorityId] = useState<number | null>(null);
+
+  const startEdit = (rule: RouteRule) => {
+    setEditingRuleId(rule.id);
+    setEditDraft(rule.keywords);
+    setConfirmDeleteId(null);
+  };
+  const cancelEdit = () => { setEditingRuleId(null); setEditDraft(""); };
+  const saveEdit = async (rule: RouteRule) => {
+    const kw = editDraft.trim();
+    if (!kw || kw === rule.keywords) { cancelEdit(); return; }
+    setSavingEdit(true);
+    try {
+      await editRouteKeywords(rule, kw);
+      onAfterSaved(`Đã cập nhật keywords: ${kw}`);
+      cancelEdit();
+    } catch (e) { onError(e); }
+    finally { setSavingEdit(false); }
+  };
+  const handleTogglePriority = async (rule: RouteRule) => {
+    setTogglingPriorityId(rule.id);
+    try {
+      await toggleRoutePriority(rule);
+      const label = rule.priority ? "thường" : "ưu tiên (★)";
+      onAfterSaved(`Rule «${rule.tuyen_tour}» → ${label}`);
+    } catch (e) { onError(e); }
+    finally { setTogglingPriorityId(null); }
+  };
   useEffect(() => {
     const t = window.setTimeout(() => setPreviewDebouncedKw(previewKw), 600);
     return () => window.clearTimeout(t);
@@ -481,6 +516,7 @@ export function ClassificationRulesTab({
                         <thead>
                           <tr className="text-gray-500">
                             <th className="text-left py-1 w-6">#</th>
+                            <th className="py-1 w-5" title="Ưu tiên — kiểm tra trước tất cả rule khác"><Star size={9} className="text-amber-400" /></th>
                             <th className="text-left py-1">Tuyến</th>
                             <th className="text-left">Keywords (AND)</th>
                             <th className="text-right pr-1 w-14">
@@ -488,7 +524,7 @@ export function ClassificationRulesTab({
                                 <Users size={9} /> Tour
                               </span>
                             </th>
-                            <th className="w-14" />
+                            <th className="w-20" />
                           </tr>
                         </thead>
                         <tbody>
@@ -499,14 +535,53 @@ export function ClassificationRulesTab({
                               appendKeywordToRouteRule(r, raw),
                             );
                             const tourCount = routeStats?.[String(r.id)];
+                            const isEditing = editingRuleId === r.id;
+                            const isPriorityToggling = togglingPriorityId === r.id;
                             return (
-                              <tr key={r.id} className="border-t border-gray-100">
+                              <tr key={r.id} className={cn("border-t border-gray-100", r.priority && "bg-amber-50/60")}>
                                 <td className="py-1 text-gray-400 text-[10px]">{ri + 1}</td>
-                                <td className={cn("py-1 pr-2", dropClassName)} {...drop}>{r.tuyen_tour}</td>
+                                {/* ★ priority toggle */}
+                                <td className="py-1">
+                                  <button
+                                    type="button"
+                                    title={r.priority ? "Đang ưu tiên — bấm để tắt" : "Bật ưu tiên (kiểm tra trước tất cả)"}
+                                    disabled={isPriorityToggling}
+                                    onClick={() => handleTogglePriority(r)}
+                                    className={cn(
+                                      "p-0.5 rounded transition-colors",
+                                      r.priority ? "text-amber-500 hover:text-amber-700" : "text-gray-200 hover:text-amber-400",
+                                      isPriorityToggling && "opacity-40 cursor-not-allowed"
+                                    )}
+                                  >
+                                    <Star size={11} fill={r.priority ? "currentColor" : "none"} />
+                                  </button>
+                                </td>
+                                <td className={cn("py-1 pr-2", dropClassName)} {...drop}>
+                                  {r.tuyen_tour}
+                                  {r.priority && <span className="ml-1 text-[9px] text-amber-600 font-semibold">ưu tiên</span>}
+                                </td>
+                                {/* Keywords — inline edit khi click ✏️ */}
                                 <td className="py-1 font-mono">
-                                  <RouteKeywordsCell keywords={r.keywords} conflicts={routeKeywordConflicts} />
-                                  {kwCount > 1 && (
-                                    <span className="text-[10px] text-gray-500 font-sans ml-1">({kwCount} AND)</span>
+                                  {isEditing ? (
+                                    <input
+                                      autoFocus
+                                      className="input text-xs font-mono w-full py-0.5 px-1"
+                                      value={editDraft}
+                                      onChange={(e) => setEditDraft(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        e.stopPropagation();
+                                        if (e.key === "Enter") saveEdit(r).catch(onError);
+                                        if (e.key === "Escape") cancelEdit();
+                                      }}
+                                      placeholder="keyword1, keyword2 (AND)"
+                                    />
+                                  ) : (
+                                    <>
+                                      <RouteKeywordsCell keywords={r.keywords} conflicts={routeKeywordConflicts} />
+                                      {kwCount > 1 && (
+                                        <span className="text-[10px] text-gray-500 font-sans ml-1">({kwCount} AND)</span>
+                                      )}
+                                    </>
                                   )}
                                 </td>
                                 <td className="py-1 text-right pr-1">
@@ -516,8 +591,21 @@ export function ClassificationRulesTab({
                                     </span>
                                   ) : <span className="text-gray-200 text-[10px]">—</span>}
                                 </td>
+                                {/* Actions: edit / save / cancel / delete */}
                                 <td className="py-1">
-                                  {confirmDeleteId === r.id ? (
+                                  {isEditing ? (
+                                    <span className="flex gap-1 items-center">
+                                      <button type="button" disabled={savingEdit}
+                                        className="text-green-600 hover:text-green-800 p-0.5 disabled:opacity-40"
+                                        title="Lưu" onClick={() => saveEdit(r).catch(onError)}>
+                                        <Check size={13} />
+                                      </button>
+                                      <button type="button" className="text-gray-400 hover:text-gray-600 p-0.5"
+                                        title="Hủy" onClick={cancelEdit}>
+                                        <X size={13} />
+                                      </button>
+                                    </span>
+                                  ) : confirmDeleteId === r.id ? (
                                     <span className="flex gap-1 items-center">
                                       <button type="button" className="text-[9px] bg-red-600 text-white px-1 py-0.5 rounded"
                                         onClick={() => { setConfirmDeleteId(null); deleteRouteRule(r.id).then(() => onAfterSaved("Đã xóa")); }}>Xóa</button>
@@ -525,7 +613,16 @@ export function ClassificationRulesTab({
                                         onClick={() => setConfirmDeleteId(null)}>Hủy</button>
                                     </span>
                                   ) : (
-                                    actionBtns(() => setConfirmDeleteId(r.id))
+                                    <span className="flex gap-0.5 items-center">
+                                      <button type="button" className="text-gray-400 hover:text-blue-600 p-0.5"
+                                        title="Sửa keywords" onClick={() => startEdit(r)}>
+                                        <Pencil size={12} />
+                                      </button>
+                                      <button type="button" className="text-red-400 hover:text-red-600 p-0.5"
+                                        title="Xóa rule" onClick={() => setConfirmDeleteId(r.id)}>
+                                        <Trash2 size={12} />
+                                      </button>
+                                    </span>
                                   )}
                                 </td>
                               </tr>

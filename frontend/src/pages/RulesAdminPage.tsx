@@ -3,7 +3,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  listRouteRules, deleteRouteRule, updateRouteRule,
+  listRouteRules, deleteRouteRule, updateRouteRule, setRouteRulePriority,
   listCompanyRules, createCompanyRule, deleteCompanyRule, updateCompanyRule,
   listDepartureRules, createDepartureRule, deleteDepartureRule, updateDepartureRule,
   listDurationRules, createDurationRule, deleteDurationRule, updateDurationRule,
@@ -155,6 +155,20 @@ export default function RulesAdminPage() {
       keywords: merged,
     });
     afterRuleSaved(`Đã thêm vào rule — tour phải chứa đủ: ${merged}`);
+  };
+
+  const toggleRoutePriority = async (rule: RouteRule) => {
+    await setRouteRulePriority(rule.id, !rule.priority);
+    qc.invalidateQueries({ queryKey: ["rules-route"] });
+  };
+
+  const editRouteKeywords = async (rule: RouteRule, newKeywords: string) => {
+    await updateRouteRule(rule.id, {
+      thi_truong: rule.thi_truong,
+      tuyen_tour: rule.tuyen_tour,
+      keywords: newKeywords,
+    });
+    qc.invalidateQueries({ queryKey: ["rules-route"] });
   };
 
   const showErr = (e: unknown) =>
@@ -432,6 +446,8 @@ export default function RulesAdminPage() {
           onError={showErr}
           appendKeywordToRouteRule={appendKeywordToRouteRule}
           deleteRouteRule={deleteRouteRule}
+          toggleRoutePriority={toggleRoutePriority}
+          editRouteKeywords={editRouteKeywords}
           actionBtns={actionBtns}
         />
       )}

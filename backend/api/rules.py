@@ -69,6 +69,7 @@ class RouteRuleOut(BaseModel):
     tuyen_tour: str
     keywords: str
     active: bool
+    priority: bool = False
     sort_order: int
     model_config = {"from_attributes": True}
 
@@ -78,7 +79,12 @@ class RouteRuleIn(BaseModel):
     tuyen_tour: str = Field(max_length=256)
     keywords: str = Field(max_length=512, description="Các từ khóa cách nhau bởi dấu phẩy, TẤT CẢ phải có trong tên tour")
     active: bool = True
+    priority: bool = False
     sort_order: int = 0
+
+
+class RouteRulePriorityIn(BaseModel):
+    priority: bool
 
 
 class RouteRulesReplaceIn(BaseModel):
@@ -457,6 +463,24 @@ def update_route_rule(
         _try_push_route(db)
     kws = [k.strip().lower() for k in rule.keywords.split(",") if k.strip()]
     _auto_apply_tours(db, auto_apply, scope="route", keywords=kws or None)
+    return rule
+
+
+@router.patch("/route/{rule_id}/priority", response_model=RouteRuleOut)
+def set_route_rule_priority(
+    rule_id: int,
+    body: RouteRulePriorityIn,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Bật/tắt ưu tiên (priority) cho rule — không cần auto_apply vì không đổi keywords."""
+    rule = db.query(RouteKeywordRule).filter(RouteKeywordRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(404, "Không tìm thấy rule")
+    rule.priority = body.priority
+    db.commit()
+    db.refresh(rule)
+    _on_market_route_rules_changed(db)  # reload matcher với priority mới
     return rule
 
 

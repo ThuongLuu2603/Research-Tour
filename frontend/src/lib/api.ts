@@ -529,7 +529,7 @@ export interface MarketRule {
 }
 
 export interface RouteRule {
-  id: number; thi_truong: string; tuyen_tour: string; keywords: string; active: boolean; sort_order: number;
+  id: number; thi_truong: string; tuyen_tour: string; keywords: string; active: boolean; priority: boolean; sort_order: number;
 }
 
 export const listMarketRules = async (): Promise<MarketRule[]> => {
@@ -569,6 +569,11 @@ export const deleteRouteRule = async (id: number) => {
 
 export const updateRouteRule = async (id: number, body: { thi_truong: string; tuyen_tour: string; keywords: string }) => {
   const { data } = await api.patch(`/admin/rules/route/${id}`, body);
+  return data;
+};
+
+export const setRouteRulePriority = async (id: number, priority: boolean): Promise<RouteRule> => {
+  const { data } = await api.patch(`/admin/rules/route/${id}/priority`, { priority });
   return data;
 };
 
