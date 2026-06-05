@@ -192,10 +192,13 @@ def _queue_scrape(scraper_name: str, triggered_by: str = "scheduler") -> int | N
 def _run_main_sheet_sync() -> None:
     from database import SessionLocal
     from sheets_tour_sync import merge_sheet_source_to_db
+    from db_retry import run_with_retry
 
     db = SessionLocal()
     try:
-        result = merge_sheet_source_to_db(db, "Main", mirror_delete=True)
+        result = run_with_retry(
+            lambda: merge_sheet_source_to_db(db, "Main", mirror_delete=True), db=db, label="sched-main"
+        )
         logger.info(
             "Main sheet sync: inserted=%s updated=%s unchanged=%s",
             result.get("inserted"),
@@ -225,10 +228,11 @@ def _run_daily_snapshot() -> None:
 def _run_daily_sheet_sync() -> None:
     from database import SessionLocal
     from sheets_tour_sync import merge_all_sheets_to_db
+    from db_retry import run_with_retry
 
     db = SessionLocal()
     try:
-        result = merge_all_sheets_to_db(db)
+        result = run_with_retry(lambda: merge_all_sheets_to_db(db), db=db, label="sched-daily-sync")
         logger.info(
             "Daily sheet sync: updated=%s inserted=%s deleted=%s",
             result.get("total_updated"),

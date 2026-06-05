@@ -1,7 +1,16 @@
-"""Database-level locks for long jobs that write shared tables."""
+"""Khóa cấp DB cho job ghi bảng Tour — dùng lease lock (bảng job_lock).
+
+Lý do KHÔNG dùng pg_try_advisory_lock: CockroachDB không hỗ trợ thật (hàm trả về true kiểu no-op
+hoặc lỗi → degrade thành không khóa), nên 2 job ghi Tour cùng lúc → lỗi 40001 SerializationFailure
+và tranh chấp làm job chậm/treo. Lease lock là 1 DÒNG dữ liệu (job_lock) với UPSERT có điều kiện
+expires_at < now() — nguyên tử, xuyên process/instance, sống sót qua các commit theo batch, và tự
+hết hạn nếu job chết (chống treo).
+"""
 from __future__ import annotations
 
 import logging
+import threading
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -11,7 +20,26 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-TOURS_WRITE_LOCK = (874260, 1)
+TOURS_WRITE_LOCK_NAME = "tours_write"
+_LEASE_TTL_SEC = 300           # khóa hết hạn sau 5 phút nếu không gia hạn
+_HEARTBEAT_SEC = 60            # gia hạn mỗi 60s → chịu được ~5 lần renew lỗi liên tiếp trước khi hết hạn
+
+# UPSERT nguyên tử: giành/đoạt-lại khóa nếu chưa có hoặc đã hết hạn. RETURNING rỗng = đang bận.
+_ACQUIRE_SQL = text(
+    """
+    INSERT INTO job_lock (name, holder, expires_at)
+    VALUES (:name, :holder, now() + (:ttl * INTERVAL '1 second'))
+    ON CONFLICT (name) DO UPDATE
+      SET holder = excluded.holder, expires_at = excluded.expires_at
+      WHERE job_lock.expires_at < now()
+    RETURNING holder
+    """
+)
+_RENEW_SQL = text(
+    "UPDATE job_lock SET expires_at = now() + (:ttl * INTERVAL '1 second') "
+    "WHERE name = :name AND holder = :holder"
+)
+_RELEASE_SQL = text("DELETE FROM job_lock WHERE name = :name AND holder = :holder")
 
 
 def _is_postgres() -> bool:
@@ -19,95 +47,92 @@ def _is_postgres() -> bool:
     return url.startswith("postgresql") or url.startswith("cockroachdb")
 
 
-def _is_cockroach() -> bool:
-    url = settings.database_url
-    return "cockroachlabs.cloud" in url or url.startswith("cockroachdb")
+def _acquire(name: str, holder: str) -> bool:
+    from database import engine
+
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        row = conn.execute(_ACQUIRE_SQL, {"name": name, "holder": holder, "ttl": _LEASE_TTL_SEC}).first()
+    return bool(row) and row[0] == holder
 
 
-def _combined_key(key: tuple[int, int]) -> int:
-    """Gộp 2 khoá int32 thành 1 khoá int64 (CockroachDB chỉ hỗ trợ bản 1 tham số bigint)."""
-    return (int(key[0]) << 32) | (int(key[1]) & 0xFFFFFFFF)
+def _renew(name: str, holder: str) -> int:
+    """Gia hạn lease. Trả về số dòng cập nhật — 0 nghĩa là đã MẤT lease (bị job khác đoạt)."""
+    from database import engine
+
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        res = conn.execute(_RENEW_SQL, {"name": name, "holder": holder, "ttl": _LEASE_TTL_SEC})
+        return res.rowcount or 0
+
+
+def _release(name: str, holder: str) -> None:
+    from database import engine
+
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        conn.execute(_RELEASE_SQL, {"name": name, "holder": holder})
 
 
 @contextmanager
-def advisory_lock(db, key: tuple[int, int], owner: str) -> Iterator[bool]:
-    """Take a session-level advisory lock that holds for the WHOLE job.
+def _heartbeat(name: str, holder: str) -> Iterator[None]:
+    stop = threading.Event()
 
-    QUAN TRỌNG: advisory lock của Postgres/CockroachDB gắn với *connection*. Engine dùng
-    NullPool, nên mỗi ``db.commit()`` của job (commit theo batch) sẽ trả connection về pool →
-    NullPool đóng connection → lock bị tự nhả. Vì vậy lock PHẢI nằm trên một connection riêng
-    được giữ mở suốt job, KHÔNG dùng chung session ``db`` đang ghi dữ liệu.
+    def _loop() -> None:
+        while not stop.wait(_HEARTBEAT_SEC):
+            # Thử gia hạn, retry 1 lần nhanh nếu lỗi tạm thời (CockroachDB hay chập chờn).
+            for attempt in range(2):
+                try:
+                    rows = _renew(name, holder)
+                    if rows == 0:
+                        logger.error("job_lock MẤT lease name=%s holder=%s — có thể job khác đã đoạt", name, holder)
+                    break
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("job_lock renew lỗi name=%s (lần %d): %s", name, attempt + 1, e)
+                    if attempt == 0 and stop.wait(5):
+                        return
 
-    - Postgres/Supabase: pg_try_advisory_lock(int, int) (2 tham số).
-    - CockroachDB: chỉ hỗ trợ bản 1 tham số bigint → gộp 2 khoá thành 1.
-    - DB không hỗ trợ / lỗi mở connection: degrade an toàn (chạy tiếp không khoá) thay vì
-      để job báo lỗi cho người dùng.
+    t = threading.Thread(target=_loop, daemon=True, name=f"lock-hb-{name}")
+    t.start()
+    try:
+        yield
+    finally:
+        stop.set()
 
-    ``db`` được giữ trong chữ ký để tương thích caller nhưng không dùng cho việc khoá.
+
+@contextmanager
+def job_lock(name: str, owner: str) -> Iterator[bool]:
+    """Giành lease lock cho ``name``. yield True nếu giữ được khóa, False nếu job khác đang giữ.
+
+    DB không phải Postgres/Cockroach (vd SQLite local): bỏ qua khóa (yield True).
+    Lỗi hạ tầng khóa: degrade an toàn (yield True) để không chặn job vì sự cố khóa.
     """
     if not _is_postgres():
         yield True
         return
 
-    from database import engine
-
-    use_single = _is_cockroach()
-    conn = None
-    got = False
+    holder = uuid.uuid4().hex
     try:
-        # AUTOCOMMIT: không giữ transaction mở lâu (tránh CockroachDB hủy txn idle làm rớt lock).
-        conn = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
-        if use_single:
-            scalar = conn.execute(
-                text("select pg_try_advisory_lock(:k)"), {"k": _combined_key(key)}
-            ).scalar()
-        else:
-            scalar = conn.execute(
-                text("select pg_try_advisory_lock(:k1, :k2)"),
-                {"k1": int(key[0]), "k2": int(key[1])},
-            ).scalar()
-        got = bool(scalar)
-    except Exception as e:
-        logger.warning(
-            "DB advisory lock không khả dụng owner=%s key=%s: %s — chạy tiếp không khoá",
-            owner, key, e,
-        )
-        _safe_close(conn)
+        got = _acquire(name, holder)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("job_lock acquire lỗi name=%s owner=%s: %s — chạy tiếp không khóa", name, owner, e)
         yield True
         return
 
     if not got:
-        logger.warning("DB advisory lock busy: owner=%s key=%s", owner, key)
-        _safe_close(conn)
+        logger.warning("job_lock đang bận name=%s owner=%s", name, owner)
         yield False
         return
 
     try:
-        yield True
+        with _heartbeat(name, holder):
+            yield True
     finally:
         try:
-            if use_single:
-                conn.execute(text("select pg_advisory_unlock(:k)"), {"k": _combined_key(key)})
-            else:
-                conn.execute(
-                    text("select pg_advisory_unlock(:k1, :k2)"),
-                    {"k1": int(key[0]), "k2": int(key[1])},
-                )
-        except Exception as e:
-            logger.warning("DB advisory unlock failed owner=%s key=%s: %s", owner, key, e)
-        finally:
-            _safe_close(conn)
-
-
-def _safe_close(conn) -> None:
-    if conn is not None:
-        try:
-            conn.close()
-        except Exception:  # noqa: BLE001
-            pass
+            _release(name, holder)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("job_lock release lỗi name=%s: %s", name, e)
 
 
 @contextmanager
 def tours_write_lock(db, owner: str) -> Iterator[bool]:
-    with advisory_lock(db, TOURS_WRITE_LOCK, owner) as locked:
+    # ``db`` giữ trong chữ ký để tương thích caller; khóa nằm ở bảng job_lock riêng.
+    with job_lock(TOURS_WRITE_LOCK_NAME, owner) as locked:
         yield locked

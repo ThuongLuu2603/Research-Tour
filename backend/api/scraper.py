@@ -382,13 +382,19 @@ def _run_vietravel(db: Session, job_id: int, job: ScrapeJob):
     job.tours_total = len(df)
     db.commit()
 
-    result = merge_dataframe_to_db(
-        db,
-        df,
-        "Vietravel",
-        mirror_delete=True,
-        recompute_segments=True,
-        progress=_progress,
+    from db_retry import run_with_retry
+
+    result = run_with_retry(
+        lambda: merge_dataframe_to_db(
+            db,
+            df,
+            "Vietravel",
+            mirror_delete=True,
+            recompute_segments=True,
+            progress=_progress,
+        ),
+        db=db,
+        label="scrape-vietravel-merge",
     )
 
     _emit(job_id, 84, "Đã lưu DB — đang ghi Google Sheet…")

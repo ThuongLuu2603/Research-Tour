@@ -592,6 +592,8 @@ def _merge_dataframe_to_db_locked(
 
     phan_khuc_stats: dict | None = None
     if recompute_segments and affected_tour_ids:
+        if progress:
+            progress(83, "Đã lưu DB — đang tính lại phân khúc…")
         try:
             from pricing_segments import recompute_segments_for_sync
 
@@ -601,6 +603,8 @@ def _merge_dataframe_to_db_locked(
             phan_khuc_stats = {"error": str(e)}
 
     if inserted or updated or deleted:
+        if progress:
+            progress(86, "Đang làm mới cache so sánh…")
         _post_sync_cache(db)
 
     out = {

@@ -98,6 +98,7 @@ def init_db():
         WorkspaceMember,
         TourOverride,
         AppKv,
+        JobLock,
         RouteRuleToken,
     )
     Base.metadata.create_all(bind=engine)

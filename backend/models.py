@@ -315,3 +315,18 @@ class AppKv(Base):
     key: Mapped[str] = mapped_column(String(128), primary_key=True)
     value_json: Mapped[str] = mapped_column(Text, default="{}")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class JobLock(Base):
+    """Khóa thuê (lease) cấp DB cho job ghi bảng Tour — thay advisory lock (CockroachDB không hỗ trợ).
+
+    Một dòng = một khóa. Job giành khóa bằng UPSERT có điều kiện expires_at < now (nguyên tử),
+    gia hạn định kỳ (heartbeat), nhả khi xong. Khóa hết hạn tự nhường cho job khác (chống treo).
+    Hoạt động xuyên process/instance (Render chạy nhiều worker) vì chỉ là 1 dòng dữ liệu.
+    """
+    __tablename__ = "job_lock"
+
+    name: Mapped[str] = mapped_column(String(128), primary_key=True)
+    holder: Mapped[str] = mapped_column(String(64), default="")
+    # timezone=True → so sánh với now() (timestamptz) không bị lệch tz dù đổi session TimeZone.
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
