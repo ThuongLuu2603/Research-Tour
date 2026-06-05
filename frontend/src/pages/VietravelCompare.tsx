@@ -17,6 +17,7 @@ import {
 import { fmtVND, cn } from "@/lib/utils";
 import { COL, GLOSSARY } from "@/lib/glossary";
 import { InfoTip, PageTitle, ThTip } from "@/components/InfoTip";
+import { CountUp } from "@/components/CountUp";
 import {
   TrendingDown, TrendingUp, Minus, ExternalLink, Calendar, Building2, ArrowUpDown, Download,
 } from "lucide-react";
@@ -653,24 +654,24 @@ export default function VietravelCompare() {
 
       {/* KPIs */}
       {summary && (
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          <div className="kpi-card">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 stagger">
+          <div className="kpi-card hover-lift">
             <span className="text-xs text-gray-500 inline-flex items-center">
               {COL.sanPham} VTR
               <InfoTip text="Tour từ tab Vietravel (nguon=Vietravel)" />
             </span>
-            <p className="text-xl font-bold">{summary.vietravel_tab_tours ?? "—"}</p>
+            <p className="text-xl font-bold tabular-nums"><CountUp value={summary.vietravel_tab_tours} /></p>
           </div>
-          <div className="kpi-card"><span className="text-xs text-gray-500 inline-flex items-center">Nhóm so sánh<InfoTip text={GLOSSARY.segment} /></span><p className="text-xl font-bold">{summary.segments_with_vietravel}</p></div>
-          <div className="kpi-card"><span className="text-xs text-green-600">Rẻ hơn TT</span><p className="text-xl font-bold text-green-700">{summary.cheaper_count}</p></div>
-          <div className="kpi-card"><span className="text-xs text-red-600">Đắt hơn TT</span><p className="text-xl font-bold text-red-700">{summary.expensive_count}</p></div>
-          <div className="kpi-card"><span className="text-xs text-gray-500 inline-flex items-center">{COL.chenhPct}<InfoTip text={GLOSSARY.chenhGia} /></span><p className="text-xl font-bold">{summary.avg_gap_pct != null ? `${summary.avg_gap_pct}%` : "—"}</p></div>
-          <div className="kpi-card"><span className="text-xs text-gray-500 inline-flex items-center">{COL.tbDoanThang} VTR<InfoTip text={GLOSSARY.tbDoanThang} /></span><p className="text-xl font-bold">{summary.vtr_avg_departures_per_month ?? "—"}</p></div>
+          <div className="kpi-card hover-lift"><span className="text-xs text-gray-500 inline-flex items-center">Nhóm so sánh<InfoTip text={GLOSSARY.segment} /></span><p className="text-xl font-bold tabular-nums"><CountUp value={summary.segments_with_vietravel} /></p></div>
+          <div className="kpi-card hover-lift"><span className="text-xs text-green-600">Rẻ hơn TT</span><p className="text-xl font-bold text-green-700 tabular-nums"><CountUp value={summary.cheaper_count} /></p></div>
+          <div className="kpi-card hover-lift"><span className="text-xs text-red-600">Đắt hơn TT</span><p className="text-xl font-bold text-red-700 tabular-nums"><CountUp value={summary.expensive_count} /></p></div>
+          <div className="kpi-card hover-lift"><span className="text-xs text-gray-500 inline-flex items-center">{COL.chenhPct}<InfoTip text={GLOSSARY.chenhGia} /></span><p className="text-xl font-bold tabular-nums">{summary.avg_gap_pct != null ? <CountUp value={summary.avg_gap_pct} decimals={1} suffix="%" /> : "—"}</p></div>
+          <div className="kpi-card hover-lift"><span className="text-xs text-gray-500 inline-flex items-center">{COL.tbDoanThang} VTR<InfoTip text={GLOSSARY.tbDoanThang} /></span><p className="text-xl font-bold tabular-nums">{summary.vtr_avg_departures_per_month ?? "—"}</p></div>
         </div>
       )}
 
       {tab === "overview" && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 animate-fade-in">
           {segmentsError && !segmentsLoading && (
             <div className="lg:col-span-3 card p-4 border border-red-200 bg-red-50 text-sm text-red-800 flex flex-wrap items-center justify-between gap-2">
               <span>Không tải được dữ liệu biểu đồ — thử làm mới hoặc liên hệ admin.</span>
@@ -919,7 +920,7 @@ export default function VietravelCompare() {
       )}
 
       {tab === "price" && (
-        <div className="space-y-3">
+        <div className="space-y-3 animate-fade-in">
           <SegmentsErrorBanner />
           <div className="flex items-center justify-between flex-wrap gap-2">
             <h3 className="font-semibold text-sm inline-flex items-center">
@@ -1037,7 +1038,7 @@ export default function VietravelCompare() {
       )}
 
       {tab === "frequency" && (
-        <div className="space-y-4">
+        <div className="space-y-4 animate-fade-in">
           <SegmentsErrorBanner />
 
           {/* Layout 2 cột: Scatter (trái) + Bar gap % compact (phải) */}
@@ -1291,7 +1292,7 @@ export default function VietravelCompare() {
       )}
 
       {tab === "competitors" && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 animate-fade-in">
           <div className="card overflow-auto max-h-[520px]">
             <div className="px-4 py-3 border-b font-semibold text-sm sticky top-0 bg-white flex items-center gap-2">
               <Building2 size={16} /> Đối thủ cạnh tranh trực tiếp
@@ -1383,7 +1384,7 @@ export default function VietravelCompare() {
       )}
 
       {tab === "coverage" && (
-        <div className="space-y-4">
+        <div className="space-y-4 animate-fade-in">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="kpi-card"><span className="text-xs text-gray-500">Cả VTR & TT</span><p className="text-xl font-bold text-green-700">{coverage?.summary?.both ?? "—"}</p></div>
             <div className="kpi-card"><span className="text-xs text-gray-500">Chỉ VTR</span><p className="text-xl font-bold text-blue-700">{coverage?.summary?.vtr_only ?? "—"}</p></div>
@@ -1459,7 +1460,7 @@ export default function VietravelCompare() {
       )}
 
       {tab === "matcher" && (
-        <div className="grid lg:grid-cols-3 gap-4">
+        <div className="grid lg:grid-cols-3 gap-4 animate-fade-in">
           <div className="card overflow-auto max-h-[520px]">
             <div className="px-4 py-3 border-b font-semibold text-sm">Chọn tour Vietravel</div>
             <div className="divide-y">

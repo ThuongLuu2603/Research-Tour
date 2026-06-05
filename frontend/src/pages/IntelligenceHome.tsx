@@ -8,6 +8,7 @@ import { getHomeBrief, getDataQuality } from "@/lib/api";
 import { fmtVND } from "@/lib/utils";
 import { COL, GLOSSARY } from "@/lib/glossary";
 import { InfoTip, PageTitle } from "@/components/InfoTip";
+import { CountUp } from "@/components/CountUp";
 import {
   TrendingUp, TrendingDown, AlertTriangle, ArrowRight, Database,
   Scale, FileText, RefreshCw, Bell, CheckCircle,
@@ -108,37 +109,37 @@ export default function IntelligenceHome() {
       )}
 
       {/* KPI row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-        <div className="kpi-card border-l-4 border-l-primary-600">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 stagger">
+        <div className="kpi-card hover-lift border-l-4 border-l-primary-600">
           <span className="text-xs text-gray-500 inline-flex items-center">{COL.chenhPct}<InfoTip text={GLOSSARY.chenhGia} /></span>
-          <p className="text-2xl font-bold">{kpis?.avg_gap_pct != null ? `${kpis.avg_gap_pct}%` : "—"}</p>
+          <p className="text-2xl font-bold tabular-nums">{kpis?.avg_gap_pct != null ? <CountUp value={kpis.avg_gap_pct} decimals={1} suffix="%" /> : "—"}</p>
           <DeltaChip val={delta?.avg_gap_pct_delta as number | null} inverse />
         </div>
-        <div className="kpi-card">
+        <div className="kpi-card hover-lift">
           <span className="text-xs text-red-600">Đắt hơn TT</span>
-          <p className="text-2xl font-bold text-red-700">{kpis?.expensive_segments ?? "—"}</p>
+          <p className="text-2xl font-bold text-red-700 tabular-nums"><CountUp value={kpis?.expensive_segments} /></p>
           {delta?.expensive_delta != null && <DeltaChip val={delta.expensive_delta as number} inverse />}
         </div>
-        <div className="kpi-card">
+        <div className="kpi-card hover-lift">
           <span className="text-xs text-green-600">Rẻ hơn TT</span>
-          <p className="text-2xl font-bold text-green-700">{kpis?.cheaper_segments ?? "—"}</p>
+          <p className="text-2xl font-bold text-green-700 tabular-nums"><CountUp value={kpis?.cheaper_segments} /></p>
           {delta?.cheaper_delta != null && <DeltaChip val={delta.cheaper_delta as number} />}
         </div>
-        <div className="kpi-card">
+        <div className="kpi-card hover-lift">
           <span className="text-xs text-gray-500">Nhóm so sánh</span>
-          <p className="text-2xl font-bold">{kpis?.segment_count ?? "—"}</p>
+          <p className="text-2xl font-bold tabular-nums"><CountUp value={kpis?.segment_count} /></p>
         </div>
-        <div className="kpi-card">
+        <div className="kpi-card hover-lift">
           <span className="text-xs text-gray-500 inline-flex items-center">TS dẫn/kém<InfoTip text={GLOSSARY.tanSuat} /></span>
-          <p className="text-2xl font-bold">
-            <span className="text-emerald-700">{kpis?.freq_leading ?? 0}</span>
+          <p className="text-2xl font-bold tabular-nums">
+            <span className="text-emerald-700"><CountUp value={kpis?.freq_leading ?? 0} /></span>
             <span className="text-gray-300 mx-1">/</span>
-            <span className="text-amber-700">{kpis?.freq_lagging ?? 0}</span>
+            <span className="text-amber-700"><CountUp value={kpis?.freq_lagging ?? 0} /></span>
           </p>
         </div>
-        <div className="kpi-card">
+        <div className="kpi-card hover-lift">
           <span className="text-xs text-gray-500">Chưa phân loại</span>
-          <p className="text-2xl font-bold text-amber-700">{kpis?.unclassified_tours ?? "—"}</p>
+          <p className="text-2xl font-bold text-amber-700 tabular-nums"><CountUp value={kpis?.unclassified_tours} /></p>
           {delta?.unclassified_delta != null && <DeltaChip val={delta.unclassified_delta as number} inverse />}
         </div>
       </div>
