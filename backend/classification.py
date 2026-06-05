@@ -1473,7 +1473,9 @@ def _load_route_rules() -> tuple[tuple[int, str, str, tuple[str, ...]], ...]:
         def _row_key(r: RouteKeywordRule) -> tuple:
             kws = tuple(k.strip().lower() for k in r.keywords.split(",") if k.strip())
             mk = r.thi_truong.strip()
-            return (ranks.get(mk, 99999), -len(kws), r.sort_order, r.id)
+            # priority=True → 0 (kiểm tra TRƯỚC), priority=False → 1
+            prio = 0 if getattr(r, "priority", False) else 1
+            return (prio, ranks.get(mk, 99999), -len(kws), r.sort_order, r.id)
 
         sorted_rows = sorted(rows, key=_row_key)
         out = []

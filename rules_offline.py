@@ -9,6 +9,7 @@ Cách dùng:
   python rules_offline.py --list
   python rules_offline.py --list --market "Việt Nam"
   python rules_offline.py --list --market "Thái Lan" --route "Bangkok - Pattaya"
+  python rules_offline.py --list --only-priority      # chỉ xem rules ưu tiên
 
   # Preview: keyword này sẽ match bao nhiêu tour?
   python rules_offline.py --preview --keyword "koh samui"
@@ -18,20 +19,32 @@ Cách dùng:
   python rules_offline.py --add --market "Thái Lan" --route "Koh Samui" --keyword "koh samui"
   python rules_offline.py --add --market "Việt Nam" --route "Miền Trung - Tây Nguyên" --keyword "đà lạt, thác datanla"
 
-  # Thêm nhiều keywords cùng lúc (1 keyword/dòng từ file)
+  # Thêm rule ƯU TIÊN (kiểm tra trước tất cả, nếu khớp dừng ngay)
+  python rules_offline.py --add --market "Khác" --route "Không xác định" --keyword "tour học sinh" --priority --yes
+  python rules_offline.py --add --market "Khác" --route "Không xác định" --keyword "teambuilding" --priority --yes
+  python rules_offline.py --add --market "Khác" --route "Combo" --keyword "combo" --priority --yes
+
+  # Bật/tắt ưu tiên cho rule có sẵn
+  python rules_offline.py --set-priority --id 1234         # bật
+  python rules_offline.py --set-priority --id 1234 --off   # tắt
+
+  # Thêm nhiều rules từ file
   python rules_offline.py --import-file rules_to_add.txt
 
-  # Xóa rule
+  # Xóa / bật-tắt rule
   python rules_offline.py --delete --id 1234
-
-  # Bật/tắt rule
   python rules_offline.py --toggle --id 1234
 
-Lưu ý:
+Lưu ý về PRIORITY:
+  - Rule priority=True được kiểm tra TRƯỚC TẤT CẢ rule khác
+  - Nếu tour khớp 1 rule priority → dừng ngay, không check thêm
+  - Dùng cho: "tour học sinh", "teambuilding", "combo", "khuyến mãi đặc biệt"
+  - Trong file import, thêm dấu ! ở đầu tuyến: "Khác | !Không xác định | tour học sinh"
+
+Lưu ý chung:
   - Keywords trong 1 rule cách nhau bằng dấu phẩy = AND (tour phải có TẤT CẢ)
   - Matching dùng word-boundary: "my" KHÔNG match "myanmar"
-  - KHÔNG add tuyến chung chung trùng tên thị trường (vd: thị trường "Thái Lan" thì
-    không thêm tuyến "Thái Lan", chỉ được thêm "Bangkok - Pattaya", "Koh Samui" v.v.)
+  - KHÔNG add tuyến chung chung trùng tên thị trường
 """
 from __future__ import annotations
 
@@ -98,12 +111,28 @@ def connect(db_url: str = DATABASE_URL):
     return conn
 
 
+def ensure_priority_column(conn) -> None:
+    """Tự động thêm cột priority nếu chưa có (migration an toàn)."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name='route_keyword_rules' AND column_name='priority'
+        """)
+        if cur.fetchone() is None:
+            cur.execute(
+                "ALTER TABLE route_keyword_rules ADD COLUMN priority boolean NOT NULL DEFAULT false"
+            )
+            conn.commit()
+            print("  ✓ Đã thêm cột 'priority' vào route_keyword_rules")
+
+
 # ─── COMMANDS ──────────────────────────────────────────────────────────────────
 
-def cmd_list(conn, market: str = "", route: str = "") -> None:
+def cmd_list(conn, market: str = "", route: str = "", only_priority: bool = False) -> None:
     """Hiển thị danh sách rules, lọc theo market/route nếu có."""
     sql = """
-        SELECT id, thi_truong, tuyen_tour, keywords, active, sort_order
+        SELECT id, thi_truong, tuyen_tour, keywords, active,
+               COALESCE(priority, false) as priority, sort_order
         FROM route_keyword_rules
         WHERE 1=1
     """
@@ -114,7 +143,9 @@ def cmd_list(conn, market: str = "", route: str = "") -> None:
     if route:
         sql += " AND LOWER(tuyen_tour) LIKE LOWER(%s)"
         params.append(f"%{route}%")
-    sql += " ORDER BY thi_truong, tuyen_tour, sort_order, id"
+    if only_priority:
+        sql += " AND priority = true"
+    sql += " ORDER BY priority DESC, thi_truong, tuyen_tour, sort_order, id"
 
     with conn.cursor() as cur:
         cur.execute(sql, params)
@@ -124,18 +155,27 @@ def cmd_list(conn, market: str = "", route: str = "") -> None:
         print("  (Không có rule nào phù hợp)")
         return
 
-    print(f"\n  {'ID':>6}  {'Thị trường':<18} {'Tuyến tour':<30} {'Keywords':<40} {'Active':>6}  {'Sort':>5}")
-    print("  " + "─" * 105)
+    print(f"\n  {'ID':>6}  {'P':>1}  {'Thị trường':<18} {'Tuyến tour':<30} {'Keywords':<40} {'On':>2}  {'Sort':>5}")
+    print("  " + "─" * 108)
+    prev_prio = None
     prev_market = ""
-    for rid, tt, tuyen, kw, active, sort in rows:
-        if tt != prev_market:
-            if prev_market:
-                print()
-            prev_market = tt
+    for rid, tt, tuyen, kw, active, prio, sort in rows:
+        # Gạch phân cách khi chuyển từ priority → thường
+        if prev_prio is True and not prio:
+            print("  " + "╌" * 108)
+        if tt != prev_market and prev_market:
+            print()
+        prev_prio = prio
+        prev_market = tt
+        prio_mark = "★" if prio else " "
         status = "✓" if active else "✗"
         kw_disp = (kw or "")[:38]
-        print(f"  {rid:>6}  {(tt or ''):<18} {(tuyen or ''):<30} {kw_disp:<40} {status:>6}  {sort:>5}")
-    print(f"\n  Tổng: {len(rows)} rules")
+        print(f"  {rid:>6}  {prio_mark}  {(tt or ''):<18} {(tuyen or ''):<30} {kw_disp:<40} {status:>2}  {sort:>5}")
+
+    n_prio = sum(1 for r in rows if r[5])
+    print(f"\n  Tổng: {len(rows)} rules  (★ {n_prio} ưu tiên)")
+    if n_prio:
+        print("  Ghi chú: ★ = priority — luôn kiểm tra TRƯỚC, nếu khớp → dừng ngay")
 
 
 def cmd_preview(conn, keywords_str: str, market: str = "", route: str = "") -> None:
@@ -225,6 +265,7 @@ def cmd_add(
     route: str,
     keyword: str,
     sort_order: Optional[int] = None,
+    priority: bool = False,
     dry_run: bool = False,
     yes: bool = False,
 ) -> bool:
@@ -252,13 +293,15 @@ def cmd_add(
     print()
     cmd_preview(conn, keyword, market="", route="")
 
+    prio_label = " [★ PRIORITY]" if priority else ""
+
     if dry_run:
-        print(f"\n  [DRY-RUN] Sẽ thêm rule: {market} | {route} | {keyword!r}")
+        print(f"\n  [DRY-RUN] Sẽ thêm rule{prio_label}: {market} | {route} | {keyword!r}")
         return True
 
     # Xác nhận
     if not yes:
-        ans = input(f"\n  Thêm rule [{market}] | [{route}] | [{keyword!r}]? (y/N) ").strip().lower()
+        ans = input(f"\n  Thêm rule{prio_label} [{market}] | [{route}] | [{keyword!r}]? (y/N) ").strip().lower()
         if ans not in ("y", "yes"):
             print("  Hủy.")
             return False
@@ -268,13 +311,16 @@ def cmd_add(
 
     with conn.cursor() as cur:
         cur.execute(
-            """INSERT INTO route_keyword_rules (thi_truong, tuyen_tour, keywords, active, sort_order, updated_at)
-               VALUES (%s, %s, %s, true, %s, %s) RETURNING id""",
-            (market, route, keyword, so, now),
+            """INSERT INTO route_keyword_rules (thi_truong, tuyen_tour, keywords, active, priority, sort_order, updated_at)
+               VALUES (%s, %s, %s, true, %s, %s, %s) RETURNING id""",
+            (market, route, keyword, priority, so, now),
         )
         new_id = cur.fetchone()[0]
     conn.commit()
-    print(f"\n  ✓ Đã thêm rule id={new_id}: [{market}] | [{route}] | [{keyword!r}] (sort={so})")
+    prio_mark = " ★" if priority else ""
+    print(f"\n  ✓ Đã thêm rule id={new_id}{prio_mark}: [{market}] | [{route}] | [{keyword!r}] (sort={so})")
+    if priority:
+        print("    → Rule này sẽ được kiểm tra TRƯỚC TẤT CẢ, nếu khớp → dừng ngay")
     return True
 
 
@@ -300,6 +346,41 @@ def cmd_delete(conn, rule_id: int, yes: bool = False) -> bool:
         cur.execute("DELETE FROM route_keyword_rules WHERE id=%s", (rule_id,))
     conn.commit()
     print(f"  ✓ Đã xóa rule id={rule_id}")
+    return True
+
+
+def cmd_set_priority(conn, rule_id: int, off: bool = False) -> bool:
+    """Bật/tắt priority cho rule theo ID."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT COALESCE(priority,false), thi_truong, tuyen_tour, keywords FROM route_keyword_rules WHERE id=%s",
+            (rule_id,),
+        )
+        row = cur.fetchone()
+
+    if not row:
+        print(f"  ✗ Không tìm thấy rule id={rule_id}")
+        return False
+
+    cur_prio, tt, tuyen, kw = row
+    new_prio = False if off else True
+
+    if cur_prio == new_prio:
+        status = "ƯU TIÊN" if new_prio else "thường"
+        print(f"  ℹ  Rule id={rule_id} đã ở trạng thái {status} rồi, không thay đổi.")
+        return False
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE route_keyword_rules SET priority=%s, updated_at=%s WHERE id=%s",
+            (new_prio, datetime.now(timezone.utc).replace(tzinfo=None), rule_id),
+        )
+    conn.commit()
+
+    if new_prio:
+        print(f"  ★ Rule id={rule_id} [{tt} | {tuyen} | {kw!r}] → ƯU TIÊN (kiểm tra trước tất cả)")
+    else:
+        print(f"  ○ Rule id={rule_id} [{tt} | {tuyen} | {kw!r}] → thường (đã tắt ưu tiên)")
     return True
 
 
@@ -355,8 +436,11 @@ def cmd_import_file(
     parsed = []
     errors = []
     for i, line in enumerate(lines, 1):
+        # Bỏ comment inline (phần sau #)
+        if "#" in line:
+            line = line[:line.index("#")]
         line = line.strip()
-        if not line or line.startswith("#"):
+        if not line:
             continue
         # Thử phân tách bằng | hoặc ,
         if "|" in line:
@@ -371,7 +455,11 @@ def cmd_import_file(
         if not market or not route or not keyword:
             errors.append(f"  Dòng {i}: Có trường trống — {line!r}")
             continue
-        parsed.append((market, route, keyword))
+        # Dấu ! ở đầu tuyến = priority rule
+        is_priority = route.startswith("!")
+        if is_priority:
+            route = route[1:].strip()
+        parsed.append((market, route, keyword, is_priority))
 
     if errors:
         print("  Lỗi parse:")
@@ -389,7 +477,7 @@ def cmd_import_file(
     added = skipped_dup = skipped_generic = skipped_err = 0
     so_base = _get_max_sort_order(conn)
 
-    for market, route, keyword in parsed:
+    for market, route, keyword, is_priority in parsed:
         # Validate tuyến không chung chung
         if not _validate_route_not_generic(market, route):
             print(f"  ✗ SKIP (tuyến chung): {market} | {route} | {keyword!r}")
@@ -403,14 +491,9 @@ def cmd_import_file(
             continue
 
         so_base += 1
+        prio_mark = " ★" if is_priority else ""
         if dry_run:
-            # Preview nhanh (không in chi tiết)
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT COUNT(*) FROM tours WHERE nguon = ANY(%s)",
-                    (list(CANONICAL_NGUON),)
-                )
-            print(f"  + DRY: {market} | {route} | {keyword!r} (sort={so_base})")
+            print(f"  + DRY{prio_mark}: {market} | {route} | {keyword!r} (sort={so_base})")
             added += 1
             continue
 
@@ -418,13 +501,13 @@ def cmd_import_file(
             now = datetime.now(timezone.utc).replace(tzinfo=None)
             with conn.cursor() as cur:
                 cur.execute(
-                    """INSERT INTO route_keyword_rules (thi_truong, tuyen_tour, keywords, active, sort_order, updated_at)
-                       VALUES (%s, %s, %s, true, %s, %s) RETURNING id""",
-                    (market, route, keyword, so_base, now),
+                    """INSERT INTO route_keyword_rules (thi_truong, tuyen_tour, keywords, active, priority, sort_order, updated_at)
+                       VALUES (%s, %s, %s, true, %s, %s, %s) RETURNING id""",
+                    (market, route, keyword, is_priority, so_base, now),
                 )
                 new_id = cur.fetchone()[0]
             conn.commit()
-            print(f"  ✓ id={new_id:5d} | {market:<20} | {route:<30} | {keyword!r}")
+            print(f"  ✓{prio_mark} id={new_id:5d} | {market:<20} | {route:<30} | {keyword!r}")
             added += 1
         except Exception as e:
             conn.rollback()
@@ -473,15 +556,19 @@ Format file import (rules_to_add.txt):
     action.add_argument("--preview", action="store_true", help="Preview keyword match bao nhiêu tour")
     action.add_argument("--add", action="store_true", help="Thêm rule mới")
     action.add_argument("--delete", action="store_true", help="Xóa rule theo --id")
-    action.add_argument("--toggle", action="store_true", help="Bật/tắt rule theo --id")
+    action.add_argument("--toggle", action="store_true", help="Bật/tắt active theo --id")
+    action.add_argument("--set-priority", action="store_true", help="Bật/tắt ưu tiên theo --id (dùng --off để tắt)")
     action.add_argument("--import-file", metavar="FILE", help="Import nhiều rules từ file text")
 
     # Params
     parser.add_argument("--market", default="", help="Thị trường (vd: 'Thái Lan')")
     parser.add_argument("--route", default="", help="Tuyến tour (vd: 'Bangkok - Pattaya')")
     parser.add_argument("--keyword", default="", help="Keyword (dùng dấu phẩy cho AND: 'kw1, kw2')")
-    parser.add_argument("--id", type=int, help="ID của rule cần xóa/toggle")
+    parser.add_argument("--id", type=int, help="ID của rule cần xóa/toggle/set-priority")
     parser.add_argument("--sort", type=int, default=None, help="sort_order cho rule mới (mặc định: max+1)")
+    parser.add_argument("--priority", action="store_true", help="Đánh dấu rule mới là ưu tiên (★)")
+    parser.add_argument("--off", action="store_true", help="Dùng với --set-priority để TẮT ưu tiên")
+    parser.add_argument("--only-priority", action="store_true", help="Dùng với --list: chỉ hiện rules ưu tiên")
     parser.add_argument("--dry-run", action="store_true", help="Không ghi DB, chỉ xem kết quả")
     parser.add_argument("--yes", "-y", action="store_true", help="Bỏ qua bước xác nhận")
     parser.add_argument("--db-url", default=DATABASE_URL, help="Override DATABASE_URL")
@@ -494,9 +581,13 @@ Format file import (rules_to_add.txt):
         print(f"Lỗi kết nối DB: {e}")
         sys.exit(1)
 
+    # Auto-migrate: thêm cột priority nếu chưa có
+    ensure_priority_column(conn)
+
     try:
         if args.list:
-            cmd_list(conn, market=args.market, route=args.route)
+            cmd_list(conn, market=args.market, route=args.route,
+                     only_priority=args.only_priority)
 
         elif args.preview:
             if not args.keyword:
@@ -509,7 +600,8 @@ Format file import (rules_to_add.txt):
                 print("  --add cần: --market, --route, --keyword")
                 sys.exit(1)
             cmd_add(conn, args.market, args.route, args.keyword,
-                    sort_order=args.sort, dry_run=args.dry_run, yes=args.yes)
+                    sort_order=args.sort, priority=args.priority,
+                    dry_run=args.dry_run, yes=args.yes)
 
         elif args.delete:
             if not args.id:
@@ -522,6 +614,12 @@ Format file import (rules_to_add.txt):
                 print("  --toggle cần --id")
                 sys.exit(1)
             cmd_toggle(conn, args.id)
+
+        elif args.set_priority:
+            if not args.id:
+                print("  --set-priority cần --id")
+                sys.exit(1)
+            cmd_set_priority(conn, args.id, off=args.off)
 
         elif args.import_file:
             cmd_import_file(conn, args.import_file, dry_run=args.dry_run, yes=args.yes)
