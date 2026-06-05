@@ -1,0 +1,14 @@
+# Mẫu file import rules
+# Format: thị trường | tuyến tour | keyword(s)
+# Nhiều keywords cách nhau bằng dấu phẩy = AND
+
+# Thái Lan
+Thái Lan | Koh Samui        | koh samui
+Thái Lan | Koh Samui        | ko samui
+Thái Lan | Koh Chang        | koh chang
+Thái Lan | Chiang Mai - Chiang Rai | doi inthanon
+# Nhật Bản
+Nhật Bản | Kyushu           | kagoshima, ibusuki
+Nhật Bản | Okinawa          | miyakojima
+# Test validation: dòng này sẽ bị từ chối (tuyến = thị trường)
+Thái Lan | Thái Lan         | thai lan
