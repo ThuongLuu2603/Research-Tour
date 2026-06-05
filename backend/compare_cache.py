@@ -147,6 +147,8 @@ def load_tours(
             Tour.ma_tour,
             Tour.nguon,
             Tour.updated_at,
+            Tour.sheet_source,  # cần cho is_vietravel_tab() — thiếu gây lazy-load 8000+ lần
+            Tour.phan_khuc,     # cần cho segment stats
         ))
         .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
     )

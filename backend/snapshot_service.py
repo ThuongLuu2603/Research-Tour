@@ -37,6 +37,8 @@ def capture_daily_snapshot(db: Session, tours: list[Tour] | None = None) -> Dail
                     Tour.ma_tour,
                     Tour.nguon,
                     Tour.updated_at,
+                    Tour.sheet_source,  # cần cho is_vietravel_tab()
+                    Tour.flagged,       # cần cho flagged_tours count
                 ))
                 .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
             ).all()
