@@ -7,19 +7,31 @@ from config import settings
 
 _url = settings.database_url
 _is_sqlite = _url.startswith("sqlite")
-_is_postgres = _url.startswith("postgresql")
+_is_postgres = _url.startswith("postgresql") or _url.startswith("cockroachdb")
+_is_cockroach = "cockroachlabs.cloud" in _url or _url.startswith("cockroachdb")
+_use_supabase_pooler = "pooler.supabase.com" in _url
+
+# Nếu là CockroachDB thì đổi prefix sang cockroachdb+psycopg2 dialect
+if _is_cockroach and _url.startswith("postgresql"):
+    _url = "cockroachdb+psycopg2" + _url[len("postgresql"):]
 
 connect_args: dict = {}
 engine_kwargs: dict = {}
 
 if _is_sqlite:
     connect_args = {"check_same_thread": False}
+elif _is_cockroach:
+    # CockroachDB Serverless: dùng NullPool (serverless spin-up/down)
+    from sqlalchemy.pool import NullPool
+    connect_args = {"connect_timeout": 15}
+    engine_kwargs = {
+        "poolclass": NullPool,
+        "pool_pre_ping": True,
+    }
 elif _is_postgres:
     # Supabase Session pooler (~15 clients total). SQLAlchemy pool 5+10 = tràn khi deploy chồng instance.
-    _use_supabase_pooler = "pooler.supabase.com" in _url
     if _use_supabase_pooler:
         from sqlalchemy.pool import NullPool
-
         connect_args = {"connect_timeout": 15}
         engine_kwargs = {
             "poolclass": NullPool,
@@ -36,7 +48,10 @@ elif _is_postgres:
 engine = create_engine(_url, connect_args=connect_args, **engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-if _is_postgres and "supabase" in _url:
+if _is_cockroach:
+    import logging
+    logging.getLogger(__name__).info("CockroachDB Serverless + NullPool")
+elif _is_postgres and "supabase" in _url:
     import logging
 
     _db_log = logging.getLogger(__name__)
