@@ -20,7 +20,9 @@ _DEFAULT_STALE_HOURS = 2.0
 
 # 0% progress lâu = thread không chạy / chết ngay sau khi tạo job
 _ZERO_PROGRESS_STALE_MIN = 45
-_STUCK_PROGRESS_MIN = 25  # % > 0 nhưng không heartbeat — treo giữa scrape
+# % > 5 (kể cả 100% — đang ở bước hậu-commit) nhưng heartbeat đứng im = thread chết.
+# An toàn ở mức thấp vì mọi bước nặng (tsvector/phân khúc) giờ đều đập heartbeat liên tục.
+_STUCK_PROGRESS_MIN = 10
 
 
 def _mark_stale(job: ScrapeJob, now: datetime, *, reason: str) -> None:
@@ -53,11 +55,11 @@ def _is_stale_job(job: ScrapeJob, now: datetime) -> str | None:
     hb = job.heartbeat_at or job.started_at
     if (
         job.status == "running"
-        and 0 < pct < 100
+        and pct > 5  # kể cả 100% (bước hậu-commit: tsvector/phân khúc/cache)
         and job.heartbeat_at
         and (now - job.heartbeat_at) > timedelta(minutes=_STUCK_PROGRESS_MIN)
     ):
-        return "Dừng giữa chừng — không cập nhật tiến độ (site chậm hoặc phân loại treo)"
+        return "Dừng giữa chừng — không cập nhật tiến độ (thread chết: deploy/restart/DB)"
 
     limit_h = _STALE_HOURS.get(job.scraper_name, _DEFAULT_STALE_HOURS)
     if job.status == "pending":
@@ -82,6 +84,7 @@ def reconcile_stale_scrape_jobs(db: Session, *, now: datetime | None = None) -> 
         .filter(ScrapeJob.status.in_(("pending", "running")))
         .all()
     )
+    released_write_lock = False
     for job in rows:
         reason = _is_stale_job(job, now)
         if not reason:
@@ -89,6 +92,10 @@ def reconcile_stale_scrape_jobs(db: Session, *, now: datetime | None = None) -> 
         was = job.status
         _mark_stale(job, now, reason=reason)
         fixed.append(job.id)
+        # Job ghi DB (sync_main/vietravel) bị reap → thread chết có thể còn giữ khóa ghi tour.
+        # Nhả ngay để lần sync sau không bị «Đang có job khác ghi» (lease tự hết hạn sau 5' dù sao).
+        if job.scraper_name in ("sync_main", "vietravel"):
+            released_write_lock = True
         logger.warning(
             "Reconciled stale scrape job id=%s scraper=%s was=%s reason=%s",
             job.id,
@@ -99,4 +106,11 @@ def reconcile_stale_scrape_jobs(db: Session, *, now: datetime | None = None) -> 
 
     if fixed:
         db.commit()
+    if released_write_lock:
+        try:
+            from db_job_lock import force_release
+
+            force_release()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("force_release after reconcile failed: %s", e)
     return fixed

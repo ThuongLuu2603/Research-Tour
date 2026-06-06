@@ -166,6 +166,11 @@ def get_job(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    # Poll 1 job cũng tự dọn zombie (thread chết do deploy/restart, heartbeat đứng im) →
+    # UI không còn kẹt «running» mãi. Reaper chỉ đụng job heartbeat quá hạn nên job sống an toàn.
+    from scrape_job_utils import reconcile_stale_scrape_jobs
+
+    reconcile_stale_scrape_jobs(db)
     job = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job không tồn tại")

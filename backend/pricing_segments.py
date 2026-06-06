@@ -13,9 +13,20 @@ from models import Tour
 _PHAN_KHUC_BATCH = 300
 
 
-def _apply_phan_khuc_updates(db: Session, updates: list[dict], cancel_check=None) -> int:
+def _beat(progress, msg: str) -> None:
+    """Gửi nhịp tiến độ (cập nhật heartbeat job) — bỏ qua nếu lỗi."""
+    if not progress:
+        return
+    try:
+        progress(msg)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _apply_phan_khuc_updates(db: Session, updates: list[dict], cancel_check=None, progress=None) -> int:
     """updates = [{'b_id': id, 'b_pk': label}, ...] → UPDATE theo lô nhỏ, commit + retry từng lô.
-    Kiểm tra cancel giữa mỗi lô → dừng sớm khi người dùng bấm Dừng."""
+    Kiểm tra cancel giữa mỗi lô → dừng sớm khi người dùng bấm Dừng.
+    Gọi ``progress(msg)`` mỗi lô để giữ heartbeat (job không bị coi là treo)."""
     if not updates:
         return 0
     from db_retry import run_with_retry
@@ -26,16 +37,18 @@ def _apply_phan_khuc_updates(db: Session, updates: list[dict], cancel_check=None
         .where(Tour.id == bindparam("b_id"))
         .values(phan_khuc=bindparam("b_pk"))
     )
-    for i in range(0, len(updates), _PHAN_KHUC_BATCH):
+    total = len(updates)
+    for i in range(0, total, _PHAN_KHUC_BATCH):
         raise_if_cancelled(cancel_check)
         batch = updates[i:i + _PHAN_KHUC_BATCH]
+        _beat(progress, f"Đang ghi phân khúc giá: {min(i + _PHAN_KHUC_BATCH, total):,}/{total:,}")
 
         def _do(b=batch):
             db.execute(stmt, b)
             db.commit()
 
         run_with_retry(_do, db=db, label="phan-khuc-batch")
-    return len(updates)
+    return total
 
 # Ngưỡng so với TB/ngày thị trường (cùng nhóm segment)
 LUXURY_ABOVE_MARKET = 1.30
@@ -114,10 +127,11 @@ def _phan_khuc_absolute_fallback(gia: float | None) -> str:
     return "Luxury"
 
 
-def recompute_all_phan_khuc(db: Session) -> dict:
+def recompute_all_phan_khuc(db: Session, cancel_check=None, progress=None) -> dict:
     from sqlalchemy.orm import load_only
     from data_sources import DB_CANONICAL_NGUON
 
+    _beat(progress, "Đang tính phân khúc giá (toàn bộ)…")
     _PRICE_COLS = (Tour.id, Tour.thi_truong, Tour.tuyen_tour, Tour.diem_kh,
                    Tour.gia, Tour.thoi_gian, Tour.so_ngay, Tour.phan_khuc, Tour.nguon)
     tours = (
@@ -133,13 +147,14 @@ def recompute_all_phan_khuc(db: Session) -> dict:
         label = phan_khuc_relative_for_tour(t, route_avg)
         if t.phan_khuc != label:
             updates.append({"b_id": t.id, "b_pk": label[:64]})
-    updated = _apply_phan_khuc_updates(db, updates)
+    updated = _apply_phan_khuc_updates(db, updates, cancel_check, progress)
     return {"updated": updated, "route_buckets": len(route_avg)}
 
 
-def recompute_phan_khuc_for_tour_ids(db: Session, tour_ids: list[int], cancel_check=None) -> dict:
+def recompute_phan_khuc_for_tour_ids(db: Session, tour_ids: list[int], cancel_check=None, progress=None) -> dict:
     """Tính lại phân khúc cho danh sách tour (vd. sau scrape chỉ tour mới/cập nhật)."""
     from data_sources import DB_CANONICAL_NGUON
+    from job_cancel import raise_if_cancelled
 
     ids = [int(i) for i in tour_ids if i]
     if not ids:
@@ -148,6 +163,7 @@ def recompute_phan_khuc_for_tour_ids(db: Session, tour_ids: list[int], cancel_ch
     from sqlalchemy.orm import load_only
     _PRICE_COLS = (Tour.id, Tour.thi_truong, Tour.tuyen_tour, Tour.diem_kh,
                    Tour.gia, Tour.thoi_gian, Tour.so_ngay, Tour.phan_khuc, Tour.nguon)
+    _beat(progress, "Đang tính phân khúc giá (tour thay đổi)…")
     all_priced = (
         db.query(Tour)
         .options(load_only(*_PRICE_COLS))
@@ -156,20 +172,39 @@ def recompute_phan_khuc_for_tour_ids(db: Session, tour_ids: list[int], cancel_ch
         .all()
     )
     route_avg = build_route_market_avg_price_day(all_priced)
-    tours = db.query(Tour).options(load_only(*_PRICE_COLS)).filter(Tour.id.in_(ids)).all()
+    # Đọc tour mục tiêu theo LÔ — tránh IN (8000+ id) khổng lồ làm CockroachDB treo/chậm.
+    tours = []
+    for i in range(0, len(ids), 1000):
+        raise_if_cancelled(cancel_check)
+        chunk = ids[i:i + 1000]
+        tours.extend(
+            db.query(Tour).options(load_only(*_PRICE_COLS)).filter(Tour.id.in_(chunk)).all()
+        )
     updates = []
     for t in tours:
         label = phan_khuc_relative_for_tour(t, route_avg)
         if t.phan_khuc != label:
             updates.append({"b_id": t.id, "b_pk": label[:64]})
-    updated = _apply_phan_khuc_updates(db, updates, cancel_check)
+    updated = _apply_phan_khuc_updates(db, updates, cancel_check, progress)
     return {"updated": updated, "tours": len(tours), "route_buckets": len(route_avg)}
 
 
-def recompute_segments_for_sync(db: Session, affected_tour_ids: set[int] | list[int], cancel_check=None) -> dict:
-    """Phân khúc cho tour mới (thiếu nhãn) + tour vừa thay đổi — không quét toàn DB."""
-    missing = recompute_missing_phan_khuc(db, cancel_check)
-    targeted = recompute_phan_khuc_for_tour_ids(db, list(affected_tour_ids), cancel_check)
+def recompute_segments_for_sync(
+    db: Session, affected_tour_ids: set[int] | list[int], cancel_check=None, progress=None
+) -> dict:
+    """Phân khúc cho tour mới (thiếu nhãn) + tour vừa thay đổi.
+    Sync LỚN (đổi gần hết) → quét toàn bộ 1 lần (rẻ hơn missing + IN khổng lồ, tránh treo)."""
+    affected = list(affected_tour_ids)
+    if len(affected) > 1500:
+        res = recompute_all_phan_khuc(db, cancel_check, progress)
+        return {
+            "missing_filled": 0,
+            "targeted_updated": res.get("updated", 0),
+            "targeted_tours": len(affected),
+            "route_buckets": res.get("route_buckets", 0),
+        }
+    missing = recompute_missing_phan_khuc(db, cancel_check, progress)
+    targeted = recompute_phan_khuc_for_tour_ids(db, affected, cancel_check, progress)
     return {
         "missing_filled": missing,
         "targeted_updated": targeted.get("updated", 0),
@@ -178,7 +213,7 @@ def recompute_segments_for_sync(db: Session, affected_tour_ids: set[int] | list[
     }
 
 
-def recompute_missing_phan_khuc(db: Session, cancel_check=None) -> int:
+def recompute_missing_phan_khuc(db: Session, cancel_check=None, progress=None) -> int:
     """Tính phân khúc cho tour có giá nhưng chưa có nhãn (vd. Vietravel mới scrape)."""
     from data_sources import DB_CANONICAL_NGUON
     from models import Tour
@@ -187,6 +222,7 @@ def recompute_missing_phan_khuc(db: Session, cancel_check=None) -> int:
     from sqlalchemy.orm import load_only
     _PRICE_COLS = (Tour.id, Tour.thi_truong, Tour.tuyen_tour, Tour.diem_kh,
                    Tour.gia, Tour.thoi_gian, Tour.so_ngay, Tour.phan_khuc, Tour.nguon)
+    _beat(progress, "Đang tính phân khúc giá (tour thiếu nhãn)…")
     tours = (
         db.query(Tour)
         .options(load_only(*_PRICE_COLS))
@@ -210,4 +246,4 @@ def recompute_missing_phan_khuc(db: Session, cancel_check=None) -> int:
         label = phan_khuc_relative_for_tour(t, route_avg)
         if label and t.phan_khuc != label:
             updates.append({"b_id": t.id, "b_pk": label[:64]})
-    return _apply_phan_khuc_updates(db, updates, cancel_check)
+    return _apply_phan_khuc_updates(db, updates, cancel_check, progress)

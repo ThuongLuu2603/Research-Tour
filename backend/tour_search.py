@@ -77,12 +77,13 @@ def update_tour_derived_fields(tour: Tour) -> None:
     tour.segment_key = compute_segment_key(tour)
 
 
-def sync_search_tsv_for_ids(tour_ids: list[int], cancel_check=None) -> None:
+def sync_search_tsv_for_ids(tour_ids: list[int], cancel_check=None, progress=None) -> None:
     """PostgreSQL: tsvector từ bản đã bỏ dấu (tìm không dấu vẫn ra).
 
     Ghi theo LÔ NHỎ — mỗi lô 1 transaction riêng + retry. KHÔNG gói tất cả vào 1 transaction
     (8000+ dòng) vì CockroachDB sẽ treo/hủy (ABORT_SPAN) + tranh chấp với job CREATE INDEX.
     Best-effort: search_tsv lỗi không làm hỏng cả sync.
+    Gọi ``progress(msg)`` mỗi lô để giữ heartbeat (job không bị coi là treo).
     """
     if not tour_ids or not is_postgres():
         return
@@ -92,8 +93,14 @@ def sync_search_tsv_for_ids(tour_ids: list[int], cancel_check=None) -> None:
     from db_retry import run_with_retry
     from job_cancel import raise_if_cancelled
 
-    for i in range(0, len(ids), 200):
+    total = len(ids)
+    for i in range(0, total, 200):
         raise_if_cancelled(cancel_check)
+        if progress:
+            try:
+                progress(f"Đang cập nhật chỉ mục tìm kiếm: {min(i + 200, total):,}/{total:,}")
+            except Exception:  # noqa: BLE001
+                pass
         chunk = ids[i : i + 200]
         placeholders = ", ".join(str(int(x)) for x in chunk)
         sql = text(
@@ -118,8 +125,14 @@ def sync_search_tsv_for_ids(tour_ids: list[int], cancel_check=None) -> None:
 
 
 def after_tours_persisted(db: Session, tour_ids: list[int], *, deleted: bool = False) -> None:
-    """Sau ghi tour — cập nhật GIN index (tsvector)."""
-    _ = db, deleted
+    """Sau ghi tour — cập nhật GIN index (tsvector).
+
+    KHÔNG chạy khi xóa: hàng đã xóa thì không có tsvector để cập nhật, và việc UPDATE trên
+    connection RIÊNG vào các hàng vừa bị xóa (chưa commit) ở session chính dễ gây deadlock.
+    """
+    _ = db
+    if deleted:
+        return
     if tour_ids:
         sync_search_tsv_for_ids(tour_ids)
 

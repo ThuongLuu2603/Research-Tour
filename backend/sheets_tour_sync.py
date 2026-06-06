@@ -474,16 +474,21 @@ def _prune_stale_tours_for_source(db, nguon: str, synced_tour_ids: set[int]) -> 
         )
         return 0
 
+    # Lấy hết id của nguồn rồi trừ tập đã sync TRONG PYTHON — tránh NOT IN (8000+ literal)
+    # (CockroachDB chạy query đó rất chậm/treo). Chỉ tải cột id (nhẹ).
+    synced = {int(i) for i in synced_tour_ids}
     stale_ids = [
         tid
-        for (tid,) in db.query(Tour.id)
-        .filter(Tour.nguon == nguon, ~Tour.id.in_(synced_tour_ids))
-        .all()
+        for (tid,) in db.query(Tour.id).filter(Tour.nguon == nguon).all()
+        if tid not in synced
     ]
     if not stale_ids:
         return 0
 
-    deleted = _delete_tour_ids(db, stale_ids)
+    deleted = 0
+    for i in range(0, len(stale_ids), 500):  # xóa theo lô — IN list bị chặn nhỏ
+        deleted += _delete_tour_ids(db, stale_ids[i:i + 500])
+        db.commit()
     logger.info("Mirror prune %s: removed %s stale tours", nguon, deleted)
     return deleted
 
@@ -608,12 +613,21 @@ def _merge_dataframe_to_db_locked(
             db.commit()
             raise_if_cancelled(cancel_check)
 
+    # Nhịp tiến độ hậu-commit — giữ heartbeat job tươi (không bị coi là treo).
+    def _beat(msg: str) -> None:
+        if progress:
+            try:
+                progress(83, msg)
+            except Exception:  # noqa: BLE001
+                pass
+
     db.commit()
     raise_if_cancelled(cancel_check)
-    _flush_search_after_commit(db, synced_tour_ids, cancel_check)
+    _flush_search_after_commit(db, synced_tour_ids, cancel_check, _beat)
 
     deleted = 0
     if mirror_delete:
+        _beat("Đang dọn tour không còn nguồn…")
         deleted = _prune_stale_tours_for_source(db, nguon, synced_tour_ids)
         if deleted:
             db.commit()
@@ -626,7 +640,7 @@ def _merge_dataframe_to_db_locked(
         try:
             from pricing_segments import recompute_segments_for_sync
 
-            phan_khuc_stats = recompute_segments_for_sync(db, affected_tour_ids, cancel_check)
+            phan_khuc_stats = recompute_segments_for_sync(db, affected_tour_ids, cancel_check, _beat)
         except JobCancelled:
             raise
         except Exception as e:
@@ -851,19 +865,30 @@ def _merge_sheet_source_to_db_locked(
                 f"Đang đồng bộ {nguon}: {row_num}/{total_rows} (matcher + ghi DB)…",
             )
 
+    # Nhịp tiến độ cho các bước HẬU-COMMIT (tsvector, prune, cache, phân khúc) — giữ heartbeat
+    # job tươi để KHÔNG bị coi là treo, và để người dùng thấy tiến độ thật (không đứng im ở 100%).
+    def _beat(msg: str) -> None:
+        if progress_cb and total_rows:
+            try:
+                progress_cb(total_rows, total_rows, f"{msg} ({nguon})")
+            except Exception:  # noqa: BLE001
+                pass
+
     if progress_cb and total_rows:
         progress_cb(total_rows, total_rows, f"Đang commit & phân khúc giá ({nguon})…")
     db.commit()
     raise_if_cancelled(cancel_check)  # toàn bộ tour đã commit → dừng an toàn trước các bước nặng
-    _flush_search_after_commit(db, synced_tour_ids, cancel_check)
+    _flush_search_after_commit(db, synced_tour_ids, cancel_check, _beat)
 
     deleted = 0
     if mirror_delete:
+        _beat("Đang dọn tour không còn trên Sheet")
         deleted = _prune_stale_tours_for_source(db, nguon, synced_tour_ids)
         if deleted:
             db.commit()
 
     if inserted or updated or deleted:
+        _beat("Đang cập nhật cache so sánh")
         _post_sync_cache(db)
 
     phan_khuc_stats: dict | None = None
@@ -872,7 +897,7 @@ def _merge_sheet_source_to_db_locked(
         try:
             from pricing_segments import recompute_segments_for_sync
 
-            phan_khuc_stats = recompute_segments_for_sync(db, affected_tour_ids, cancel_check)
+            phan_khuc_stats = recompute_segments_for_sync(db, affected_tour_ids, cancel_check, _beat)
         except JobCancelled:
             raise  # cancel phải nổi lên để dừng cả job, không nuốt thành "recompute lỗi"
         except Exception as e:
@@ -909,14 +934,14 @@ def _merge_sheet_source_to_db_locked(
     return out
 
 
-def _flush_search_after_commit(db, tour_ids: set[int] | list[int], cancel_check=None) -> None:
+def _flush_search_after_commit(db, tour_ids: set[int] | list[int], cancel_check=None, progress=None) -> None:
     """Sau commit — cập nhật tsvector GIN (PostgreSQL)."""
     from tour_search import sync_search_tsv_for_ids
 
     _ = db
     ids = [int(i) for i in tour_ids if i]
     if ids:
-        sync_search_tsv_for_ids(ids, cancel_check)
+        sync_search_tsv_for_ids(ids, cancel_check, progress)
 
 
 def _post_sync_cache(db) -> None:
