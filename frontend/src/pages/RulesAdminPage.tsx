@@ -158,8 +158,17 @@ export default function RulesAdminPage() {
   };
 
   const toggleRoutePriority = async (rule: RouteRule) => {
-    await setRouteRulePriority(rule.id, !rule.priority);
-    qc.invalidateQueries({ queryKey: ["rules-route"] });
+    try {
+      await setRouteRulePriority(rule.id, !rule.priority);
+    } catch (e) {
+      // id cũ (danh sách rule đã thay đổi) → làm mới rồi báo người dùng thử lại.
+      if ((e as { response?: { status?: number } })?.response?.status === 404) {
+        await qc.invalidateQueries({ queryKey: ["route-rules"] });
+        throw new Error("Danh sách rule vừa thay đổi — đã làm mới, vui lòng bấm lại.");
+      }
+      throw e;
+    }
+    qc.invalidateQueries({ queryKey: ["route-rules"] });
   };
 
   const editRouteKeywords = async (rule: RouteRule, newKeywords: string) => {
@@ -168,7 +177,7 @@ export default function RulesAdminPage() {
       tuyen_tour: rule.tuyen_tour,
       keywords: newKeywords,
     });
-    qc.invalidateQueries({ queryKey: ["rules-route"] });
+    qc.invalidateQueries({ queryKey: ["route-rules"] });
   };
 
   const showErr = (e: unknown) =>

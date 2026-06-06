@@ -8,9 +8,11 @@ const KEY = "rq-cache-v1";
 const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h — quá cũ thì bỏ, tránh hiển thị số liệu lạc hậu
 const MAX_BYTES = 3_000_000; // ~3MB, chừa chỗ cho localStorage (giới hạn ~5MB)
 
-// Không lưu ra localStorage các query gắn với người dùng/quyền admin (tránh rò rỉ trên máy dùng chung).
-// Dữ liệu còn lại là số liệu thị trường chung cho mọi người dùng đã đăng nhập.
-const SENSITIVE_KEY_RE = /admin|workspace|member|user/i;
+// Không lưu ra localStorage các query:
+// - gắn với người dùng/quyền admin (tránh rò rỉ trên máy dùng chung): admin/workspace/member/user
+// - danh sách rule (route/company/... ) vì id có thể đổi sau import/replace-all → cache cũ giữ id chết
+//   gây lỗi "không tìm thấy rule" khi thao tác. Các trang quản trị này tải lại nhanh, không cần persist.
+const SENSITIVE_KEY_RE = /admin|workspace|member|user|rule/i;
 
 function isSensitiveKey(queryKey: readonly unknown[]): boolean {
   return queryKey.some((part) => typeof part === "string" && SENSITIVE_KEY_RE.test(part));
