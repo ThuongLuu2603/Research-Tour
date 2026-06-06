@@ -79,24 +79,50 @@ def tour_price_per_day(gia: float | None, thoi_gian: str, so_ngay: float | None)
     return pd
 
 
+def _departure_weight_for_tour(t: Tour) -> float:
+    """Số ngày khởi hành (đoàn) của tour = trọng số. Khớp So Sánh VTR (_departure_weight):
+    ưu tiên số ngày KH cụ thể, nếu không có thì ước lượng/tháng, tối thiểu 1."""
+    try:
+        from departure_parser import parse_departure_frequency
+
+        info = parse_departure_frequency(t.lich_kh or "")
+        explicit = info.get("explicit_dates") or 0
+        if explicit > 0:
+            return float(explicit)
+        return max(float(info.get("monthly_estimate") or 1.0), 1.0)
+    except Exception:  # noqa: BLE001
+        return 1.0
+
+
 def build_route_market_avg_price_day(tours: list[Tour]) -> dict[str, float]:
-    """TB/ngày TT = TB giá/ngày tour đối thủ (không tab Vietravel) trong cùng segment."""
+    """Giá TB/ngày TT của tuyến = Σ(giá tour × số ngày KH) / Σ(số ngày tour × số ngày KH).
+
+    Đúng công thức So Sánh VTR (_route_avg_price_per_day): TRỌNG SỐ theo số đoàn khởi hành,
+    KHÔNG phải trung bình cộng đơn giản. Chỉ tính tour đối thủ (không tab Vietravel)."""
+    from classification import resolve_duration_days
     from tour_sources import is_vietravel_tab
 
-    sums: dict[str, float] = defaultdict(float)
-    counts: dict[str, int] = defaultdict(int)
+    num: dict[str, float] = defaultdict(float)  # Σ(giá × đoàn)
+    den: dict[str, float] = defaultdict(float)  # Σ(ngày × đoàn)
     for t in tours:
         if is_vietravel_tab(t):
             continue
-        pd = tour_price_per_day(t.gia, t.thoi_gian, t.so_ngay)
-        if pd is None:
+        days, _ = resolve_duration_days(t.thoi_gian or "", t.so_ngay)
+        if not t.gia or not days or days <= 0:
             continue
         key = bucket_key_for_tour(t)
         if not key:
             continue
-        sums[key] += pd
-        counts[key] += 1
-    return {k: round(sums[k] / counts[k], 0) for k in sums if counts[k] > 0}
+        w = _departure_weight_for_tour(t)
+        num[key] += float(t.gia) * w
+        den[key] += float(days) * w
+    out: dict[str, float] = {}
+    for k in num:
+        if den[k] > 0:
+            avg = round(num[k] / den[k], 0)
+            if 0 < avg <= 50_000_000:
+                out[k] = avg
+    return out
 
 
 def phan_khuc_relative_for_tour(t: Tour, route_avg: dict[str, float]) -> str:
