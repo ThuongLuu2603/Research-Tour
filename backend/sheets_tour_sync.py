@@ -610,7 +610,7 @@ def _merge_dataframe_to_db_locked(
 
     db.commit()
     raise_if_cancelled(cancel_check)
-    _flush_search_after_commit(db, synced_tour_ids)
+    _flush_search_after_commit(db, synced_tour_ids, cancel_check)
 
     deleted = 0
     if mirror_delete:
@@ -855,7 +855,7 @@ def _merge_sheet_source_to_db_locked(
         progress_cb(total_rows, total_rows, f"Đang commit & phân khúc giá ({nguon})…")
     db.commit()
     raise_if_cancelled(cancel_check)  # toàn bộ tour đã commit → dừng an toàn trước các bước nặng
-    _flush_search_after_commit(db, synced_tour_ids)
+    _flush_search_after_commit(db, synced_tour_ids, cancel_check)
 
     deleted = 0
     if mirror_delete:
@@ -909,14 +909,14 @@ def _merge_sheet_source_to_db_locked(
     return out
 
 
-def _flush_search_after_commit(db, tour_ids: set[int] | list[int]) -> None:
+def _flush_search_after_commit(db, tour_ids: set[int] | list[int], cancel_check=None) -> None:
     """Sau commit — cập nhật tsvector GIN (PostgreSQL)."""
     from tour_search import sync_search_tsv_for_ids
 
     _ = db
     ids = [int(i) for i in tour_ids if i]
     if ids:
-        sync_search_tsv_for_ids(ids)
+        sync_search_tsv_for_ids(ids, cancel_check)
 
 
 def _post_sync_cache(db) -> None:

@@ -77,32 +77,44 @@ def update_tour_derived_fields(tour: Tour) -> None:
     tour.segment_key = compute_segment_key(tour)
 
 
-def sync_search_tsv_for_ids(tour_ids: list[int]) -> None:
-    """PostgreSQL: tsvector từ bản đã bỏ dấu (tìm không dấu vẫn ra)."""
+def sync_search_tsv_for_ids(tour_ids: list[int], cancel_check=None) -> None:
+    """PostgreSQL: tsvector từ bản đã bỏ dấu (tìm không dấu vẫn ra).
+
+    Ghi theo LÔ NHỎ — mỗi lô 1 transaction riêng + retry. KHÔNG gói tất cả vào 1 transaction
+    (8000+ dòng) vì CockroachDB sẽ treo/hủy (ABORT_SPAN) + tranh chấp với job CREATE INDEX.
+    Best-effort: search_tsv lỗi không làm hỏng cả sync.
+    """
     if not tour_ids or not is_postgres():
         return
     ids = list({int(i) for i in tour_ids if i})
     if not ids:
         return
-    try:
-        with engine.begin() as conn:
-            for i in range(0, len(ids), 200):
-                chunk = ids[i : i + 200]
-                placeholders = ", ".join(str(int(x)) for x in chunk)
-                conn.execute(
-                    text(
-                        f"""
-                        UPDATE tours
-                        SET search_tsv = to_tsvector(
-                            'simple',
-                            coalesce(nullif(search_text_folded, ''), search_text, '')
-                        )
-                        WHERE id IN ({placeholders})
-                        """
-                    )
-                )
-    except Exception as e:
-        logger.warning("sync_search_tsv failed: %s", e)
+    from db_retry import run_with_retry
+    from job_cancel import raise_if_cancelled
+
+    for i in range(0, len(ids), 200):
+        raise_if_cancelled(cancel_check)
+        chunk = ids[i : i + 200]
+        placeholders = ", ".join(str(int(x)) for x in chunk)
+        sql = text(
+            f"""
+            UPDATE tours
+            SET search_tsv = to_tsvector(
+                'simple',
+                coalesce(nullif(search_text_folded, ''), search_text, '')
+            )
+            WHERE id IN ({placeholders})
+            """
+        )
+
+        def _do(s=sql):
+            with engine.begin() as conn:  # transaction RIÊNG cho từng lô
+                conn.execute(s)
+
+        try:
+            run_with_retry(_do, label="search-tsv-batch")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("sync_search_tsv chunk failed (bỏ qua): %s", e)
 
 
 def after_tours_persisted(db: Session, tour_ids: list[int], *, deleted: bool = False) -> None:

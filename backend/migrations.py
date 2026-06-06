@@ -159,9 +159,23 @@ def _migrate_tour_search_columns():
                 logger.warning("search_tsv column skipped: %s", e)
 
 
+_SEARCH_IDX_FLAG = "search_indexes_v2"
+
+
 def _migrate_search_indexes():
     if not _is_postgres():
         return
+    # Chạy 1 LẦN — tránh re-issue job CREATE INDEX (schema change) mỗi lần deploy, gây pileup
+    # + tranh chấp với sync trên bảng tours. (Bump _SEARCH_IDX_FLAG khi thêm index mới.)
+    try:
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            done = conn.execute(
+                text("SELECT 1 FROM app_kv WHERE key = :k"), {"k": _SEARCH_IDX_FLAG}
+            ).first()
+        if done:
+            return
+    except Exception:
+        pass
     stmts = [
         """
         CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tours_search_gin
@@ -224,6 +238,18 @@ def _migrate_search_indexes():
                 conn.execute(text(stmt))
         except Exception as e:
             logger.warning("index migration skipped: %s", e)
+    # Đánh dấu đã chạy → các deploy sau bỏ qua (không tạo thêm schema-change job).
+    try:
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO app_kv (key, value_json) VALUES (:k, '\"done\"') "
+                    "ON CONFLICT (key) DO NOTHING"
+                ),
+                {"k": _SEARCH_IDX_FLAG},
+            )
+    except Exception as e:
+        logger.warning("mark search indexes done skipped: %s", e)
 
 
 def run_search_migrations(*, create_indexes: bool = False) -> None:
