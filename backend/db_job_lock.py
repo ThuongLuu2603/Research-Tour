@@ -71,6 +71,18 @@ def _release(name: str, holder: str) -> None:
         conn.execute(_RELEASE_SQL, {"name": name, "holder": holder})
 
 
+def force_release(name: str = TOURS_WRITE_LOCK_NAME) -> int:
+    """Xóa khóa BẤT KỂ holder — dùng khi job bị kill giữa chừng để lại khóa kẹt.
+    Trả về số khóa đã xóa."""
+    if not _is_postgres():
+        return 0
+    from database import engine
+
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        res = conn.execute(text("DELETE FROM job_lock WHERE name = :name"), {"name": name})
+        return res.rowcount or 0
+
+
 @contextmanager
 def _heartbeat(name: str, holder: str) -> Iterator[None]:
     stop = threading.Event()

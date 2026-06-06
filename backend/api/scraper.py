@@ -138,8 +138,10 @@ def cancel_stale_job(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """Dừng job đang chạy: báo thread tự hủy hợp tác (giải phóng khóa + ngừng tốn RU) + đánh dấu failed."""
+    """Dừng job: báo thread tự hủy hợp tác + GIẢI PHÓNG KHÓA ghi tour (phòng khi thread bị
+    kill giữa chừng để lại khóa kẹt) + đánh dấu failed. Không cần nút giải phóng khóa riêng."""
     from job_cancel import request_cancel
+    from db_job_lock import force_release
 
     job = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
     if not job:
@@ -147,6 +149,10 @@ def cancel_stale_job(
     if job.status not in ("pending", "running"):
         raise HTTPException(status_code=400, detail=f"Job đã {job.status}, không hủy được")
     request_cancel(job_id)   # thread sẽ dừng ở checkpoint kế tiếp (vòng lặp merge/recompute)
+    try:
+        force_release()      # nhả khóa ghi tour ngay (zombie thread không tự nhả được)
+    except Exception:
+        pass
     job.status = "failed"
     job.finished_at = datetime.utcnow()
     job.message = ((job.message or "").strip() + " | Đã dừng theo yêu cầu")[:512]
