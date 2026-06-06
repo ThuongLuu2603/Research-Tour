@@ -144,6 +144,8 @@ def recompute_all_phan_khuc(db: Session, cancel_check=None, progress=None) -> di
     route_avg = build_route_market_avg_price_day(tours)
     updates = []
     for t in tours:
+        if (t.nguon or "") == "Vietravel":
+            continue  # phân khúc VTR = Dòng tour → KHÔNG tính lại, không ghi đè
         label = phan_khuc_relative_for_tour(t, route_avg)
         if t.phan_khuc != label:
             updates.append({"b_id": t.id, "b_pk": label[:64]})
@@ -182,6 +184,8 @@ def recompute_phan_khuc_for_tour_ids(db: Session, tour_ids: list[int], cancel_ch
         )
     updates = []
     for t in tours:
+        if (t.nguon or "") == "Vietravel":
+            continue  # phân khúc VTR = Dòng tour → KHÔNG tính lại, không ghi đè
         label = phan_khuc_relative_for_tour(t, route_avg)
         if t.phan_khuc != label:
             updates.append({"b_id": t.id, "b_pk": label[:64]})
@@ -243,6 +247,8 @@ def recompute_missing_phan_khuc(db: Session, cancel_check=None, progress=None) -
     route_avg = build_route_market_avg_price_day(all_priced)
     updates = []
     for t in tours:
+        if (t.nguon or "") == "Vietravel":
+            continue  # phân khúc VTR = Dòng tour → KHÔNG tính lại, không ghi đè
         label = phan_khuc_relative_for_tour(t, route_avg)
         if label and t.phan_khuc != label:
             updates.append({"b_id": t.id, "b_pk": label[:64]})

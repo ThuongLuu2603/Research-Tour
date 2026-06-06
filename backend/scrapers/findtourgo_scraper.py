@@ -12,6 +12,8 @@ from typing import Any, Callable
 import pandas as pd
 import requests
 
+from time_vn import fmt_vn, now_vn
+
 SOURCE = "FindTourGo"
 SHEET_ID = "1sI34D88zsmSrN7Jf9fS3jh4aUvaep-blxnBR1CGq9eM"
 GID_FINDTOURGO = 408521834
@@ -204,7 +206,7 @@ def _schedule_window(
         last_day = calendar.monthrange(ref_year, month)[1]
         return datetime(ref_year, month, 1), datetime(ref_year, month, last_day)
 
-    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today = now_vn().replace(tzinfo=None, hour=0, minute=0, second=0, microsecond=0)  # hôm nay theo VN
     year_end = datetime(ref_year, 12, 31)
     if year_end < today:
         year_end = today + timedelta(days=365)
@@ -276,7 +278,7 @@ def _collect_schedule_date_values(
     """
     Trả về (danh sách ngày cụ thể, nhãn lịch khi API không có ngày cụ thể).
     """
-    ref_year = year or datetime.now().year
+    ref_year = year or now_vn().year
     found: list[datetime] = []
     labels: list[str] = []
 
@@ -504,7 +506,7 @@ def _item_to_row(
     dep_city = _load_city_name(item.get("departureCity"), city_cache, session)
     lich_trinh = _resolve_quoc_gia(item, listing_label, country_cache)
     price = _vnd_price(item)
-    now = datetime.now().strftime("%d/%m/%Y %H:%M")
+    now = fmt_vn()  # giờ VN (GMT+7), không phải UTC của Render
 
     return {
         "cong_ty": company,

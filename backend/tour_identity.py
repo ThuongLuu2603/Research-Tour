@@ -51,6 +51,9 @@ def compute_content_hash(fields: dict) -> str:
     keys = (
         "cong_ty", "thi_truong", "tuyen_tour", "ten_tour", "gia_raw",
         "lich_kh", "link_url", "ma_tour", "thoi_gian", "diem_kh",
+        # Dòng tour (tier VTR) PHẢI nằm trong hash — nếu không, tour đã tồn tại sẽ bị coi là
+        # "không đổi" và Dòng tour không bao giờ được ghi vào DB. Main không có cột này → luôn "".
+        "dong_tour",
     )
     payload = "|".join(str(fields.get(k, "") or "") for k in keys)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]

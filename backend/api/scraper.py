@@ -474,7 +474,9 @@ def _run_vietravel(db: Session, job_id: int, job: ScrapeJob):
             df,
             "Vietravel",
             mirror_delete=True,
-            recompute_segments=True,
+            # VTR: phân khúc = Dòng tour (gán khi merge) → KHÔNG cần tính lại phân khúc giá.
+            # Bỏ recompute giúp scrape nhanh hơn nhiều (không quét lại ~8000 tour).
+            recompute_segments=False,
             progress=_progress,
             cancel_check=make_cancel_check(job_id),
         ),

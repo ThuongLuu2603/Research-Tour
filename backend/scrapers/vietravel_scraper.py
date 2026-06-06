@@ -14,6 +14,8 @@ from typing import Any, Callable
 import pandas as pd
 import requests
 
+from time_vn import fmt_vn
+
 logger = logging.getLogger(__name__)
 
 COMPANY = "Vietravel"
@@ -290,7 +292,7 @@ def scrape_listing_page(url: str) -> list[dict[str, Any]]:
                 "page_id": pid_m.group(1) if pid_m else "",
                 "page_code": code_m.group(1) if code_m else "",
                 "nguon": url,
-                "cap_nhat": datetime.now().strftime("%d/%m/%Y %H:%M"),
+                "cap_nhat": fmt_vn(),  # giờ VN (GMT+7), không phải UTC của Render
             }
         )
 
@@ -355,7 +357,7 @@ def db_tours_to_dataframe(tours: list) -> pd.DataFrame:
         link = str(getattr(t, "link_url", "") or "")
         cap = ""
         if getattr(t, "updated_at", None):
-            cap = t.updated_at.strftime("%d/%m/%Y %H:%M")
+            cap = fmt_vn(t.updated_at)  # updated_at lưu UTC → đổi sang giờ VN khi ghi Sheet
         gia_disp = ""
         if getattr(t, "gia_raw", None):
             gia_disp = str(t.gia_raw)

@@ -43,6 +43,9 @@ class EffectiveTour:
             except Exception:
                 pass
         out["dong_tour"] = getattr(self.tour, "dong_tour", "")
+        # Vietravel: Dòng tour = phân khúc → hiển thị ở cột Phân khúc (kể cả khi DB phan_khuc cũ).
+        if (getattr(self.tour, "nguon", "") or "") == "Vietravel" and (out["dong_tour"] or "").strip():
+            out["phan_khuc"] = (out["dong_tour"] or "").strip()
         out["has_override"] = self.has_override
         out["canonical_id"] = self.tour.id
         return out

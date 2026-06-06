@@ -413,12 +413,16 @@ def _apply_fields_to_tour(
         tour.ma_tour = fields["ma_tour"][:64]
     tour.khach_san = _clean_field(fields.get("khach_san"))
     tour.hang_khong = _clean_field(fields.get("hang_khong"))
-    if "dong_tour" in fields:  # chỉ cập nhật khi nguồn có cung cấp (giữ nguyên nếu sync nguồn khác)
-        tour.dong_tour = (fields.get("dong_tour") or "")[:64]
+    new_dong_tour = (fields.get("dong_tour") or "").strip()
+    if new_dong_tour:  # STICKY: chỉ ghi khi scrape có giá trị (1 lần quét lỗi không xoá tier cũ)
+        tour.dong_tour = new_dong_tour[:64]
     if not locked:
         tour.so_ngay = parse_ngay(fields["thoi_gian"])
     if phan_khuc_dirty:
         tour.phan_khuc = ""
+    # Vietravel: Dòng tour CHÍNH LÀ phân khúc → gán thẳng, KHÔNG tính lại theo giá.
+    if nguon == "Vietravel" and (tour.dong_tour or "").strip():
+        tour.phan_khuc = (tour.dong_tour or "").strip()[:64]
     if not preserve_nguon:
         tour.nguon = nguon
     if external_id:
