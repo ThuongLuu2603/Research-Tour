@@ -228,11 +228,12 @@ def run_search_migrations(*, create_indexes: bool = False) -> None:
     _migrate_tour_search_columns()
     if _is_postgres():
         try:
-            from segment_mv import ensure_materialized_view
+            # MV vô dụng + REFRESH treo trên CockroachDB → DROP để dọn các job REFRESH/GC đang kẹt.
+            from segment_mv import drop_materialized_view
 
-            ensure_materialized_view()
+            drop_materialized_view()
         except Exception as e:
-            logger.warning("segment MV skipped: %s", e)
+            logger.warning("drop segment MV skipped: %s", e)
     if create_indexes:
         _migrate_search_indexes()
 
@@ -251,12 +252,7 @@ def run_deferred_search_setup() -> None:
         _backfill_tour_search_fields()
     except Exception as e:
         logger.warning("search backfill skipped: %s", e)
-    try:
-        from segment_mv import refresh_segment_mv
-
-        refresh_segment_mv()
-    except Exception as e:
-        logger.warning("segment MV refresh skipped: %s", e)
+    # (đã bỏ refresh_segment_mv — MV không còn dùng)
     try:
         from route_rule_tokens import rebuild_route_rule_tokens
         from database import SessionLocal

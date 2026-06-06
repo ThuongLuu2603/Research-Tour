@@ -922,11 +922,10 @@ def _flush_search_after_commit(db, tour_ids: set[int] | list[int]) -> None:
 def _post_sync_cache(db) -> None:
     try:
         from compare_cache import invalidate_compare_cache, prewarm_compare_cache
-        from segment_mv import refresh_segment_mv
 
         invalidate_compare_cache()
         prewarm_compare_cache(db)
-        refresh_segment_mv()
+        # Bỏ refresh_segment_mv() — MV vô dụng (không ai đọc) và REFRESH treo trên CockroachDB.
     except Exception as e:
         logger.warning("post-sync cache refresh failed: %s", e)
 
