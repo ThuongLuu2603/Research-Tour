@@ -435,6 +435,8 @@ def start_sheet_sync_background(
             jdb.close()
 
     def _run():
+        from job_cancel import JobCancelled, clear_cancel, make_cancel_check
+        cancel_check = make_cancel_check(job_id)
         db = SessionLocal()
         try:
             from sheets_tour_sync import merge_all_sheets_to_db, merge_sheet_source_to_db
@@ -460,6 +462,7 @@ def start_sheet_sync_background(
                     "Main",
                     force_reclassify_all=True,
                     progress_cb=_sync_progress,
+                    cancel_check=cancel_check,
                 )
                 msg = (
                     f"+{r.get('inserted', 0)} mới, ~{r.get('updated', 0)} cập nhật, "
@@ -481,6 +484,14 @@ def start_sheet_sync_background(
                 updated=int(r.get("updated", 0)),
                 total=int(_import_status.get("rows_total") or synced),
             )
+        except JobCancelled:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            with _import_lock:
+                _import_status["message"] = "Đã dừng theo yêu cầu"
+            _finish_job(ok=False, msg="Đã dừng theo yêu cầu")
         except Exception as e:
             logger.exception("Sheet sync failed")
             with _import_lock:
@@ -488,6 +499,7 @@ def start_sheet_sync_background(
                 _import_status["message"] = f"Lỗi: {e}"
             _finish_job(ok=False, msg=str(e)[:512])
         finally:
+            clear_cancel(job_id)
             db.close()
             gc.collect()
             with _import_lock:

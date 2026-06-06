@@ -510,8 +510,10 @@ def _merge_dataframe_to_db_locked(
     recompute_segments: bool = True,
     progress: Callable[[int, str], None] | None = None,
     commit_batch: int = 80,
+    cancel_check=None,
 ) -> dict:
     """Scraper → DB trước (Vietravel). Tour.id giữ nguyên khi match external_id."""
+    from job_cancel import JobCancelled, raise_if_cancelled
     if hasattr(db, "expire_on_commit"):
         db.expire_on_commit = False
     from classification import _load_route_rules
@@ -604,8 +606,10 @@ def _merge_dataframe_to_db_locked(
             progress(pct, f"Đang lưu DB {idx + 1}/{total} (+{inserted} mới, ~{updated} cập nhật)")
         if commit_batch > 0 and (idx + 1) % commit_batch == 0:
             db.commit()
+            raise_if_cancelled(cancel_check)
 
     db.commit()
+    raise_if_cancelled(cancel_check)
     _flush_search_after_commit(db, synced_tour_ids)
 
     deleted = 0
@@ -618,10 +622,13 @@ def _merge_dataframe_to_db_locked(
     if recompute_segments and affected_tour_ids:
         if progress:
             progress(83, "Đã lưu DB — đang tính lại phân khúc…")
+        raise_if_cancelled(cancel_check)
         try:
             from pricing_segments import recompute_segments_for_sync
 
-            phan_khuc_stats = recompute_segments_for_sync(db, affected_tour_ids)
+            phan_khuc_stats = recompute_segments_for_sync(db, affected_tour_ids, cancel_check)
+        except JobCancelled:
+            raise
         except Exception as e:
             logger.warning("recompute phan_khuc after %s scrape failed: %s", nguon, e)
             phan_khuc_stats = {"error": str(e)}
@@ -657,6 +664,7 @@ def merge_dataframe_to_db(
     recompute_segments: bool = True,
     progress: Callable[[int, str], None] | None = None,
     commit_batch: int = 80,
+    cancel_check=None,
 ) -> dict:
     from db_job_lock import tours_write_lock
 
@@ -671,6 +679,7 @@ def merge_dataframe_to_db(
             recompute_segments=recompute_segments,
             progress=progress,
             commit_batch=commit_batch,
+            cancel_check=cancel_check,
         )
 
 
@@ -718,7 +727,9 @@ def _merge_sheet_source_to_db_locked(
     force_reclassify_all: bool = False,
     progress_cb: Callable[[int, int, str], None] | None = None,
     commit_batch: int = 100,
+    cancel_check=None,
 ) -> dict:
+    from job_cancel import JobCancelled, raise_if_cancelled
     if hasattr(db, "expire_on_commit"):
         db.expire_on_commit = False
     from data_sources import is_db_canonical_source, should_mirror_prune
@@ -831,6 +842,7 @@ def _merge_sheet_source_to_db_locked(
 
         if commit_batch > 0 and row_num % commit_batch == 0:
             db.commit()
+            raise_if_cancelled(cancel_check)  # dừng sớm sau mỗi lô đã commit (không mất dữ liệu)
 
         if progress_cb and total_rows and (row_num % 100 == 0 or row_num == total_rows):
             progress_cb(
@@ -842,6 +854,7 @@ def _merge_sheet_source_to_db_locked(
     if progress_cb and total_rows:
         progress_cb(total_rows, total_rows, f"Đang commit & phân khúc giá ({nguon})…")
     db.commit()
+    raise_if_cancelled(cancel_check)  # toàn bộ tour đã commit → dừng an toàn trước các bước nặng
     _flush_search_after_commit(db, synced_tour_ids)
 
     deleted = 0
@@ -855,10 +868,13 @@ def _merge_sheet_source_to_db_locked(
 
     phan_khuc_stats: dict | None = None
     if recompute_segments and affected_tour_ids:
+        raise_if_cancelled(cancel_check)
         try:
             from pricing_segments import recompute_segments_for_sync
 
-            phan_khuc_stats = recompute_segments_for_sync(db, affected_tour_ids)
+            phan_khuc_stats = recompute_segments_for_sync(db, affected_tour_ids, cancel_check)
+        except JobCancelled:
+            raise  # cancel phải nổi lên để dừng cả job, không nuốt thành "recompute lỗi"
         except Exception as e:
             logger.warning("recompute phan_khuc after %s sync failed: %s", nguon, e)
             phan_khuc_stats = {"error": str(e)}
@@ -924,6 +940,7 @@ def merge_sheet_source_to_db(
     force_reclassify_all: bool = False,
     progress_cb: Callable[[int, int, str], None] | None = None,
     commit_batch: int = 100,
+    cancel_check=None,
 ) -> dict:
     from db_job_lock import tours_write_lock
 
@@ -938,6 +955,7 @@ def merge_sheet_source_to_db(
             force_reclassify_all=force_reclassify_all,
             progress_cb=progress_cb,
             commit_batch=commit_batch,
+            cancel_check=cancel_check,
         )
 
 

@@ -13,11 +13,13 @@ from models import Tour
 _PHAN_KHUC_BATCH = 300
 
 
-def _apply_phan_khuc_updates(db: Session, updates: list[dict]) -> int:
-    """updates = [{'b_id': id, 'b_pk': label}, ...] → UPDATE theo lô nhỏ, commit + retry từng lô."""
+def _apply_phan_khuc_updates(db: Session, updates: list[dict], cancel_check=None) -> int:
+    """updates = [{'b_id': id, 'b_pk': label}, ...] → UPDATE theo lô nhỏ, commit + retry từng lô.
+    Kiểm tra cancel giữa mỗi lô → dừng sớm khi người dùng bấm Dừng."""
     if not updates:
         return 0
     from db_retry import run_with_retry
+    from job_cancel import raise_if_cancelled
 
     stmt = (
         update(Tour)
@@ -25,6 +27,7 @@ def _apply_phan_khuc_updates(db: Session, updates: list[dict]) -> int:
         .values(phan_khuc=bindparam("b_pk"))
     )
     for i in range(0, len(updates), _PHAN_KHUC_BATCH):
+        raise_if_cancelled(cancel_check)
         batch = updates[i:i + _PHAN_KHUC_BATCH]
 
         def _do(b=batch):
@@ -134,7 +137,7 @@ def recompute_all_phan_khuc(db: Session) -> dict:
     return {"updated": updated, "route_buckets": len(route_avg)}
 
 
-def recompute_phan_khuc_for_tour_ids(db: Session, tour_ids: list[int]) -> dict:
+def recompute_phan_khuc_for_tour_ids(db: Session, tour_ids: list[int], cancel_check=None) -> dict:
     """Tính lại phân khúc cho danh sách tour (vd. sau scrape chỉ tour mới/cập nhật)."""
     from data_sources import DB_CANONICAL_NGUON
 
@@ -159,14 +162,14 @@ def recompute_phan_khuc_for_tour_ids(db: Session, tour_ids: list[int]) -> dict:
         label = phan_khuc_relative_for_tour(t, route_avg)
         if t.phan_khuc != label:
             updates.append({"b_id": t.id, "b_pk": label[:64]})
-    updated = _apply_phan_khuc_updates(db, updates)
+    updated = _apply_phan_khuc_updates(db, updates, cancel_check)
     return {"updated": updated, "tours": len(tours), "route_buckets": len(route_avg)}
 
 
-def recompute_segments_for_sync(db: Session, affected_tour_ids: set[int] | list[int]) -> dict:
+def recompute_segments_for_sync(db: Session, affected_tour_ids: set[int] | list[int], cancel_check=None) -> dict:
     """Phân khúc cho tour mới (thiếu nhãn) + tour vừa thay đổi — không quét toàn DB."""
-    missing = recompute_missing_phan_khuc(db)
-    targeted = recompute_phan_khuc_for_tour_ids(db, list(affected_tour_ids))
+    missing = recompute_missing_phan_khuc(db, cancel_check)
+    targeted = recompute_phan_khuc_for_tour_ids(db, list(affected_tour_ids), cancel_check)
     return {
         "missing_filled": missing,
         "targeted_updated": targeted.get("updated", 0),
@@ -175,7 +178,7 @@ def recompute_segments_for_sync(db: Session, affected_tour_ids: set[int] | list[
     }
 
 
-def recompute_missing_phan_khuc(db: Session) -> int:
+def recompute_missing_phan_khuc(db: Session, cancel_check=None) -> int:
     """Tính phân khúc cho tour có giá nhưng chưa có nhãn (vd. Vietravel mới scrape)."""
     from data_sources import DB_CANONICAL_NGUON
     from models import Tour
@@ -207,4 +210,4 @@ def recompute_missing_phan_khuc(db: Session) -> int:
         label = phan_khuc_relative_for_tour(t, route_avg)
         if label and t.phan_khuc != label:
             updates.append({"b_id": t.id, "b_pk": label[:64]})
-    return _apply_phan_khuc_updates(db, updates)
+    return _apply_phan_khuc_updates(db, updates, cancel_check)

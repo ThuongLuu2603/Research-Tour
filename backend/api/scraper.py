@@ -132,17 +132,20 @@ def cancel_stale_job(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """Đánh dấu job pending/running là failed — mở khóa «Chạy ngay»."""
+    """Dừng job đang chạy: báo thread tự hủy hợp tác (giải phóng khóa + ngừng tốn RU) + đánh dấu failed."""
+    from job_cancel import request_cancel
+
     job = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job không tồn tại")
     if job.status not in ("pending", "running"):
         raise HTTPException(status_code=400, detail=f"Job đã {job.status}, không hủy được")
+    request_cancel(job_id)   # thread sẽ dừng ở checkpoint kế tiếp (vòng lặp merge/recompute)
     job.status = "failed"
     job.finished_at = datetime.utcnow()
-    job.message = ((job.message or "").strip() + " | Đã hủy thủ công trên UI")[:512]
+    job.message = ((job.message or "").strip() + " | Đã dừng theo yêu cầu")[:512]
     db.commit()
-    return {"message": f"Đã hủy job #{job_id}", "job_id": job_id}
+    return {"message": f"Đã yêu cầu dừng job #{job_id}", "job_id": job_id}
 
 
 @router.get("/jobs/{job_id}", response_model=JobOut)
@@ -362,6 +365,8 @@ def _run_job(job_id: int, scraper_name: str):
             db.commit()
         _emit_error(job_id, f"Lỗi: {exc}")
     finally:
+        from job_cancel import clear_cancel
+        clear_cancel(job_id)
         db.close()
 
 
@@ -383,6 +388,7 @@ def _run_vietravel(db: Session, job_id: int, job: ScrapeJob):
     db.commit()
 
     from db_retry import run_with_retry
+    from job_cancel import make_cancel_check
 
     result = run_with_retry(
         lambda: merge_dataframe_to_db(
@@ -392,6 +398,7 @@ def _run_vietravel(db: Session, job_id: int, job: ScrapeJob):
             mirror_delete=True,
             recompute_segments=True,
             progress=_progress,
+            cancel_check=make_cancel_check(job_id),
         ),
         db=db,
         label="scrape-vietravel-merge",

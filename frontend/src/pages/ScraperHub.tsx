@@ -5,7 +5,7 @@ import {
   cancelScrapeJob, reconcileStaleScrapeJobs, ScrapeJob,
 } from "@/lib/api";
 import { fmtDate, parseAppDate, statusColor, cn } from "@/lib/utils";
-import { Play, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Database } from "lucide-react";
+import { Play, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Database, Square } from "lucide-react";
 
 interface ProgressEvent { pct: number; msg: string; done: boolean; added?: number; updated?: number; error?: boolean }
 
@@ -483,14 +483,14 @@ export default function ScraperHub() {
                 </td>
                 <td className="px-4 py-2.5 text-xs text-gray-400 max-w-xs">
                   <span className="truncate block">{job.message || `by ${job.triggered_by}`}</span>
-                  {stale && (
+                  {(job.status === "running" || job.status === "pending") && (
                     <button
                       type="button"
-                      className="text-[10px] text-red-600 hover:underline mt-0.5"
+                      className="inline-flex items-center gap-1 text-[11px] text-red-600 hover:text-red-800 font-semibold mt-1 disabled:opacity-50"
                       disabled={cancelJob.isPending}
-                      onClick={() => cancelJob.mutate(job.id)}
+                      onClick={() => { if (window.confirm("Dừng job này? Các dữ liệu đã ghi vẫn được giữ.")) cancelJob.mutate(job.id); }}
                     >
-                      Hủy job treo
+                      <Square size={10} fill="currentColor" /> {cancelJob.isPending ? "Đang dừng…" : stale ? "Dừng (treo)" : "Dừng"}
                     </button>
                   )}
                 </td>
