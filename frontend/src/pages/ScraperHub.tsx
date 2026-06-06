@@ -30,6 +30,9 @@ function ScraperCard({ scraper, label, desc }: { scraper: "vietravel" | "findtou
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Khoá "đã xong": một khi job kết thúc, BỎ QUA mọi event cũ (SSE trễ) để card không bị
+  // kẹt lại ở 84% "đang ghi…". SSE và polling chạy song song → tránh ghi đè ngược trạng thái.
+  const doneRef = useRef(false);
 
   const stopWatchers = () => {
     esRef.current?.close();
@@ -43,11 +46,13 @@ function ScraperCard({ scraper, label, desc }: { scraper: "vietravel" | "findtou
   const pollJobStatus = (jobId: string) => {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(async () => {
+      if (doneRef.current) { stopWatchers(); return; }
       try {
         const job = await getScrapeJob(jobId);
         const running = job.status === "running" || job.status === "pending";
+        if (doneRef.current) { stopWatchers(); return; }
         setProgress({
-          pct: job.progress_pct,
+          pct: !running ? 100 : job.progress_pct,
           msg: job.message || (running ? "Đang chạy…" : job.status),
           done: !running,
           error: job.status === "failed",
@@ -55,6 +60,7 @@ function ScraperCard({ scraper, label, desc }: { scraper: "vietravel" | "findtou
           updated: job.tours_updated,
         });
         if (!running) {
+          doneRef.current = true;            // chốt "đã xong" — event SSE trễ sẽ bị bỏ qua
           stopWatchers();
           qc.invalidateQueries({ queryKey: ["scrape-jobs"] });
           qc.invalidateQueries({ queryKey: ["kpi"] });
@@ -70,6 +76,7 @@ function ScraperCard({ scraper, label, desc }: { scraper: "vietravel" | "findtou
     mutationFn: () => triggerScrape(scraper),
     onSuccess: (job) => {
       stopWatchers();
+      doneRef.current = false;             // job mới → mở lại khoá
       setActiveJobId(job.id);
       setProgress({ pct: 0, msg: "Đang khởi động...", done: false });
       const token = localStorage.getItem("access_token") || "";
@@ -80,8 +87,10 @@ function ScraperCard({ scraper, label, desc }: { scraper: "vietravel" | "findtou
       es.onmessage = (e) => {
         try {
           const ev: ProgressEvent = JSON.parse(e.data);
+          if (doneRef.current) return;     // đã xong → bỏ qua event SSE trễ
           setProgress(ev);
           if (ev.done) {
+            doneRef.current = true;
             stopWatchers();
             qc.invalidateQueries({ queryKey: ["scrape-jobs"] });
             qc.invalidateQueries({ queryKey: ["kpi"] });
@@ -92,6 +101,7 @@ function ScraperCard({ scraper, label, desc }: { scraper: "vietravel" | "findtou
       es.onerror = () => {
         es.close();
         esRef.current = null;
+        if (doneRef.current) return;
         setProgress((p) => ({
           pct: p?.pct ?? 0,
           msg: "Theo dõi tiến độ qua polling (SSE không kết nối được)…",
@@ -300,7 +310,12 @@ export default function ScraperHub() {
             <p className="text-xs text-gray-500 mt-1">
               Tổng: <strong>{(dataStatus?.total ?? 0).toLocaleString("vi-VN")}</strong> tour
               {dataStatus && !dataStatus.complete && (
-                <span className="text-amber-700 ml-2">— thiếu dữ liệu tab Main (~8.410 tour). Bấm nút bên phải để import.</span>
+                <span className="text-amber-700 ml-2">
+                  — tab Main mới có{" "}
+                  <strong>{(dataStatus.breakdown?.Main ?? 0).toLocaleString("vi-VN")}</strong>/
+                  {(dataStatus.expected_min?.Main ?? 0).toLocaleString("vi-VN")} tour. Bấm
+                  <strong> Đồng bộ Sheet Main → DB</strong> để cập nhật đủ từ Google Sheet.
+                </span>
               )}
             </p>
             {dataStatus && (

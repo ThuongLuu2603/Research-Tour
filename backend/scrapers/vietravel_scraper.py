@@ -305,6 +305,22 @@ def scrape_listing_page(url: str) -> list[dict[str, Any]]:
     return tours
 
 
+def _fetch_dong_tour_detail(url: str) -> str:
+    """Tour KHÔNG có tier ở trang listing (vài tour cuối trang) → lấy tourLineId từ trang chi tiết.
+
+    Trang chi tiết chỉ có ĐÚNG 1 `tourLineId` = tier của chính tour đó (menu chỉ dùng tên/slug),
+    nên dùng tourLineId là chắc chắn (không lấy nhầm menu như tourLineName)."""
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=30)
+        resp.raise_for_status()
+        m = _TOURLINE_ID_RE.search(resp.text)
+        if m:
+            return _TOURLINE_BY_ID.get(int(m.group(1)), "")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("VTR lấy Dòng tour từ trang chi tiết lỗi (%s): %s", url, e)
+    return ""
+
+
 def scrape_all_vietravel_tours(
     progress: Callable[[int, str], None] | None = None,
     *,
@@ -321,6 +337,17 @@ def scrape_all_vietravel_tours(
             progress(28 + int(30 * (i + 1) / max(n_src, 1)), f"Đã quét {len(all_tours)} tour")
     if not all_tours:
         return pd.DataFrame()
+
+    # Bổ sung Dòng tour cho số ít tour mà trang listing thiếu tier (lấy từ trang chi tiết).
+    missing = [t for t in all_tours if not (t.get("dong_tour") or "").strip() and t.get("link_url")]
+    if missing:
+        if progress:
+            progress(46, f"Bổ sung Dòng tour cho {len(missing)} tour (trang chi tiết)…")
+        for t in missing[:60]:  # giới hạn an toàn — bình thường chỉ 1–3 tour
+            dt = _fetch_dong_tour_detail(t["link_url"])
+            if dt:
+                t["dong_tour"] = dt
+
     df = pd.DataFrame(all_tours)
     if classify:
         if progress:

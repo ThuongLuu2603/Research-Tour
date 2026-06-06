@@ -407,8 +407,11 @@ def _run_job(job_id: int, scraper_name: str):
             j.tours_added = added
             j.tours_updated = updated
             j.finished_at = datetime.utcnow()
+            # Đặt message HOÀN THÀNH (không để kẹt "đang ghi Google Sheet…" khi UI poll trạng thái).
+            msg = f"Hoàn thành: +{added} mới, ~{updated} cập nhật"
             if deleted:
-                j.message = f"−{deleted} tour đã xóa khỏi DB (không còn trên Sheet)"
+                msg += f", −{deleted} đã xóa (không còn trên Sheet)"
+            j.message = msg[:512]
             db.commit()
 
         run_with_retry(_finish_success, db=db, label="job-finish-success")
