@@ -3,9 +3,36 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from sqlalchemy import bindparam, update
 from sqlalchemy.orm import Session
 
 from models import Tour
+
+# Ghi phân khúc theo LÔ NHỎ để tránh 1 transaction khổng lồ bị CockroachDB hủy
+# (SerializationFailure/ABORT_SPAN). Mỗi lô là 1 transaction riêng + retry lỗi tạm thời.
+_PHAN_KHUC_BATCH = 300
+
+
+def _apply_phan_khuc_updates(db: Session, updates: list[dict]) -> int:
+    """updates = [{'b_id': id, 'b_pk': label}, ...] → UPDATE theo lô nhỏ, commit + retry từng lô."""
+    if not updates:
+        return 0
+    from db_retry import run_with_retry
+
+    stmt = (
+        update(Tour)
+        .where(Tour.id == bindparam("b_id"))
+        .values(phan_khuc=bindparam("b_pk"))
+    )
+    for i in range(0, len(updates), _PHAN_KHUC_BATCH):
+        batch = updates[i:i + _PHAN_KHUC_BATCH]
+
+        def _do(b=batch):
+            db.execute(stmt, b)
+            db.commit()
+
+        run_with_retry(_do, db=db, label="phan-khuc-batch")
+    return len(updates)
 
 # Ngưỡng so với TB/ngày thị trường (cùng nhóm segment)
 LUXURY_ABOVE_MARKET = 1.30
@@ -98,14 +125,12 @@ def recompute_all_phan_khuc(db: Session) -> dict:
         .all()
     )
     route_avg = build_route_market_avg_price_day(tours)
-    updated = 0
+    updates = []
     for t in tours:
         label = phan_khuc_relative_for_tour(t, route_avg)
         if t.phan_khuc != label:
-            t.phan_khuc = label[:64]
-            updated += 1
-    if updated:
-        db.commit()
+            updates.append({"b_id": t.id, "b_pk": label[:64]})
+    updated = _apply_phan_khuc_updates(db, updates)
     return {"updated": updated, "route_buckets": len(route_avg)}
 
 
@@ -129,14 +154,12 @@ def recompute_phan_khuc_for_tour_ids(db: Session, tour_ids: list[int]) -> dict:
     )
     route_avg = build_route_market_avg_price_day(all_priced)
     tours = db.query(Tour).options(load_only(*_PRICE_COLS)).filter(Tour.id.in_(ids)).all()
-    updated = 0
+    updates = []
     for t in tours:
         label = phan_khuc_relative_for_tour(t, route_avg)
         if t.phan_khuc != label:
-            t.phan_khuc = label[:64]
-            updated += 1
-    if updated:
-        db.commit()
+            updates.append({"b_id": t.id, "b_pk": label[:64]})
+    updated = _apply_phan_khuc_updates(db, updates)
     return {"updated": updated, "tours": len(tours), "route_buckets": len(route_avg)}
 
 
@@ -179,12 +202,9 @@ def recompute_missing_phan_khuc(db: Session) -> int:
         .all()
     )
     route_avg = build_route_market_avg_price_day(all_priced)
-    updated = 0
+    updates = []
     for t in tours:
         label = phan_khuc_relative_for_tour(t, route_avg)
         if label and t.phan_khuc != label:
-            t.phan_khuc = label[:64]
-            updated += 1
-    if updated:
-        db.commit()
-    return updated
+            updates.append({"b_id": t.id, "b_pk": label[:64]})
+    return _apply_phan_khuc_updates(db, updates)

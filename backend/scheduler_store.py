@@ -22,14 +22,21 @@ def load_saved_schedule(db) -> tuple[int, int] | None:
 
 
 def save_schedule(db, hour: int, minute: int) -> None:
-    row = db.get(AppKv, SCHEDULE_KV_KEY)
     payload = json.dumps({"hour": hour, "minute": minute}, ensure_ascii=False)
-    if not row:
-        row = AppKv(key=SCHEDULE_KV_KEY, value_json=payload)
-        db.add(row)
-    else:
-        row.value_json = payload
-    db.commit()
+
+    def _do():
+        row = db.get(AppKv, SCHEDULE_KV_KEY)
+        if not row:
+            db.add(AppKv(key=SCHEDULE_KV_KEY, value_json=payload))
+        else:
+            row.value_json = payload
+        db.commit()
+
+    try:
+        from db_retry import run_with_retry
+        run_with_retry(_do, db=db, label="save-schedule")
+    except Exception:
+        _do()  # db_retry không khả dụng → thử trực tiếp
 
 
 def load_last_runs(db) -> dict[str, str]:

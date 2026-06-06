@@ -260,10 +260,20 @@ export default function ScraperHub() {
     }
   }, [schedule]);
 
+  const [schedErr, setSchedErr] = useState("");
   const saveSchedule = async () => {
-    await updateSchedule(schedHour, schedMin);
-    setSavedSched(true);
-    setTimeout(() => setSavedSched(false), 2000);
+    setSchedErr("");
+    try {
+      await updateSchedule(schedHour, schedMin);
+      setSavedSched(true);
+      await qc.invalidateQueries({ queryKey: ["schedule"] }); // refetch bảng Lịch tự động với giờ mới
+      setTimeout(() => setSavedSched(false), 2000);
+    } catch (e) {
+      setSchedErr(
+        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        "Lưu lịch thất bại — thử lại."
+      );
+    }
   };
 
   return (
@@ -413,6 +423,7 @@ export default function ScraperHub() {
             <button type="button" onClick={saveSchedule} className={cn("btn-primary text-xs mt-4", savedSched && "bg-green-600 border-green-600")}>
               {savedSched ? "✓ Đã lưu" : "Lưu lịch scraper"}
             </button>
+            {schedErr && <span className="text-xs text-red-600 mt-4">{schedErr}</span>}
           </div>
         </div>
       </div>
