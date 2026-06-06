@@ -194,6 +194,19 @@ class TourEntry:
     link_url: str
     thoi_gian: str
     is_vietravel: bool
+    phan_khuc: str = ""   # phân khúc giá tự tính (Standard/Premium/Luxury) — lọc giá phía thị trường
+    dong_tour: str = ""   # Dòng tour VTR (Tiết kiệm/Giá Tốt…) — lọc giá phía Vietravel
+
+
+# ── Quy tắc lọc khi SO SÁNH GIÁ (tần suất vẫn dùng toàn bộ tour) ──────────────
+# Phía Vietravel: chỉ tính tour thuộc các Dòng tour này.
+VTR_PRICE_TIERS = {"tiết kiệm", "giá tốt"}
+# Phía thị trường (giá so sánh): chỉ tính tour có phân khúc giá này.
+MARKET_PRICE_PHAN_KHUC = {"premium"}
+
+
+def _norm_tier(s: str) -> str:
+    return (s or "").strip().lower()
 
 
 def _median(values: list[float]) -> float | None:
@@ -335,6 +348,24 @@ class SegmentStats:
         ]
         return matched if matched else self.market_entries
 
+    @property
+    def vtr_price_entries(self) -> list[TourEntry]:
+        """Tour VTR dùng để TÍNH GIÁ: chỉ Dòng tour Tiết kiệm/Giá Tốt.
+        Rollout-safe: nếu segment chưa có dữ liệu Dòng tour nào (chưa scrape lại) → dùng tất cả."""
+        ents = self.vtr_entries
+        if not any((e.dong_tour or "").strip() for e in ents):
+            return ents
+        return [e for e in ents if _norm_tier(e.dong_tour) in VTR_PRICE_TIERS]
+
+    @property
+    def market_price_entries(self) -> list[TourEntry]:
+        """Tour thị trường dùng để TÍNH GIÁ SO SÁNH: chỉ phân khúc Premium (≈ TB tuyến).
+        Rollout-safe: nếu chưa tour nào có phân khúc → dùng tất cả."""
+        ents = self.market_entries_in_period
+        if not any((e.phan_khuc or "").strip() for e in ents):
+            return ents
+        return [e for e in ents if _norm_tier(e.phan_khuc) in MARKET_PRICE_PHAN_KHUC]
+
     def _entries_freq_total(self, entries: list[TourEntry], *, in_vtr_period: bool = False) -> float:
         vtr_dates = self._vtr_period_dates()
         total = 0.0
@@ -410,7 +441,7 @@ class SegmentStats:
 
     @property
     def vietravel_avg_day(self) -> float | None:
-        entries = self.vtr_entries
+        entries = self.vtr_price_entries
         if not entries:
             return None
         weights = _departure_weights(entries, self._vtr_period_dates(), in_vtr_period=True)
@@ -418,7 +449,7 @@ class SegmentStats:
 
     @property
     def market_avg_day(self) -> float | None:
-        entries = self.market_entries_in_period
+        entries = self.market_price_entries
         if not entries:
             return None
         weights = _departure_weights(entries, self._vtr_period_dates(), in_vtr_period=True)
@@ -430,7 +461,7 @@ class SegmentStats:
 
     @property
     def vtr_avg_days(self) -> float | None:
-        entries = self.vtr_entries
+        entries = self.vtr_price_entries
         if not entries:
             return None
         weights = _departure_weights(entries, self._vtr_period_dates(), in_vtr_period=True)
@@ -439,7 +470,7 @@ class SegmentStats:
 
     @property
     def market_avg_days(self) -> float | None:
-        entries = self.market_entries_in_period
+        entries = self.market_price_entries
         if not entries:
             return None
         weights = _departure_weights(entries, self._vtr_period_dates(), in_vtr_period=True)
@@ -467,10 +498,11 @@ class SegmentStats:
         return round((v / c - 1) * 100, 1)
 
     def _vtr_cheapest(self) -> dict | None:
-        if not self.vtr_entries:
+        entries = self.vtr_price_entries
+        if not entries:
             return None
-        with_link = [e for e in self.vtr_entries if (e.link_url or "").strip()]
-        pool = with_link if with_link else self.vtr_entries
+        with_link = [e for e in entries if (e.link_url or "").strip()]
+        pool = with_link if with_link else entries
         e = min(pool, key=lambda x: x.gia)
         return {
             "gia": e.gia,
@@ -480,7 +512,7 @@ class SegmentStats:
         }
 
     def _market_cheapest_matched(self) -> dict | None:
-        matched = self.market_entries_in_period
+        matched = self.market_price_entries
         if not matched:
             return None
         vtr_dates = self._vtr_period_dates()
@@ -583,8 +615,8 @@ class SegmentStats:
             "market_avg_day": _safe_num(self.market_avg_day),
             "market_avg_days": _safe_num(self.market_avg_days),
             "vietravel_avg_day": _safe_num(self.vietravel_avg_day),
-            "vietravel_median_day": _safe_num(self._price_stats(self.vtr_entries)["median"]),
-            "market_median_day": _safe_num(self._price_stats(self.market_entries_in_period)["median"]),
+            "vietravel_median_day": _safe_num(self._price_stats(self.vtr_price_entries)["median"]),
+            "market_median_day": _safe_num(self._price_stats(self.market_price_entries)["median"]),
             "gap_pct": _safe_num(self.gap_pct),
             "vietravel_count": len(self.vtr_entries),
             "market_count": len(self.market_entries),
@@ -649,6 +681,8 @@ def _tour_to_entry(t: Tour, days: float) -> TourEntry | None:
         link_url=link,
         thoi_gian=t.thoi_gian or "",
         is_vietravel=_vtr_flag_for_compare(t),
+        phan_khuc=getattr(t, "phan_khuc", "") or "",
+        dong_tour=getattr(t, "dong_tour", "") or "",
     )
 
 
