@@ -16,8 +16,12 @@ from tour_sources import apply_market_compare_source_filter, filter_tours_for_ma
 
 logger = logging.getLogger(__name__)
 
-# Cache đủ lâu để tab So sánh VTR không phải tính lại mỗi lần đổi filter (Render free spin-down vẫn cold).
-TTL_SECONDS = int(os.getenv("COMPARE_CACHE_TTL", "900"))
+# TTL dài (6h) — KHÔNG rebuild định kỳ. Việc rebuild do FINGERPRINT (đổi dữ liệu) + invalidate
+# sau mỗi sync quyết định. Tránh quét lại toàn bộ ~8000 tour mỗi 15' (giảm RU + bớt Slow Execution).
+TTL_SECONDS = int(os.getenv("COMPARE_CACHE_TTL", "21600"))
+# Fingerprint (count + max(updated_at)) cũng quét bảng → cache lâu hơn (10') để bớt query.
+# An toàn: mọi thay đổi qua sync đều gọi invalidate_compare_cache (xoá luôn fingerprint).
+_FINGERPRINT_TTL = int(os.getenv("COMPARE_FINGERPRINT_TTL", "600"))
 
 
 def _segments_to_rows(segments: list[SegmentStats]) -> list[dict]:
@@ -47,7 +51,7 @@ _inflight: dict[tuple, threading.Event] = {}
 def _db_fingerprint(db: Session) -> tuple[int, str | None]:
     global _fingerprint_cache
     now = time.time()
-    if _fingerprint_cache and now - _fingerprint_cache[0] < 120:  # tăng 60s→120s giảm query
+    if _fingerprint_cache and now - _fingerprint_cache[0] < _FINGERPRINT_TTL:
         return _fingerprint_cache[1]
     row = (
         apply_market_compare_source_filter(
