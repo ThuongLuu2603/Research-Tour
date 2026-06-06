@@ -21,3 +21,13 @@ Thumbs.db
 # Build cache
 *.log
 .npm-cache2/
+frontend/tsconfig.tsbuildinfo
+
+# Debug/diagnostic dumps (root + backend)
+tmp_*.json
+tmp_*.txt
+backend/tmp_*.json
+backend/tmp_*.txt
+
+# Manual classification helpers (regenerated on demand)
+rules_to_add.txt
