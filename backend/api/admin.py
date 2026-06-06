@@ -103,7 +103,7 @@ def sync_main_sheet_live(
         job.finished_at = datetime.utcnow()
         db.commit()
         raise HTTPException(status_code=409, detail="Đồng bộ đang chạy, vui lòng đợi...")
-    return {"started": True, "job_id": job.id, "message": "Đang đồng bộ tab Main từ Google Sheet → DB…"}
+    return {"started": True, "job_id": str(job.id), "message": "Đang đồng bộ tab Main từ Google Sheet → DB…"}
 
 
 @router.get("/data-status")

@@ -307,7 +307,8 @@ export const getCompetitorProfile = async (company: string) => {
 // ── Scraper ───────────────────────────────────────────────────────────────────
 
 export interface ScrapeJob {
-  id: number; scraper_name: string; status: string; progress_pct: number;
+  // id là CHUỖI (CockroachDB unique_rowid > 2^53, number sẽ làm tròn → cancel sai id)
+  id: string; scraper_name: string; status: string; progress_pct: number;
   message: string; tours_added: number; tours_updated: number; tours_total: number;
   triggered_by: string; started_at: string; finished_at: string | null;
 }
@@ -322,9 +323,9 @@ export const getScrapeJobs = async (): Promise<ScrapeJob[]> => {
   return data;
 };
 
-export const cancelScrapeJob = async (jobId: number) => {
+export const cancelScrapeJob = async (jobId: string) => {
   const { data } = await api.post(`/scraper/jobs/${jobId}/cancel`);
-  return data as { message: string; job_id: number };
+  return data as { message: string; job_id: string };
 };
 
 export const reconcileStaleScrapeJobs = async () => {
@@ -332,7 +333,7 @@ export const reconcileStaleScrapeJobs = async () => {
   return data as { message: string; fixed_ids: number[] };
 };
 
-export const getScrapeJob = async (id: number): Promise<ScrapeJob> => {
+export const getScrapeJob = async (id: string): Promise<ScrapeJob> => {
   const { data } = await api.get(`/scraper/jobs/${id}`);
   return data;
 };
@@ -361,7 +362,7 @@ export interface DataStatus {
     rows_done: number;
     rows_total?: number;
     progress_pct?: number;
-    job_id?: number | null;
+    job_id?: string | number | null;
     error: string | null;
   };
 }

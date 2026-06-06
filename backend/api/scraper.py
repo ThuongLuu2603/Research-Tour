@@ -43,6 +43,12 @@ class JobOut(BaseModel):
 
     model_config = {"from_attributes": True}
 
+    @field_serializer("id")
+    def _serialize_id(self, v: int) -> str:
+        # CockroachDB unique_rowid() ~1.18e18 > 2^53 → JS làm tròn → cancel sai id.
+        # Trả về chuỗi để frontend giữ nguyên id chính xác.
+        return str(v)
+
     @field_serializer("started_at", "finished_at")
     def _serialize_utc(self, v: datetime | None) -> str | None:
         if v is None:
@@ -145,7 +151,7 @@ def cancel_stale_job(
     job.finished_at = datetime.utcnow()
     job.message = ((job.message or "").strip() + " | Đã dừng theo yêu cầu")[:512]
     db.commit()
-    return {"message": f"Đã yêu cầu dừng job #{job_id}", "job_id": job_id}
+    return {"message": f"Đã yêu cầu dừng job #{job_id}", "job_id": str(job_id)}
 
 
 @router.get("/jobs/{job_id}", response_model=JobOut)

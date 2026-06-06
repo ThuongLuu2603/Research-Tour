@@ -27,7 +27,7 @@ function JobStatusBadge({ status }: { status: string }) {
 function ScraperCard({ scraper, label, desc }: { scraper: "vietravel" | "findtourgo"; label: string; desc: string }) {
   const qc = useQueryClient();
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
-  const [activeJobId, setActiveJobId] = useState<number | null>(null);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -40,7 +40,7 @@ function ScraperCard({ scraper, label, desc }: { scraper: "vietravel" | "findtou
     }
   };
 
-  const pollJobStatus = (jobId: number) => {
+  const pollJobStatus = (jobId: string) => {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(async () => {
       try {
