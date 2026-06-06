@@ -27,6 +27,8 @@ def _migrate_tour_columns():
         alters.append("ADD COLUMN last_synced_at TIMESTAMP")
     if "dong_tour" not in cols:
         alters.append("ADD COLUMN dong_tour VARCHAR(64) DEFAULT ''")
+    if "manual_locked" not in cols:
+        alters.append("ADD COLUMN manual_locked BOOLEAN DEFAULT FALSE")
     if not alters:
         return
     with engine.begin() as conn:

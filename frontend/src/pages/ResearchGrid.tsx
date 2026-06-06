@@ -7,6 +7,7 @@ import {
   WorkspaceInfo,
 } from "@/lib/api";
 import { fmtVND, formatPhanKhuc, segmentColor, cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
 import { COL } from "@/lib/glossary";
 import { Search, Download, Flag, FlagOff, ChevronLeft, ChevronRight, ExternalLink, Pencil, Check, X, Users, Copy, ArrowUpDown } from "lucide-react";
 
@@ -176,6 +177,8 @@ export default function ResearchGrid() {
   const { data: workspaces } = useQuery({ queryKey: ["workspaces"], queryFn: listWorkspaces, staleTime: 60000 });
   const activeWs = workspaces?.find((w) => w.id === workspaceId) ?? workspaces?.[0];
   const canEdit = activeWs?.permission === "edit" || activeWs?.is_owner;
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
 
   useEffect(() => {
     if (workspaces?.length && workspaceId == null) {
@@ -228,9 +231,13 @@ export default function ResearchGrid() {
   const mutation = useMutation({
     mutationFn: ({ id, patch }: { id: number; patch: Partial<Tour> }) =>
       patchWorkspaceTour(workspaceId!, id, patch),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ["workspace-tours"] });
-      setToast("Đã lưu vào workspace (không ảnh hưởng dữ liệu chung / So sánh VTR)");
+      // Admin sửa Thị trường/Tuyến/Thời gian → ghi vào DB chung; còn lại → riêng workspace.
+      const wroteShared = isAdmin && ["thi_truong", "tuyen_tour", "thoi_gian"].some((k) => k in variables.patch);
+      setToast(wroteShared
+        ? "Đã ghi vào dữ liệu chung (áp dụng cho So sánh VTR; quy tắc sẽ không ghi đè khi tour update)"
+        : "Đã lưu vào workspace của bạn (không ảnh hưởng dữ liệu chung / user khác)");
     },
     onError: (e: { response?: { data?: { detail?: string } } }) => {
       setToast(e.response?.data?.detail || "Lỗi lưu tour");
@@ -566,7 +573,9 @@ export default function ResearchGrid() {
                 <td className="px-3 py-2">
                   <EditableCell disabled={!canEdit} value={tour.tuyen_tour} onSave={(v) => mutation.mutate({ id: tour.id, patch: { tuyen_tour: v } })} />
                 </td>
-                <td className="px-3 py-2 text-xs text-gray-600 whitespace-nowrap">{tour.thoi_gian || "—"}</td>
+                <td className="px-3 py-2">
+                  <EditableCell disabled={!canEdit} value={tour.thoi_gian} onSave={(v) => mutation.mutate({ id: tour.id, patch: { thoi_gian: v } })} />
+                </td>
                 <td className="px-3 py-2 text-xs font-medium text-gray-900 whitespace-nowrap">
                   {tour.gia ? `${fmtVND(tour.gia)}` : tour.gia_raw || "—"}
                 </td>

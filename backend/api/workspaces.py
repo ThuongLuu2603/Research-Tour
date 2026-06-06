@@ -39,6 +39,7 @@ class WorkspaceOut(BaseModel):
 class TourOverridePatch(BaseModel):
     thi_truong: str | None = None
     tuyen_tour: str | None = None
+    thoi_gian: str | None = None
     cong_ty: str | None = None
     diem_kh: str | None = None
     analyst_note: str | None = None
@@ -49,10 +50,53 @@ class BulkOverridePatch(BaseModel):
     tour_ids: list[int]
     thi_truong: str | None = None
     tuyen_tour: str | None = None
+    thoi_gian: str | None = None
     cong_ty: str | None = None
     diem_kh: str | None = None
     analyst_note: str | None = None
     flagged: bool | None = None
+
+
+# Admin sửa các trường này → ghi THẲNG DB (chung) + khóa quy tắc; còn lại → override workspace (riêng user).
+_ADMIN_DB_FIELDS = ("thi_truong", "tuyen_tour", "thoi_gian")
+
+
+def _admin_write_classification(db, tour, data: dict, user) -> tuple[dict, bool]:
+    """Nếu user là admin: rút Thị trường/Tuyến/Thời gian khỏi ``data``, ghi thẳng DB + khóa.
+    Trả về (data còn lại để lưu override, đã_ghi_DB?). Non-admin: trả nguyên data, False."""
+    if (getattr(user, "role", "") or "") != "admin":
+        return data, False
+    remaining = dict(data)
+    wrote = False
+    if "thi_truong" in remaining:
+        tour.thi_truong = (remaining.pop("thi_truong") or "")[:128]
+        wrote = True
+    if "tuyen_tour" in remaining:
+        tour.tuyen_tour = (remaining.pop("tuyen_tour") or "")[:256]
+        wrote = True
+    if "thoi_gian" in remaining:
+        tg = (remaining.pop("thoi_gian") or "")[:64]
+        tour.thoi_gian = tg
+        from seed import parse_ngay
+        tour.so_ngay = parse_ngay(tg)
+        wrote = True
+    if wrote:
+        from datetime import datetime
+        tour.manual_locked = True       # quy tắc + sheet không ghi đè khi tour update (tên không đổi)
+        tour.phan_khuc = ""             # buộc tính lại phân khúc giá
+        tour.updated_at = datetime.utcnow()
+    return remaining, wrote
+
+
+def _recompute_phan_khuc_safe(db, tour_ids: list[int]) -> None:
+    """Tính lại phân khúc giá cho tour vừa sửa (để So sánh phản ánh ngay). Best-effort."""
+    if not tour_ids:
+        return
+    try:
+        from pricing_segments import recompute_phan_khuc_for_tour_ids
+        recompute_phan_khuc_for_tour_ids(db, tour_ids)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 class ShareWorkspaceRequest(BaseModel):
@@ -219,8 +263,13 @@ def patch_workspace_tour(
         from classification import resolve_departure_point
         data["diem_kh"] = resolve_departure_point(data["diem_kh"])
 
-    _upsert_override(db, workspace_id, tour_id, user.id, data)
+    # Admin: market/route/duration ghi thẳng DB + khóa; phần còn lại → override workspace.
+    data, wrote_db = _admin_write_classification(db, tour, data, user)
+    if data:
+        _upsert_override(db, workspace_id, tour_id, user.id, data)
     db.commit()
+    if wrote_db:
+        _recompute_phan_khuc_safe(db, [tour_id])
     override = db.query(TourOverride).filter(
         TourOverride.workspace_id == workspace_id, TourOverride.tour_id == tour_id
     ).first()
@@ -245,12 +294,21 @@ def bulk_patch_workspace_tours(
         from classification import resolve_company_name
         patch["cong_ty"] = resolve_company_name(patch["cong_ty"])
     updated = 0
+    wrote_ids: list[int] = []
     for tour_id in body.tour_ids:
-        if not db.query(Tour.id).filter(Tour.id == tour_id).first():
+        tour = db.query(Tour).filter(Tour.id == tour_id).first()
+        if not tour:
             continue
-        _upsert_override(db, workspace_id, tour_id, user.id, patch)
+        # Admin: market/route/duration ghi thẳng DB + khóa; còn lại → override.
+        remaining, wrote_db = _admin_write_classification(db, tour, dict(patch), user)
+        if remaining:
+            _upsert_override(db, workspace_id, tour_id, user.id, remaining)
+        if wrote_db:
+            wrote_ids.append(tour_id)
         updated += 1
     db.commit()
+    if wrote_ids:
+        _recompute_phan_khuc_safe(db, wrote_ids)
     return {"updated": updated, "workspace_id": workspace_id}
 
 

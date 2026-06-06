@@ -183,6 +183,9 @@ def _row_to_fields(row: list[str], *, nguon: str = "") -> dict | None:
 
 def _needs_route_reclassification(tour: Tour, fields: dict) -> bool:
     """Chỉ chạy quy tắc tuyến khi tour chưa có phân loại hoặc tên/lịch trình đổi."""
+    # Admin khóa tay + tên KHÔNG đổi → giữ phân loại thủ công, không chạy lại quy tắc.
+    if getattr(tour, "manual_locked", False) and (fields.get("ten_tour") or "").strip() == (tour.ten_tour or "").strip():
+        return False
     if not (tour.tuyen_tour or "").strip() or not (tour.thi_truong or "").strip():
         return True
     if (fields.get("ten_tour") or "").strip() != (tour.ten_tour or "").strip():
@@ -362,12 +365,26 @@ def _apply_fields_to_tour(
 
     note = tour.analyst_note
     flagged = tour.flagged
-    phan_khuc_dirty = _phan_khuc_inputs_changed(tour, fields)
+
+    # Khóa thủ công (admin) + tên KHÔNG đổi → giữ Thị trường/Tuyến/Thời gian; đổi tên = tour mới → bỏ khóa.
+    _old_name = (tour.ten_tour or "").strip()
+    _new_name = (fields.get("ten_tour") or "").strip()
+    _name_changed = bool(_old_name) and _new_name != _old_name
+    _was_locked = bool(getattr(tour, "manual_locked", False))
+    locked = _was_locked and not _name_changed
+    if _was_locked and _name_changed:
+        tour.manual_locked = False
+
+    if locked:
+        # Chỉ tính lại phân khúc khi GIÁ đổi (thời gian/tuyến giữ nguyên do khóa).
+        phan_khuc_dirty = (not (tour.phan_khuc or "").strip()) or (fields.get("gia") != tour.gia)
+    else:
+        phan_khuc_dirty = _phan_khuc_inputs_changed(tour, fields)
 
     tour.cong_ty = resolve_company_name(fields["cong_ty"])[:256]
     tour.ten_tour = fields["ten_tour"][:512]
     tour.lich_trinh = fields["lich_trinh"]
-    if preserve_classification and (tour.thi_truong or tour.tuyen_tour):
+    if (preserve_classification or locked) and (tour.thi_truong or tour.tuyen_tour):
         fields = {
             **fields,
             "thi_truong": tour.thi_truong or "",
@@ -376,7 +393,7 @@ def _apply_fields_to_tour(
     if nguon in ("Main", "Vietravel"):
         mk = (fields.get("thi_truong") or "").strip()
         rt = (fields.get("tuyen_tour") or "").strip()
-        if not preserve_classification and not mk and not rt:
+        if not preserve_classification and not locked and not mk and not rt:
             mk, rt = classify_route_fields(tour.ten_tour, tour.lich_trinh)
         tour.thi_truong = mk[:128]
         tour.tuyen_tour = rt[:256]
@@ -385,7 +402,8 @@ def _apply_fields_to_tour(
         tour.thi_truong = fields["thi_truong"][:128]
         tour.tuyen_tour = fields["tuyen_tour"][:256]
     tour.diem_kh = resolve_departure_point(fields["diem_kh"])[:256]
-    tour.thoi_gian = fields["thoi_gian"][:64]
+    if not locked:
+        tour.thoi_gian = fields["thoi_gian"][:64]
     tour.gia_raw = fields["gia_raw"][:64]
     tour.gia = fields["gia"]
     tour.lich_kh = fields["lich_kh"]
@@ -397,7 +415,8 @@ def _apply_fields_to_tour(
     tour.hang_khong = _clean_field(fields.get("hang_khong"))
     if "dong_tour" in fields:  # chỉ cập nhật khi nguồn có cung cấp (giữ nguyên nếu sync nguồn khác)
         tour.dong_tour = (fields.get("dong_tour") or "")[:64]
-    tour.so_ngay = parse_ngay(fields["thoi_gian"])
+    if not locked:
+        tour.so_ngay = parse_ngay(fields["thoi_gian"])
     if phan_khuc_dirty:
         tour.phan_khuc = ""
     if not preserve_nguon:

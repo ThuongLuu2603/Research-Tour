@@ -328,6 +328,7 @@ def _iter_canonical_tour_batches(
         Tour.classified_at,
         Tour.segment_key,
         Tour.search_text,
+        Tour.manual_locked,   # cần để bỏ qua tour admin đã khóa tay
     )
     last_id = max(0, int(start_after_id or 0))
     while True:
@@ -1050,6 +1051,9 @@ def _apply_rule_result_to_tour(
     update_derived: bool = True,
 ) -> tuple[int, int]:
     """Cập nhật thị trường/tuyến + metadata classify. Trả (market_n, route_n)."""
+    # Admin đã khóa tay tour này → quy tắc KHÔNG được ghi đè thị trường/tuyến (đổi tên mới bỏ khóa, xử lý ở sync).
+    if getattr(t, "manual_locked", False):
+        return 0, 0
     market_n = route_n = 0
     changed = False
     if from_rule:

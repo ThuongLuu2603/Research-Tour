@@ -8,7 +8,7 @@ from typing import Any
 from models import Tour, TourOverride
 
 OVERRIDE_FIELDS = frozenset({
-    "cong_ty", "thi_truong", "tuyen_tour", "diem_kh", "analyst_note", "flagged",
+    "cong_ty", "thi_truong", "tuyen_tour", "diem_kh", "thoi_gian", "analyst_note", "flagged",
 })
 
 TOUR_EXPORT_FIELDS = (
@@ -35,6 +35,14 @@ class EffectiveTour:
         for k, v in self.overrides.items():
             if k in OVERRIDE_FIELDS:
                 out[k] = v
+        # Override thời gian → tính lại số ngày để hiển thị/giá-ngày khớp trong workspace.
+        if "thoi_gian" in self.overrides:
+            try:
+                from seed import parse_ngay
+                out["so_ngay"] = parse_ngay(self.overrides["thoi_gian"])
+            except Exception:
+                pass
+        out["dong_tour"] = getattr(self.tour, "dong_tour", "")
         out["has_override"] = self.has_override
         out["canonical_id"] = self.tour.id
         return out
