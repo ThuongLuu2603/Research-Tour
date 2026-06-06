@@ -2,10 +2,39 @@ import { Suspense } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import {
-  Home, Table2, Scale, FileText, Radio, LogOut, User, Settings, Tags, Microscope, Plane,
+  Home, Table2, Scale, FileText, Radio, LogOut, User, Settings, Tags, Microscope,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ChunkErrorBoundary from "@/components/ChunkErrorBoundary";
+
+/**
+ * Vietravel Brand Wordmark
+ * - Chữ "Vietravel" trắng (font weight 800)
+ * - Dấu chấm ĐỎ #E30613 trên chữ "i" (dùng "ı" dotless để render dot custom)
+ * - Optional ® registered mark
+ */
+function VietravelWordmark({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
+  const sizing = {
+    sm: { text: "text-base", dot: "w-1 h-1 -top-0.5", reg: "text-[7px]" },
+    md: { text: "text-lg", dot: "w-1.5 h-1.5 -top-1", reg: "text-[8px]" },
+    lg: { text: "text-2xl", dot: "w-2 h-2 -top-1.5", reg: "text-[10px]" },
+  }[size];
+  return (
+    <span className={cn("font-extrabold tracking-tight leading-none text-white inline-flex items-baseline", sizing.text)}>
+      <span>V</span>
+      <span className="relative inline-block">
+        <span
+          aria-hidden
+          className={cn("absolute left-1/2 -translate-x-1/2 rounded-full bg-accent-500 shadow-[0_0_0_1px_rgba(227,6,19,0.35)]", sizing.dot)}
+        />
+        {/* dotless i (U+0131) — để render dấu chấm ĐỎ custom */}
+        <span>ı</span>
+      </span>
+      <span>etravel</span>
+      <sup className={cn("ml-0.5 text-white/60 font-medium", sizing.reg)}>®</sup>
+    </span>
+  );
+}
 
 function PageFallback() {
   return (
@@ -73,17 +102,13 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">
-      <aside className="w-56 bg-gradient-to-b from-primary-700 to-primary-900 flex flex-col flex-shrink-0 shadow-xl">
+      <aside className="w-56 bg-gradient-to-b from-primary-600 via-primary-700 to-primary-900 flex flex-col flex-shrink-0 shadow-xl">
+        {/* Brand header — Vietravel official wordmark + research hub label */}
         <div className="px-4 py-5 border-b border-white/10">
-          <div className="flex items-center gap-2.5">
-            <span className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center">
-              <Plane size={18} className="text-accent-400" />
-            </span>
-            <div>
-              <p className="text-white font-bold text-sm leading-tight">VTR Intelligence</p>
-              <p className="text-blue-200/80 text-xs">Research Hub</p>
-            </div>
-          </div>
+          <VietravelWordmark size="md" />
+          <p className="text-blue-100/70 text-[10px] font-semibold tracking-[0.18em] mt-1.5 uppercase">
+            Market Research Hub
+          </p>
         </div>
 
         <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto stagger">
@@ -102,7 +127,8 @@ export default function Layout() {
           )}
         </nav>
 
-        <div className="px-3 py-4 border-t border-white/10">
+        <div className="px-3 py-3 border-t border-white/10 space-y-2">
+          {/* User profile */}
           <div className="flex items-center gap-2 px-2 py-2 rounded-lg transition-colors hover:bg-white/5">
             <div className="w-7 h-7 bg-white rounded-full flex items-center justify-center flex-shrink-0 text-sm ring-2 ring-white/20">
               {user?.avatar_url && !user.avatar_url.startsWith("http") ? (
@@ -115,16 +141,20 @@ export default function Layout() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-white text-xs font-medium truncate">{user?.display_name || user?.username}</p>
-              <p className="text-blue-300/80 text-xs truncate">@{user?.username}</p>
+              <p className="text-blue-100/70 text-xs truncate">@{user?.username}</p>
             </div>
             <button
               onClick={logout}
               title="Đăng xuất"
-              className="text-blue-200 hover:text-white hover:bg-white/10 p-1.5 rounded-lg transition-all active:scale-90"
+              className="text-blue-100 hover:text-white hover:bg-white/10 p-1.5 rounded-lg transition-all active:scale-90"
             >
               <LogOut size={16} />
             </button>
           </div>
+          {/* Vietravel tagline */}
+          <p className="text-center text-blue-100/60 text-[9px] font-semibold tracking-[0.22em] uppercase pb-0.5">
+            Your Journey · Your Value
+          </p>
         </div>
       </aside>
 

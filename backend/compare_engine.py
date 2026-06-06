@@ -6,6 +6,7 @@ import re
 import statistics
 from collections import defaultdict
 from dataclasses import dataclass, field
+from functools import cached_property
 
 from config import settings
 from departure_parser import (
@@ -319,25 +320,29 @@ class SegmentStats:
     so_ngay: float
     entries: list[TourEntry] = field(default_factory=list)
 
-    @property
+    @cached_property
     def vtr_entries(self) -> list[TourEntry]:
         return [e for e in self.entries if e.is_vietravel]
 
-    @property
+    @cached_property
     def market_entries(self) -> list[TourEntry]:
         return [e for e in self.entries if not e.is_vietravel]
 
-    def _vtr_period_dates(self) -> list:
+    @cached_property
+    def _cached_vtr_period_dates(self) -> list:
         dates = []
         for e in self.vtr_entries:
             dates.extend(parse_departure_dates(e.lich_kh))
         return dates
 
-    @property
+    def _vtr_period_dates(self) -> list:
+        return self._cached_vtr_period_dates
+
+    @cached_property
     def vtr_comparison_period(self) -> str:
         return vtr_period_label(self._vtr_period_dates())
 
-    @property
+    @cached_property
     def market_entries_in_period(self) -> list[TourEntry]:
         vtr_dates = self._vtr_period_dates()
         if not vtr_dates:
@@ -348,7 +353,7 @@ class SegmentStats:
         ]
         return matched if matched else self.market_entries
 
-    @property
+    @cached_property
     def vtr_price_entries(self) -> list[TourEntry]:
         """Tour VTR dùng để TÍNH GIÁ: chỉ Dòng tour Tiết kiệm/Giá Tốt.
         Rollout-safe: nếu segment chưa có dữ liệu Dòng tour nào (chưa scrape lại) → dùng tất cả."""
@@ -357,7 +362,7 @@ class SegmentStats:
             return ents
         return [e for e in ents if _norm_tier(e.dong_tour) in VTR_PRICE_TIERS]
 
-    @property
+    @cached_property
     def market_price_entries(self) -> list[TourEntry]:
         """Tour thị trường dùng để TÍNH GIÁ SO SÁNH: chỉ phân khúc Premium (≈ TB tuyến).
         Rollout-safe: nếu chưa tour nào có phân khúc → dùng tất cả."""

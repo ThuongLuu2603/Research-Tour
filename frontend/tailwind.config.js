@@ -4,32 +4,50 @@ export default {
   theme: {
     extend: {
       colors: {
+        // VIETRAVEL BLUE — Primary brand color (logo background)
         primary: {
-          DEFAULT: "#003580",
-          50: "#eff6ff",
-          100: "#dbeafe",
-          200: "#bfdbfe",
-          300: "#93c5fd",
-          400: "#60a5fa",
-          500: "#3b82f6",
-          600: "#003580",
-          700: "#002760",
-          800: "#001f4d",
-          900: "#001a40",
+          DEFAULT: "#0033A0",
+          50: "#EFF3FF",
+          100: "#DCE5FB",
+          200: "#B9CBF6",
+          300: "#8AA8EE",
+          400: "#5680E2",
+          500: "#2E5DD2",
+          600: "#0033A0",
+          700: "#002A85",
+          800: "#001F66",
+          900: "#001448",
         },
+        // VIETRAVEL RED — Accent (chấm trên chữ "i" + critical alerts)
         accent: {
-          DEFAULT: "#06b6d4",
-          400: "#22d3ee",
-          500: "#06b6d4",
-          600: "#0891b2",
+          DEFAULT: "#E30613",
+          50: "#FFF1F2",
+          100: "#FFE4E6",
+          400: "#F2384B",
+          500: "#E30613",
+          600: "#C70511",
+          700: "#A0040E",
+        },
+        // Brand-aware semantic colors
+        brand: {
+          blue: "#0033A0",
+          red: "#E30613",
+          "blue-deep": "#001448",
+          "blue-soft": "#EFF3FF",
         },
       },
       fontFamily: {
         sans: ["Inter", "system-ui", "sans-serif"],
       },
       boxShadow: {
-        glow: "0 0 0 1px rgba(59,130,246,0.15), 0 8px 30px -8px rgba(0,53,128,0.45)",
-        "card-hover": "0 12px 32px -12px rgba(0,53,128,0.25)",
+        // Brand-tinted shadows (Vietravel blue)
+        glow: "0 0 0 1px rgba(0,51,160,0.15), 0 8px 30px -8px rgba(0,51,160,0.45)",
+        "card-hover": "0 12px 32px -12px rgba(0,51,160,0.25)",
+        "brand-sm": "0 1px 3px rgba(0,51,160,0.10)",
+        "brand-md": "0 4px 6px rgba(0,51,160,0.10)",
+        "brand-lg": "0 10px 15px rgba(0,51,160,0.12)",
+        "brand-xl": "0 20px 25px rgba(0,51,160,0.15)",
+        "accent-glow": "0 0 0 3px rgba(227,6,19,0.15)",
       },
       keyframes: {
         "fade-in": {

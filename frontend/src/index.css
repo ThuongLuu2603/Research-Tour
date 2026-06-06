@@ -8,17 +8,17 @@
   body {
     @apply bg-gray-50 text-gray-900 font-sans antialiased;
   }
-  /* Cuộn mượt + tô chọn theo brand */
+  /* Cuộn mượt + tô chọn theo brand Vietravel */
   html {
     scroll-behavior: smooth;
   }
   ::selection {
-    @apply bg-primary-500/20 text-primary-700;
+    @apply bg-primary-600/20 text-primary-700;
   }
-  /* Scrollbar mảnh, hiện đại */
+  /* Scrollbar mảnh, hiện đại — Vietravel blue tint */
   * {
     scrollbar-width: thin;
-    scrollbar-color: rgba(0, 53, 128, 0.25) transparent;
+    scrollbar-color: rgba(0, 51, 160, 0.28) transparent;
   }
   *::-webkit-scrollbar {
     width: 8px;
@@ -44,30 +44,60 @@
 }
 
 @layer components {
+  /* === BUTTONS — Vietravel brand === */
   .btn-primary {
-    @apply inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-lg shadow-sm transition-all duration-200 hover:bg-primary-700 hover:shadow-md active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100;
+    @apply inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg shadow-brand-sm transition-all duration-200 hover:bg-primary-700 hover:shadow-brand-md hover:-translate-y-px active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100;
   }
   .btn-secondary {
-    @apply inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg transition-all duration-200 hover:bg-gray-50 hover:border-gray-400 active:scale-[0.97];
+    @apply inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg transition-all duration-200 hover:bg-gray-50 hover:border-primary-300 hover:text-primary-700 active:scale-[0.97];
   }
   .btn-danger {
-    @apply inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg transition-all duration-200 hover:bg-red-700 active:scale-[0.97];
+    @apply inline-flex items-center gap-2 px-4 py-2 bg-accent-500 text-white text-sm font-semibold rounded-lg shadow-sm transition-all duration-200 hover:bg-accent-600 active:scale-[0.97];
   }
+  /* Ghost button — minimal action */
+  .btn-ghost {
+    @apply inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-primary-700 rounded-lg transition-all duration-200 hover:bg-primary-50 active:scale-[0.97];
+  }
+
+  /* === CARDS === */
   .card {
-    @apply bg-white rounded-xl border border-gray-200 shadow-sm;
+    @apply bg-white rounded-xl border border-gray-200 shadow-brand-sm;
   }
-  /* Thẻ có tương tác: nhấc nhẹ khi hover */
   .card-interactive {
     @apply card transition-all duration-300 hover:-translate-y-0.5 hover:shadow-card-hover hover:border-primary-200;
   }
+  /* Brand-strip card: thanh xanh trái */
+  .card-branded {
+    @apply card border-l-[3px] border-l-primary-600;
+  }
+  /* Alert card: thanh đỏ trái */
+  .card-alert {
+    @apply card border-l-[3px] border-l-accent-500;
+  }
+
   .input {
     @apply w-full px-3 py-2 border border-gray-300 rounded-lg text-sm transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent;
   }
   .badge {
     @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
   }
+  .badge-brand {
+    @apply badge bg-primary-50 text-primary-700 ring-1 ring-primary-200;
+  }
+  .badge-accent {
+    @apply badge bg-accent-50 text-accent-600 ring-1 ring-accent-100;
+  }
   .kpi-card {
     @apply card p-5 flex flex-col gap-1;
+  }
+  /* KPI variant với thanh blue trái — branded look */
+  .kpi-card-branded {
+    @apply kpi-card border-l-[3px] border-l-primary-600;
+  }
+
+  /* Vietravel-style logo dot — chấm đỏ trên chữ "i" */
+  .vtr-dot {
+    @apply inline-block w-1.5 h-1.5 rounded-full bg-accent-500 align-top;
   }
 
   /* Tiện ích chuyển động dùng lại toàn hệ thống */
@@ -77,8 +107,13 @@
   .glass {
     @apply bg-white/10 backdrop-blur-xl border border-white/20;
   }
+  /* Gradient text Vietravel — blue depth thay vì cyan */
   .gradient-text {
-    @apply bg-gradient-to-r from-primary-500 via-accent-400 to-primary-300 bg-clip-text text-transparent;
+    @apply bg-gradient-to-r from-primary-500 via-primary-600 to-primary-800 bg-clip-text text-transparent;
+  }
+  /* Brand gradient với accent đỏ — dùng cho hero/CTA */
+  .gradient-brand {
+    @apply bg-gradient-to-r from-primary-700 via-primary-600 to-accent-600 bg-clip-text text-transparent;
   }
 
   /* Skeleton loading dạng shimmer — thay spinner đứng yên */
