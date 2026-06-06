@@ -80,8 +80,10 @@ def home_brief(db: Session = Depends(get_db), _: User = Depends(get_current_user
 
 @router.post("/snapshot/capture")
 def capture_snapshot(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from db_retry import run_with_retry
+
     tours = filter_tours_for_market_compare(_market_compare_tour_query(db).all())
-    daily = capture_daily_snapshot(db, tours)
+    daily = run_with_retry(lambda: capture_daily_snapshot(db, tours), db=db, label="api-snapshot")
     return {"snapshot_date": daily.snapshot_date.isoformat(), "message": "Đã chụp snapshot & sinh insight"}
 
 

@@ -88,14 +88,21 @@ def trigger_scrape(
     if running:
         raise HTTPException(status_code=409, detail=f"Đang có job {req.scraper} chạy (id={running.id})")
 
-    job = ScrapeJob(
-        scraper_name=req.scraper,
-        status="pending",
-        triggered_by=current_user.username,
-    )
-    db.add(job)
-    db.commit()
-    db.refresh(job)
+    from db_retry import run_with_retry
+
+    def _create_job():
+        db.rollback()
+        j = ScrapeJob(
+            scraper_name=req.scraper,
+            status="pending",
+            triggered_by=current_user.username,
+        )
+        db.add(j)
+        db.commit()
+        db.refresh(j)
+        return j
+
+    job = run_with_retry(_create_job, db=db, label="job-create")
 
     thread = threading.Thread(target=_run_job, args=(job.id, req.scraper), daemon=True)
     thread.start()
@@ -142,6 +149,7 @@ def cancel_stale_job(
     kill giữa chừng để lại khóa kẹt) + đánh dấu failed. Không cần nút giải phóng khóa riêng."""
     from job_cancel import request_cancel
     from db_job_lock import force_release
+    from db_retry import run_with_retry
 
     job = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
     if not job:
@@ -153,10 +161,17 @@ def cancel_stale_job(
         force_release()      # nhả khóa ghi tour ngay (zombie thread không tự nhả được)
     except Exception:
         pass
-    job.status = "failed"
-    job.finished_at = datetime.utcnow()
-    job.message = ((job.message or "").strip() + " | Đã dừng theo yêu cầu")[:512]
-    db.commit()
+
+    def _mark_cancelled():
+        db.rollback()
+        j = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
+        if j and j.status in ("pending", "running"):
+            j.status = "failed"
+            j.finished_at = datetime.utcnow()
+            j.message = ((j.message or "").strip() + " | Đã dừng theo yêu cầu")[:512]
+            db.commit()
+
+    run_with_retry(_mark_cancelled, db=db, label="job-cancel")
     return {"message": f"Đã yêu cầu dừng job #{job_id}", "job_id": str(job_id)}
 
 
@@ -244,16 +259,22 @@ _SCRAPE_TIMEOUT_SEC = {
 
 
 def _persist_job_progress(job_id: int, pct: int, msg: str) -> None:
+    from db_retry import run_with_retry
+
     db = SessionLocal()
     try:
-        job = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
-        if job and job.status in ("pending", "running"):
-            job.progress_pct = max(0, min(100, pct))
-            job.message = (msg or "")[:512]
-            job.heartbeat_at = datetime.utcnow()
-            if job.status == "pending":
-                job.status = "running"
-            db.commit()
+        def _do():
+            db.rollback()  # mốc đọc mới mỗi lần thử → tránh WriteTooOld (heartbeat ghi cùng dòng liên tục)
+            job = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
+            if job and job.status in ("pending", "running"):
+                job.progress_pct = max(0, min(100, pct))
+                job.message = (msg or "")[:512]
+                job.heartbeat_at = datetime.utcnow()
+                if job.status == "pending":
+                    job.status = "running"
+                db.commit()
+
+        run_with_retry(_do, db=db, label="job-progress")
     except Exception:
         db.rollback()
     finally:
@@ -314,16 +335,24 @@ def set_event_loop(loop: asyncio.AbstractEventLoop):
 def _run_job(job_id: int, scraper_name: str):
     from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
     from runtime_state import wait_db_ready
+    from db_retry import run_with_retry
 
     if not wait_db_ready(timeout=300):
         db = SessionLocal()
         try:
-            job = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
-            if job:
-                job.status = "failed"
-                job.message = "Database chưa sẵn sàng sau 5 phút — thử lại sau khi deploy xong"
-                job.finished_at = datetime.utcnow()
-                db.commit()
+            def _mark_not_ready():
+                db.rollback()
+                job = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
+                if job:
+                    job.status = "failed"
+                    job.message = "Database chưa sẵn sàng sau 5 phút — thử lại sau khi deploy xong"
+                    job.finished_at = datetime.utcnow()
+                    db.commit()
+
+            try:
+                run_with_retry(_mark_not_ready, db=db, label="job-db-not-ready")
+            except Exception:
+                pass
         finally:
             db.close()
         _emit_error(job_id, "Database chưa sẵn sàng")
@@ -334,10 +363,17 @@ def _run_job(job_id: int, scraper_name: str):
         job = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
         if not job:
             return
-        job.status = "running"
-        job.started_at = datetime.utcnow()
-        job.heartbeat_at = datetime.utcnow()
-        db.commit()
+
+        def _mark_running():
+            db.rollback()
+            j = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
+            if j:
+                j.status = "running"
+                j.started_at = datetime.utcnow()
+                j.heartbeat_at = datetime.utcnow()
+                db.commit()
+
+        run_with_retry(_mark_running, db=db, label="job-start-running")
 
         _emit(job_id, 5, f"Bắt đầu quét {scraper_name}...")
 
@@ -357,29 +393,48 @@ def _run_job(job_id: int, scraper_name: str):
                     f"Scraper {scraper_name} quá {timeout // 60} phút — hủy để tránh job treo"
                 ) from None
 
-        job.status = "success"
-        job.progress_pct = 100
-        job.tours_added = added
-        job.tours_updated = updated
-        job.finished_at = datetime.utcnow()
-        if deleted:
-            job.message = f"−{deleted} tour đã xóa khỏi DB (không còn trên Sheet)"
-        db.commit()
+        # Cập nhật trạng thái cuối CÓ RETRY — dữ liệu tour đã commit xong, đừng để 1 lỗi
+        # tạm thời (WriteTooOld/Serialization do heartbeat ghi cùng dòng) báo "failed" oan.
+        from db_retry import run_with_retry
+
+        def _finish_success():
+            db.rollback()  # bỏ read-timestamp cũ → lần thử lấy mốc mới, tránh WriteTooOld
+            j = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
+            if not j:
+                return
+            j.status = "success"
+            j.progress_pct = 100
+            j.tours_added = added
+            j.tours_updated = updated
+            j.finished_at = datetime.utcnow()
+            if deleted:
+                j.message = f"−{deleted} tour đã xóa khỏi DB (không còn trên Sheet)"
+            db.commit()
+
+        run_with_retry(_finish_success, db=db, label="job-finish-success")
         _emit_done(job_id, added, updated, deleted)
         try:
             from snapshot_service import capture_daily_snapshot
-            capture_daily_snapshot(db)
+            run_with_retry(lambda: capture_daily_snapshot(db), db=db, label="job-snapshot")
         except Exception:
             pass
 
     except Exception as exc:
-        db.rollback()
-        job = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
-        if job:
-            job.status = "failed"
-            job.message = str(exc)[:512]
-            job.finished_at = datetime.utcnow()
-            db.commit()
+        from db_retry import run_with_retry
+
+        def _finish_failed():
+            db.rollback()
+            j = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
+            if j:
+                j.status = "failed"
+                j.message = str(exc)[:512]
+                j.finished_at = datetime.utcnow()
+                db.commit()
+
+        try:
+            run_with_retry(_finish_failed, db=db, label="job-finish-failed")
+        except Exception:
+            pass
         _emit_error(job_id, f"Lỗi: {exc}")
     finally:
         from job_cancel import clear_cancel
@@ -401,11 +456,17 @@ def _run_vietravel(db: Session, job_id: int, job: ScrapeJob):
         raise RuntimeError("Không quét được tour từ travel.com.vn — site có thể đổi cấu trúc hoặc chặn bot")
     _emit(job_id, 52, f"Đã quét {len(df)} tour — đang lưu DB…")
 
-    job.tours_total = len(df)
-    db.commit()
-
     from db_retry import run_with_retry
     from job_cancel import make_cancel_check
+
+    def _set_total():
+        db.rollback()
+        j = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
+        if j:
+            j.tours_total = len(df)
+            db.commit()
+
+    run_with_retry(_set_total, db=db, label="job-set-total")
 
     result = run_with_retry(
         lambda: merge_dataframe_to_db(

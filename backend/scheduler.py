@@ -172,14 +172,21 @@ def _queue_scrape(scraper_name: str, triggered_by: str = "scheduler") -> int | N
             )
             return None
 
-        job = ScrapeJob(
-            scraper_name=scraper_name,
-            status="pending",
-            triggered_by=triggered_by,
-        )
-        db.add(job)
-        db.commit()
-        db.refresh(job)
+        from db_retry import run_with_retry
+
+        def _create_job():
+            db.rollback()
+            j = ScrapeJob(
+                scraper_name=scraper_name,
+                status="pending",
+                triggered_by=triggered_by,
+            )
+            db.add(j)
+            db.commit()
+            db.refresh(j)
+            return j
+
+        job = run_with_retry(_create_job, db=db, label="sched-job-create")
         job_id = job.id
     finally:
         db.close()
@@ -214,10 +221,11 @@ def _run_main_sheet_sync() -> None:
 def _run_daily_snapshot() -> None:
     from database import SessionLocal
     from snapshot_service import capture_daily_snapshot
+    from db_retry import run_with_retry
 
     db = SessionLocal()
     try:
-        capture_daily_snapshot(db)
+        run_with_retry(lambda: capture_daily_snapshot(db), db=db, label="sched-daily-snapshot")
         logger.info("Daily intelligence snapshot captured")
     except Exception as e:
         logger.exception("Daily snapshot failed: %s", e)

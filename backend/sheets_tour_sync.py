@@ -496,12 +496,18 @@ def _prune_stale_tours_for_source(db, nguon: str, synced_tour_ids: set[int]) -> 
 def purge_nguon_from_db(db, nguon: str) -> int:
     """Xóa toàn bộ tour một nguồn khỏi DB (vd. FindTourGo chỉ lưu Sheet)."""
     from models import Tour
+    from db_retry import run_with_retry
 
-    ids = [tid for (tid,) in db.query(Tour.id).filter(Tour.nguon == nguon).all()]
-    if not ids:
-        return 0
-    deleted = _delete_tour_ids(db, ids)
-    db.commit()
+    def _do():
+        db.rollback()  # re-query ids mỗi lần thử → idempotent, retry an toàn
+        ids = [tid for (tid,) in db.query(Tour.id).filter(Tour.nguon == nguon).all()]
+        if not ids:
+            return 0
+        n = _delete_tour_ids(db, ids)
+        db.commit()
+        return n
+
+    deleted = run_with_retry(_do, db=db, label="purge-nguon")
     logger.info("Purged %s tours with nguon=%s from DB", deleted, nguon)
     return deleted
 

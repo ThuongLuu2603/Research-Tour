@@ -143,11 +143,12 @@ def get_home_brief(db: Session) -> dict:
     if not daily:
         from snapshot_service import capture_daily_snapshot
         from tour_sources import apply_market_compare_source_filter
+        from db_retry import run_with_retry
 
         tours = apply_market_compare_source_filter(
             db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
         ).all()
-        daily = capture_daily_snapshot(db, tours)
+        daily = run_with_retry(lambda: capture_daily_snapshot(db, tours), db=db, label="brief-snapshot")
 
     try:
         insights = json.loads(daily.insights_json or "[]")

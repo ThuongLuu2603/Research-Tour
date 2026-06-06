@@ -393,76 +393,102 @@ def start_sheet_sync_background(
             _import_status["message"] = msg
         if not job_id:
             return
-        jdb = SessionLocal()
-        try:
-            from models import ScrapeJob
+        from db_retry import run_with_retry
 
-            job = jdb.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
-            if job and job.status == "running":
-                job.status = "running"
-                job.progress_pct = pct
-                job.message = msg[:512]
-                job.tours_total = total
-                job.heartbeat_at = datetime.utcnow()
-                jdb.commit()
+        def _do() -> None:
+            jdb = SessionLocal()  # phiên mới mỗi lần thử → tránh WriteTooOld
+            try:
+                from models import ScrapeJob
+
+                job = jdb.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
+                if job and job.status == "running":
+                    job.progress_pct = pct
+                    job.message = msg[:512]
+                    job.tours_total = total
+                    job.heartbeat_at = datetime.utcnow()
+                    jdb.commit()
+            finally:
+                jdb.close()
+
+        try:
+            run_with_retry(_do, label="sync-progress")
         except Exception:
-            jdb.rollback()
-        finally:
-            jdb.close()
+            pass  # heartbeat best-effort — không chặn sync
 
     def _finish_job(*, ok: bool, msg: str, added: int = 0, updated: int = 0, total: int = 0) -> None:
         if not job_id:
             return
-        jdb = SessionLocal()
-        try:
-            from models import ScrapeJob
+        from db_retry import run_with_retry
 
-            job = jdb.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
-            if not job:
-                return
-            job.status = "success" if ok else "failed"
-            job.progress_pct = 100 if ok else (job.progress_pct or 0)
-            job.message = msg[:512]
-            job.tours_added = added
-            job.tours_updated = updated
-            job.tours_total = total or job.tours_total
-            job.finished_at = datetime.utcnow()
-            job.heartbeat_at = datetime.utcnow()
-            jdb.commit()
+        def _do() -> None:
+            # Phiên MỚI mỗi lần thử → mốc đọc mới, tránh WriteTooOld do heartbeat ghi cùng dòng.
+            jdb = SessionLocal()
+            try:
+                from models import ScrapeJob
+
+                job = jdb.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
+                if not job:
+                    return
+                job.status = "success" if ok else "failed"
+                job.progress_pct = 100 if ok else (job.progress_pct or 0)
+                job.message = msg[:512]
+                job.tours_added = added
+                job.tours_updated = updated
+                job.tours_total = total or job.tours_total
+                job.finished_at = datetime.utcnow()
+                job.heartbeat_at = datetime.utcnow()
+                jdb.commit()
+            finally:
+                jdb.close()
+
+        try:
+            run_with_retry(_do, label="sync-finish-job")
         except Exception:
-            jdb.rollback()
-        finally:
-            jdb.close()
+            pass
 
     def _run():
         from job_cancel import JobCancelled, clear_cancel, make_cancel_check
+        from db_retry import run_with_retry
         cancel_check = make_cancel_check(job_id)
         db = SessionLocal()
         try:
             from sheets_tour_sync import merge_all_sheets_to_db, merge_sheet_source_to_db
 
             if job_id:
-                jdb = SessionLocal()
-                try:
-                    from models import ScrapeJob
+                def _mark_running() -> None:
+                    jdb = SessionLocal()
+                    try:
+                        from models import ScrapeJob
 
-                    job = jdb.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
-                    if job:
-                        job.status = "running"
-                        job.started_at = datetime.utcnow()
-                        job.heartbeat_at = datetime.utcnow()
-                        job.message = "Đang đọc Google Sheet…"
-                        jdb.commit()
-                finally:
-                    jdb.close()
+                        job = jdb.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
+                        if job:
+                            job.status = "running"
+                            job.started_at = datetime.utcnow()
+                            job.heartbeat_at = datetime.utcnow()
+                            job.message = "Đang đọc Google Sheet…"
+                            jdb.commit()
+                    finally:
+                        jdb.close()
+
+                try:
+                    run_with_retry(_mark_running, label="sync-mark-running")
+                except Exception:
+                    pass
 
             if main_only:
-                r = merge_sheet_source_to_db(
-                    db,
-                    "Main",
-                    force_reclassify_all=True,
-                    progress_cb=_sync_progress,
-                    cancel_check=cancel_check,
+                # merge idempotent → bọc run_with_retry: lỗi tạm thời (WriteTooOld/Serialization)
+                # trên BẤT KỲ commit lô nào bên trong sẽ chạy lại cả merge thay vì fail oan.
+                # JobCancelled KHÔNG phải lỗi DB tạm thời → không bị retry, Dừng vẫn hoạt động.
+                r = run_with_retry(
+                    lambda: merge_sheet_source_to_db(
+                        db,
+                        "Main",
+                        force_reclassify_all=True,
+                        progress_cb=_sync_progress,
+                        cancel_check=cancel_check,
+                    ),
+                    db=db,
+                    label="sync-main-merge",
                 )
                 msg = (
                     f"+{r.get('inserted', 0)} mới, ~{r.get('updated', 0)} cập nhật, "

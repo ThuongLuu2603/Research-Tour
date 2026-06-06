@@ -103,10 +103,11 @@ def _run_snapshot_bg() -> None:
     try:
         from database import SessionLocal
         from snapshot_service import capture_daily_snapshot
+        from db_retry import run_with_retry
 
         db = SessionLocal()
         try:
-            capture_daily_snapshot(db)
+            run_with_retry(lambda: capture_daily_snapshot(db), db=db, label="startup-snapshot")
         finally:
             db.close()
     except Exception as e:

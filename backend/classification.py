@@ -104,15 +104,21 @@ def clear_tour_classified_timestamps(db, *, nguon: str | None = None) -> int:
     from data_sources import DB_CANONICAL_NGUON
     from models import Tour
 
-    q = db.query(Tour).filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
-    if nguon:
-        q = q.filter(Tour.nguon == nguon)
-    n = q.update(
-        {Tour.classified_at: None, Tour.classification_rule_id: None},
-        synchronize_session=False,
-    )
-    db.commit()
-    return int(n or 0)
+    from db_retry import run_with_retry
+
+    def _do():
+        db.rollback()
+        q = db.query(Tour).filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
+        if nguon:
+            q = q.filter(Tour.nguon == nguon)
+        n = q.update(
+            {Tour.classified_at: None, Tour.classification_rule_id: None},
+            synchronize_session=False,
+        )
+        db.commit()
+        return int(n or 0)
+
+    return run_with_retry(_do, db=db, label="clear-classified")
 
 
 def invalidate_rules_changed(db=None) -> None:
@@ -225,20 +231,27 @@ def _duration_pairs_from_defaults() -> tuple[tuple[str, float], ...]:
 
 def seed_duration_aliases_from_defaults() -> int:
     from models import DurationAliasRule
-    db = SessionLocal()
-    try:
-        if db.query(DurationAliasRule).count() > 0:
-            return 0
-        order = 0
-        for days, aliases in DEFAULT_DURATION_ALIASES:
-            for a in aliases:
-                db.add(DurationAliasRule(canonical_days=days, alias=a, sort_order=order))
-                order += 1
-        db.commit()
+    from db_retry import run_with_retry
+
+    def _do():
+        db = SessionLocal()  # phiên mới mỗi lần thử; count-check → idempotent
+        try:
+            if db.query(DurationAliasRule).count() > 0:
+                return 0
+            order = 0
+            for days, aliases in DEFAULT_DURATION_ALIASES:
+                for a in aliases:
+                    db.add(DurationAliasRule(canonical_days=days, alias=a, sort_order=order))
+                    order += 1
+            db.commit()
+            return order
+        finally:
+            db.close()
+
+    n = run_with_retry(_do, label="seed-duration-aliases")
+    if n:
         invalidate_classification_cache()
-        return order
-    finally:
-        db.close()
+    return n
 
 
 def _canonical_tour_query(db):
@@ -353,16 +366,24 @@ def _iter_canonical_tour_batches(
 
 
 def apply_duration_aliases_to_tours(db) -> int:
+    from db_retry import run_with_retry
+
     count = 0
     for batch in _iter_canonical_tour_batches(db):
-        for t in batch:
-            days, matched = resolve_duration_days(t.thoi_gian, t.so_ngay)
-            if days is None:
-                continue
-            if matched and (not t.so_ngay or float(t.so_ngay) != days):
-                t.so_ngay = days
-                count += 1
-        db.commit()
+        def _do(b=batch):
+            db.rollback()  # lô đã commit trước vẫn còn; lô này re-apply sau rollback
+            n = 0
+            for t in b:
+                days, matched = resolve_duration_days(t.thoi_gian, t.so_ngay)
+                if days is None:
+                    continue
+                if matched and (not t.so_ngay or float(t.so_ngay) != days):
+                    t.so_ngay = days
+                    n += 1
+            db.commit()
+            return n
+
+        count += run_with_retry(_do, db=db, label="duration-aliases-batch")
     return count
 
 
@@ -664,10 +685,15 @@ def collect_classify_gaps(db) -> list[dict]:
         classify_gaps[title]["count"] += 1
 
     if healed_ids:
-        db.commit()
-        from tour_search import sync_search_tsv_for_ids
+        # Heal cơ hội trong 1 thao tác ĐỌC → commit best-effort: lỗi tạm thời không làm hỏng
+        # bảng gaps (lần xem sau sẽ heal lại). Không để 1 WriteTooOld phá cả màn hình.
+        try:
+            db.commit()
+            from tour_search import sync_search_tsv_for_ids
 
-        sync_search_tsv_for_ids(healed_ids)
+            sync_search_tsv_for_ids(healed_ids)
+        except Exception:
+            db.rollback()
 
     return sorted(
         [
@@ -896,31 +922,46 @@ def resolve_company_name(raw_name: str) -> str:
 
 
 def seed_company_aliases_from_defaults() -> int:
-    db = SessionLocal()
-    try:
-        if db.query(CompanyAliasRule).count() > 0:
-            return 0
-        order = 0
-        for canonical, aliases in DEFAULT_COMPANY_ALIASES:
-            for a in aliases:
-                db.add(CompanyAliasRule(canonical_name=canonical, alias=a, sort_order=order))
-                order += 1
-        db.commit()
+    from db_retry import run_with_retry
+
+    def _do():
+        db = SessionLocal()
+        try:
+            if db.query(CompanyAliasRule).count() > 0:
+                return 0
+            order = 0
+            for canonical, aliases in DEFAULT_COMPANY_ALIASES:
+                for a in aliases:
+                    db.add(CompanyAliasRule(canonical_name=canonical, alias=a, sort_order=order))
+                    order += 1
+            db.commit()
+            return order
+        finally:
+            db.close()
+
+    n = run_with_retry(_do, label="seed-company-aliases")
+    if n:
         invalidate_classification_cache()
-        return order
-    finally:
-        db.close()
+    return n
 
 
 def apply_company_aliases_to_tours(db) -> int:
+    from db_retry import run_with_retry
+
     count = 0
     for batch in _iter_canonical_tour_batches(db):
-        for t in batch:
-            resolved = resolve_company_name(t.cong_ty)
-            if resolved and resolved != (t.cong_ty or ""):
-                t.cong_ty = resolved[:256]
-                count += 1
-        db.commit()
+        def _do(b=batch):
+            db.rollback()
+            n = 0
+            for t in b:
+                resolved = resolve_company_name(t.cong_ty)
+                if resolved and resolved != (t.cong_ty or ""):
+                    t.cong_ty = resolved[:256]
+                    n += 1
+            db.commit()
+            return n
+
+        count += run_with_retry(_do, db=db, label="company-aliases-batch")
     return count
 
 
@@ -1004,31 +1045,46 @@ def resolve_departure_point(raw: str) -> str:
 
 
 def seed_departure_aliases_from_defaults() -> int:
-    db = SessionLocal()
-    try:
-        if db.query(DepartureAliasRule).count() > 0:
-            return 0
-        order = 0
-        for canonical, aliases in DEFAULT_DEPARTURE_ALIASES:
-            for a in aliases:
-                db.add(DepartureAliasRule(canonical_name=canonical, alias=a, sort_order=order))
-                order += 1
-        db.commit()
+    from db_retry import run_with_retry
+
+    def _do():
+        db = SessionLocal()
+        try:
+            if db.query(DepartureAliasRule).count() > 0:
+                return 0
+            order = 0
+            for canonical, aliases in DEFAULT_DEPARTURE_ALIASES:
+                for a in aliases:
+                    db.add(DepartureAliasRule(canonical_name=canonical, alias=a, sort_order=order))
+                    order += 1
+            db.commit()
+            return order
+        finally:
+            db.close()
+
+    n = run_with_retry(_do, label="seed-departure-aliases")
+    if n:
         invalidate_classification_cache()
-        return order
-    finally:
-        db.close()
+    return n
 
 
 def apply_departure_aliases_to_tours(db) -> int:
+    from db_retry import run_with_retry
+
     count = 0
     for batch in _iter_canonical_tour_batches(db):
-        for t in batch:
-            resolved = resolve_departure_point(t.diem_kh)
-            if resolved and resolved != (t.diem_kh or ""):
-                t.diem_kh = resolved[:256]
-                count += 1
-        db.commit()
+        def _do(b=batch):
+            db.rollback()
+            n = 0
+            for t in b:
+                resolved = resolve_departure_point(t.diem_kh)
+                if resolved and resolved != (t.diem_kh or ""):
+                    t.diem_kh = resolved[:256]
+                    n += 1
+            db.commit()
+            return n
+
+        count += run_with_retry(_do, db=db, label="departure-aliases-batch")
     return count
 
 
@@ -1105,6 +1161,8 @@ def reclassify_tours_by_nguon(db, nguon: str, *, batch_size: int = 500) -> dict:
     if nguon not in DB_CANONICAL_NGUON:
         return {"error": f"nguon không hợp lệ: {nguon}"}
 
+    from db_retry import run_with_retry
+
     invalidate_classification_cache()
     matcher = get_route_rule_matcher()
     route_n = market_n = 0
@@ -1120,12 +1178,21 @@ def reclassify_tours_by_nguon(db, nguon: str, *, batch_size: int = 500) -> dict:
         )
         if not rows:
             break
-        for t in rows:
-            mk, rt, from_rule, rule_id = matcher.resolve(t.ten_tour or "", t.lich_trinh or "")
-            m_delta, r_delta = _apply_rule_result_to_tour(t, mk, rt, from_rule, rule_id)
-            market_n += m_delta
-            route_n += r_delta
-        db.commit()
+
+        def _do(b=rows):
+            db.rollback()  # re-apply lô sau rollback (idempotent: rule giống nhau → delta 0)
+            m = r = 0
+            for t in b:
+                mk, rt, from_rule, rule_id = matcher.resolve(t.ten_tour or "", t.lich_trinh or "")
+                md, rd = _apply_rule_result_to_tour(t, mk, rt, from_rule, rule_id)
+                m += md
+                r += rd
+            db.commit()
+            return m, r
+
+        m_b, r_b = run_with_retry(_do, db=db, label="reclassify-batch")
+        market_n += m_b
+        route_n += r_b
         processed += len(rows)
         last_id = rows[-1].id
     try:
@@ -1310,19 +1377,24 @@ def apply_all_rules_to_tours(
     progress_cb: callable | None = None,
 ) -> dict:
     from db_job_lock import tours_write_lock
+    from db_retry import run_with_retry
 
-    with tours_write_lock(db, "apply_all_rules_to_tours") as locked:
-        if not locked:
-            raise RuntimeError("Đang có job khác ghi dữ liệu tour. Vui lòng thử lại sau.")
-        return _apply_all_rules_to_tours_locked(
-            db,
-            recompute_phan_khuc=recompute_phan_khuc,
-            incremental=incremental,
-            start_after_id=start_after_id,
-            initial_processed=initial_processed,
-            total_override=total_override,
-            progress_cb=progress_cb,
-        )
+    def _do():
+        db.rollback()  # mốc đọc mới; lỗi tạm thời trên commit lô → chạy lại cả apply (idempotent)
+        with tours_write_lock(db, "apply_all_rules_to_tours") as locked:
+            if not locked:
+                raise RuntimeError("Đang có job khác ghi dữ liệu tour. Vui lòng thử lại sau.")
+            return _apply_all_rules_to_tours_locked(
+                db,
+                recompute_phan_khuc=recompute_phan_khuc,
+                incremental=incremental,
+                start_after_id=start_after_id,
+                initial_processed=initial_processed,
+                total_override=total_override,
+                progress_cb=progress_cb,
+            )
+
+    return run_with_retry(_do, db=db, label="apply-all-rules")
 
 
 def _apply_classification_rules_to_tours_locked(
@@ -1385,17 +1457,22 @@ def apply_classification_rules_to_tours(
     progress_cb: callable | None = None,
 ) -> dict:
     from db_job_lock import tours_write_lock
+    from db_retry import run_with_retry
 
-    with tours_write_lock(db, "apply_classification_rules_to_tours") as locked:
-        if not locked:
-            raise RuntimeError("Đang có job khác ghi dữ liệu tour. Vui lòng thử lại sau.")
-        return _apply_classification_rules_to_tours_locked(
-            db,
-            keyword_filter=keyword_filter,
-            route_state=route_state,
-            clear_unmatched=clear_unmatched,
-            progress_cb=progress_cb,
-        )
+    def _do():
+        db.rollback()
+        with tours_write_lock(db, "apply_classification_rules_to_tours") as locked:
+            if not locked:
+                raise RuntimeError("Đang có job khác ghi dữ liệu tour. Vui lòng thử lại sau.")
+            return _apply_classification_rules_to_tours_locked(
+                db,
+                keyword_filter=keyword_filter,
+                route_state=route_state,
+                clear_unmatched=clear_unmatched,
+                progress_cb=progress_cb,
+            )
+
+    return run_with_retry(_do, db=db, label="apply-classification-rules")
 
 
 def apply_classification_for_keywords(db, keywords: list[str]) -> dict:
@@ -1536,6 +1613,8 @@ def seed_route_rules_from_bundle(db=None, *, force: bool = False) -> int:
     import json
     from pathlib import Path
 
+    from db_retry import run_with_retry
+
     path = Path(__file__).parent / "data" / "route_rules.json"
     if not path.is_file():
         logger.warning("route_rules.json not found — skip route seed")
@@ -1545,33 +1624,38 @@ def seed_route_rules_from_bundle(db=None, *, force: bool = False) -> int:
     if own_session:
         db = SessionLocal()
     try:
-        if not force and db.query(RouteKeywordRule).count() > 0:
-            return 0
-        rows = json.loads(path.read_text(encoding="utf-8"))
-        if force:
-            db.query(RouteKeywordRule).delete()
-        count = 0
-        for row in rows:
-            kws = (row.get("keywords") or "").strip()
-            if not kws:
-                continue
-            db.add(
-                RouteKeywordRule(
-                    thi_truong=row["thi_truong"],
-                    tuyen_tour=row.get("tuyen_tour") or row["thi_truong"],
-                    keywords=kws,
-                    sort_order=int(row.get("sort_order", count)),
+        def _do():
+            db.rollback()  # delete+add+commit idempotent (count-check / force re-delete) → retry an toàn
+            if not force and db.query(RouteKeywordRule).count() > 0:
+                return 0
+            rows = json.loads(path.read_text(encoding="utf-8"))
+            if force:
+                db.query(RouteKeywordRule).delete()
+            count = 0
+            for row in rows:
+                kws = (row.get("keywords") or "").strip()
+                if not kws:
+                    continue
+                db.add(
+                    RouteKeywordRule(
+                        thi_truong=row["thi_truong"],
+                        tuyen_tour=row.get("tuyen_tour") or row["thi_truong"],
+                        keywords=kws,
+                        sort_order=int(row.get("sort_order", count)),
+                    )
                 )
-            )
-            count += 1
-        db.commit()
-        invalidate_classification_cache()
-        try:
-            from route_rule_tokens import rebuild_route_rule_tokens
+                count += 1
+            db.commit()
+            invalidate_classification_cache()
+            try:
+                from route_rule_tokens import rebuild_route_rule_tokens
 
-            rebuild_route_rule_tokens(db)
-        except Exception:
-            pass
+                rebuild_route_rule_tokens(db)
+            except Exception:
+                pass
+            return count
+
+        count = run_with_retry(_do, db=db, label="seed-route-rules")
         logger.info("Seeded %s route rules from bundle", count)
         return count
     finally:
@@ -1581,19 +1665,26 @@ def seed_route_rules_from_bundle(db=None, *, force: bool = False) -> int:
 
 def seed_market_rules_from_hardcode() -> int:
     """Import MARKET_KEYWORDS vào DB (bỏ qua nếu đã có)."""
-    db = SessionLocal()
-    try:
-        if db.query(MarketKeywordRule).count() > 0:
-            return 0
-        count = 0
-        order = 0
-        for market, keywords in _HARDCODED_MARKET.items():
-            for kw in keywords:
-                db.add(MarketKeywordRule(market=market, keyword=kw, sort_order=order))
-                count += 1
-                order += 1
-        db.commit()
+    from db_retry import run_with_retry
+
+    def _do():
+        db = SessionLocal()
+        try:
+            if db.query(MarketKeywordRule).count() > 0:
+                return 0
+            count = 0
+            order = 0
+            for market, keywords in _HARDCODED_MARKET.items():
+                for kw in keywords:
+                    db.add(MarketKeywordRule(market=market, keyword=kw, sort_order=order))
+                    count += 1
+                    order += 1
+            db.commit()
+            return count
+        finally:
+            db.close()
+
+    n = run_with_retry(_do, label="seed-market-rules")
+    if n:
         invalidate_classification_cache()
-        return count
-    finally:
-        db.close()
+    return n

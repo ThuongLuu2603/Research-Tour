@@ -84,24 +84,40 @@ def sync_main_sheet_live(
     if running:
         raise HTTPException(status_code=409, detail=f"Đang đồng bộ Main (job #{running.id})")
 
-    job = ScrapeJob(
-        scraper_name="sync_main",
-        status="running",
-        progress_pct=0,
-        message="Đang đọc Google Sheet…",
-        triggered_by=current_user.username,
-        started_at=datetime.utcnow(),
-        heartbeat_at=datetime.utcnow(),
-    )
-    db.add(job)
-    db.commit()
-    db.refresh(job)
+    from db_retry import run_with_retry
+
+    def _create_job():
+        db.rollback()
+        j = ScrapeJob(
+            scraper_name="sync_main",
+            status="running",
+            progress_pct=0,
+            message="Đang đọc Google Sheet…",
+            triggered_by=current_user.username,
+            started_at=datetime.utcnow(),
+            heartbeat_at=datetime.utcnow(),
+        )
+        db.add(j)
+        db.commit()
+        db.refresh(j)
+        return j
+
+    job = run_with_retry(_create_job, db=db, label="sync-main-job-create")
 
     if not start_sheet_sync_background(main_only=True, triggered_by=current_user.username, job_id=job.id):
-        job.status = "failed"
-        job.message = "Đồng bộ khác đang chạy"
-        job.finished_at = datetime.utcnow()
-        db.commit()
+        def _fail_job():
+            db.rollback()
+            j = db.query(ScrapeJob).filter(ScrapeJob.id == job.id).first()
+            if j:
+                j.status = "failed"
+                j.message = "Đồng bộ khác đang chạy"
+                j.finished_at = datetime.utcnow()
+                db.commit()
+
+        try:
+            run_with_retry(_fail_job, db=db, label="sync-main-job-fail")
+        except Exception:
+            pass
         raise HTTPException(status_code=409, detail="Đồng bộ đang chạy, vui lòng đợi...")
     return {"started": True, "job_id": str(job.id), "message": "Đang đồng bộ tab Main từ Google Sheet → DB…"}
 
@@ -185,8 +201,14 @@ def recompute_phan_khuc(_: User = Depends(get_current_user), db: Session = Depen
 def sync_main_sheet(_: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Chỉ đồng bộ tab Main (thị trường) — sau khi Google Apps Script cập nhật Sheet."""
     from sheets_tour_sync import merge_sheet_source_to_db
+    from db_retry import run_with_retry
     try:
-        return merge_sheet_source_to_db(db, "Main", mirror_delete=True, force_reclassify_all=True)
+        # merge idempotent (upsert theo định danh) → retry toàn bộ an toàn khi gặp lỗi tạm thời.
+        return run_with_retry(
+            lambda: merge_sheet_source_to_db(db, "Main", mirror_delete=True, force_reclassify_all=True),
+            db=db,
+            label="sync-main-sheet",
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Lỗi đồng bộ Main: {e}") from e
 

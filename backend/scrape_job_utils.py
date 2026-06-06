@@ -105,7 +105,23 @@ def reconcile_stale_scrape_jobs(db: Session, *, now: datetime | None = None) -> 
         )
 
     if fixed:
-        db.commit()
+        from db_retry import run_with_retry
+
+        def _commit_marks():
+            # Re-mark trong phiên mới sau rollback (rollback xoá thay đổi pending) → retry an toàn.
+            db.rollback()
+            rows_again = (
+                db.query(ScrapeJob).filter(ScrapeJob.id.in_(fixed)).all()
+            )
+            for j in rows_again:
+                if j.status in ("pending", "running"):
+                    _mark_stale(j, now, reason="Job treo — dọn khi đối soát")
+            db.commit()
+
+        try:
+            run_with_retry(_commit_marks, db=db, label="reconcile-stale")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("reconcile commit failed: %s", e)
     if released_write_lock:
         try:
             from db_job_lock import force_release
