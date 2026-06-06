@@ -148,7 +148,8 @@ def load_tours(
             Tour.nguon,
             Tour.updated_at,
             Tour.sheet_source,  # cần cho is_vietravel_tab() — thiếu gây lazy-load 8000+ lần
-            Tour.phan_khuc,     # cần cho segment stats
+            Tour.phan_khuc,     # cần cho segment stats (phía thị trường: Premium)
+            Tour.dong_tour,     # Dòng tour VTR (Tiết kiệm/Giá Tốt…) — lọc giá phía Vietravel
         ))
         .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
     )

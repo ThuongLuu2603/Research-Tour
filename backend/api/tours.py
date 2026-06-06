@@ -37,6 +37,7 @@ class TourOut(BaseModel):
     hang_khong: str
     so_ngay: float | None
     phan_khuc: str
+    dong_tour: str = ""
     nguon: str
     analyst_note: str
     flagged: bool

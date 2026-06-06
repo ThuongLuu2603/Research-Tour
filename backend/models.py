@@ -64,7 +64,8 @@ class Tour(Base):
 
     # Derived/computed
     so_ngay: Mapped[float | None] = mapped_column(Float, nullable=True)
-    phan_khuc: Mapped[str] = mapped_column(String(64), default="")
+    phan_khuc: Mapped[str] = mapped_column(String(64), default="")  # phân khúc giá tự tính: Standard/Premium/Luxury
+    dong_tour: Mapped[str] = mapped_column(String(64), default="", index=True)  # Dòng tour marketing của VTR (scrape travel.com.vn)
     search_text: Mapped[str] = mapped_column(Text, default="")
     search_text_folded: Mapped[str] = mapped_column(Text, default="")
     segment_key: Mapped[str] = mapped_column(String(512), default="", index=True)

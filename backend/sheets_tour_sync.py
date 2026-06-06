@@ -142,6 +142,7 @@ def _scrape_row_to_fields(row) -> dict | None:
         "ma_tour": str(row.get("ma_tour") or row.get("page_code") or "").strip(),
         "khach_san": _clean_field(str(row.get("khach_san") or "")),
         "hang_khong": _clean_field(str(row.get("hang_khong") or "")),
+        "dong_tour": str(row.get("dong_tour") or "").strip(),
     }
 
 
@@ -175,6 +176,8 @@ def _row_to_fields(row: list[str], *, nguon: str = "") -> dict | None:
         "ma_tour": (row[12] if len(row) > 12 else "").strip(),
         "khach_san": _clean_field(row[10] if len(row) > 10 else ""),
         "hang_khong": _clean_field(row[11] if len(row) > 11 else ""),
+        # Dòng tour ở cột O (index 14) — chỉ tab Vietravel có; Main không có cột này.
+        **({"dong_tour": (row[14] if len(row) > 14 else "").strip()} if nguon == "Vietravel" else {}),
     }
 
 
@@ -392,6 +395,8 @@ def _apply_fields_to_tour(
         tour.ma_tour = fields["ma_tour"][:64]
     tour.khach_san = _clean_field(fields.get("khach_san"))
     tour.hang_khong = _clean_field(fields.get("hang_khong"))
+    if "dong_tour" in fields:  # chỉ cập nhật khi nguồn có cung cấp (giữ nguyên nếu sync nguồn khác)
+        tour.dong_tour = (fields.get("dong_tour") or "")[:64]
     tour.so_ngay = parse_ngay(fields["thoi_gian"])
     if phan_khuc_dirty:
         tour.phan_khuc = ""

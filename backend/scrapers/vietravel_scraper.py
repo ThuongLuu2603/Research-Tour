@@ -30,6 +30,7 @@ SHEET_NUM_COLS = 26
 COL_LINK_TOUR = 9   # J
 COL_MA_TOUR = 12    # M
 COL_CAP_NHAT = 13   # N
+COL_DONG_TOUR = 14  # O — Dòng tour (Tiết kiệm/Tiêu chuẩn/Giá Tốt/ESG&LEI/Cao cấp)
 COL_LINK_RAW = 25   # Z
 
 HEADERS = {
@@ -53,6 +54,23 @@ _PAGEID_RE = re.compile(r"^(\d+)")
 _PAGECODE_RE = re.compile(r'\\"pageCode\\":\\"([^\\"]+)\\"')
 _PAGETITLE_RE = re.compile(r'\\"pageTitle\\":\\"([^\\"]*)\\"')
 _LINKSHARE_RE = re.compile(r'\\"linkShare\\":\\"(https://travel\.com\.vn/chuong-trinh/[^\\"]+)\\"')
+
+# Dòng tour (phân khúc marketing của VTR). tourLineName cho 4 nhóm; nhóm ESG & LEI để tên rỗng
+# nên fallback theo tourLineId.
+_TOURLINE_NAME_RE = re.compile(r'\\"tourLineName\\":\\"([^\\"]*)\\"')
+_TOURLINE_ID_RE = re.compile(r'\\"tourLineId\\":(\d+)')
+_TOURLINE_BY_ID = {1: "Tour ESG & LEI", 2: "Tiêu chuẩn", 3: "Tiết kiệm", 4: "Giá Tốt", 6: "Cao cấp"}
+
+
+def _extract_dong_tour(chunk: str) -> str:
+    m = _TOURLINE_NAME_RE.search(chunk)
+    name = _decode_json_str(m.group(1)).strip() if m else ""
+    if name:
+        return name
+    mid = _TOURLINE_ID_RE.search(chunk)
+    if mid:
+        return _TOURLINE_BY_ID.get(int(mid.group(1)), "")
+    return ""
 
 _FIELD_RE = {
     "departureName": re.compile(r'\\"departureName\\":\\"([^\\"]*)\\"'),
@@ -263,6 +281,7 @@ def scrape_listing_page(url: str) -> list[dict[str, Any]]:
                 "ten_tour": _decode_json_str(title_m.group(1)) if title_m else "",
                 "lich_trinh": _extract_destination(block),
                 "diem_kh": _extract_departure(block),
+                "dong_tour": _extract_dong_tour(chunk),
                 "thoi_gian": _extract_duration(block, chunk),
                 "gia": _fmt_price(_extract_prices(block)),
                 "lich_kh": _extract_schedule(chunk),
@@ -324,6 +343,7 @@ def _sheet_headers() -> list[str]:
     headers[11] = "Hàng không"
     headers[COL_MA_TOUR] = "Mã tour"
     headers[COL_CAP_NHAT] = "Cập nhật"
+    headers[COL_DONG_TOUR] = "Dòng tour"
     headers[COL_LINK_RAW] = "Link"
     return headers
 
@@ -356,6 +376,7 @@ def db_tours_to_dataframe(tours: list) -> pd.DataFrame:
                 "link_url": link,
                 "page_code": getattr(t, "ma_tour", "") or "",
                 "cap_nhat": cap,
+                "dong_tour": getattr(t, "dong_tour", "") or "",
             }
         )
     return pd.DataFrame(records)
@@ -378,6 +399,7 @@ def tours_to_sheet_rows(df: pd.DataFrame) -> list[list[str]]:
         row[COL_LINK_TOUR] = str(r.get("link_tour", ""))
         row[COL_MA_TOUR] = str(r.get("page_code", ""))
         row[COL_CAP_NHAT] = str(r.get("cap_nhat", ""))
+        row[COL_DONG_TOUR] = str(r.get("dong_tour", ""))
         row[COL_LINK_RAW] = str(r.get("link_url", ""))
         rows.append(row)
     return rows

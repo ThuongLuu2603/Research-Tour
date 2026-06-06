@@ -25,6 +25,8 @@ def _migrate_tour_columns():
         alters.append("ADD COLUMN content_hash VARCHAR(64) DEFAULT ''")
     if "last_synced_at" not in cols:
         alters.append("ADD COLUMN last_synced_at TIMESTAMP")
+    if "dong_tour" not in cols:
+        alters.append("ADD COLUMN dong_tour VARCHAR(64) DEFAULT ''")
     if not alters:
         return
     with engine.begin() as conn:

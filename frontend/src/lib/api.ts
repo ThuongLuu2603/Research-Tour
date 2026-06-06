@@ -114,7 +114,7 @@ export interface Tour {
   ten_tour: string; lich_trinh: string; diem_kh: string; thoi_gian: string;
   gia: number | null; gia_raw: string; lich_kh: string; link_url: string;
   ma_tour: string; khach_san: string; hang_khong: string; so_ngay: number | null;
-  phan_khuc: string; nguon: string; analyst_note: string; flagged: boolean;
+  phan_khuc: string; dong_tour?: string; nguon: string; analyst_note: string; flagged: boolean;
   has_override?: boolean; canonical_id?: number;
   sheet_sync?: { ok: boolean; message: string; row?: number } | null;
 }
