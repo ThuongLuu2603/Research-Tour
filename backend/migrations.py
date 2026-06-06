@@ -160,7 +160,6 @@ def _migrate_tour_search_columns():
 
 
 _SEARCH_IDX_FLAG = "search_indexes_v2"
-_ROUTE_METRICS_IDX_FLAG = "route_metrics_indexes_v1"
 
 
 def _migrate_search_indexes():
@@ -253,54 +252,6 @@ def _migrate_search_indexes():
         logger.warning("mark search indexes done skipped: %s", e)
 
 
-def _migrate_route_metrics_indexes():
-    """Composite indexes cho route_daily_metrics — tăng tốc load_momentum_map() +
-    latest_snapshot_date() ở market_lab_cache. Pattern query:
-      WHERE snapshot_date IN (last 2 dates)              → cần (snapshot_date DESC, route_key)
-      WHERE route_key = X ORDER BY snapshot_date DESC    → cần (route_key, snapshot_date DESC)
-    """
-    if not _is_postgres():
-        return
-    try:
-        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-            done = conn.execute(
-                text("SELECT 1 FROM app_kv WHERE key = :k"), {"k": _ROUTE_METRICS_IDX_FLAG}
-            ).first()
-        if done:
-            return
-    except Exception:
-        pass
-    stmts = [
-        # Latest snapshot scan + IN-clause filter trên 2 ngày gần nhất
-        """
-        CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_route_metrics_date_key
-        ON route_daily_metrics (snapshot_date DESC, route_key)
-        """,
-        # Per-route history (momentum drilldown, route trend chart)
-        """
-        CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_route_metrics_key_date
-        ON route_daily_metrics (route_key, snapshot_date DESC)
-        """,
-    ]
-    for stmt in stmts:
-        try:
-            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-                conn.execute(text(stmt))
-        except Exception as e:
-            logger.warning("route_metrics index skipped: %s", e)
-    try:
-        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-            conn.execute(
-                text(
-                    "INSERT INTO app_kv (key, value_json) VALUES (:k, '\"done\"') "
-                    "ON CONFLICT (key) DO NOTHING"
-                ),
-                {"k": _ROUTE_METRICS_IDX_FLAG},
-            )
-    except Exception as e:
-        logger.warning("mark route_metrics indexes done skipped: %s", e)
-
-
 def run_search_migrations(*, create_indexes: bool = False) -> None:
     """Cột + MV — indexes nặng, chạy deferred."""
     _migrate_tour_search_columns()
@@ -314,7 +265,6 @@ def run_search_migrations(*, create_indexes: bool = False) -> None:
             logger.warning("drop segment MV skipped: %s", e)
     if create_indexes:
         _migrate_search_indexes()
-        _migrate_route_metrics_indexes()
 
 
 def _backfill_tour_search_fields(batch_size: int = 500) -> None:

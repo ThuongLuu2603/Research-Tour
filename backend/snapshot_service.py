@@ -1,8 +1,6 @@
 """Snapshot hàng ngày — nền tảng trend, insight, báo cáo."""
 from __future__ import annotations
 
-import threading
-import time
 from datetime import date, datetime, timedelta
 
 from sqlalchemy.orm import Session
@@ -14,19 +12,6 @@ from tour_sources import apply_market_compare_source_filter, filter_tours_for_ma
 
 def _today() -> date:
     return date.today()
-
-
-# In-process cache cho get_trend — TTL 1h, invalidate khi đổi ngày.
-# Bài toán: ReportsPage gọi mỗi lần render, nhưng data chỉ thay đổi 1 lần/ngày.
-_TREND_CACHE: dict[tuple[date, int], tuple[float, list[dict]]] = {}
-_TREND_LOCK = threading.Lock()
-_TREND_TTL_SEC = 3600.0
-
-
-def invalidate_trend_cache() -> None:
-    """Gọi sau capture_daily_snapshot() để force refresh."""
-    with _TREND_LOCK:
-        _TREND_CACHE.clear()
 
 
 def capture_daily_snapshot(db: Session, tours: list[Tour] | None = None) -> DailySnapshot:
@@ -141,44 +126,17 @@ def capture_daily_snapshot(db: Session, tours: list[Tour] | None = None) -> Dail
     generate_alerts(db, tours, daily, insights)
 
     from market_lab_engine import capture_route_daily_metrics, generate_route_alerts
-    from market_lab_cache import (
-        get_cached_routes,
-        invalidate_market_lab_cache,
-        prewarm_market_lab_cache,
-    )
+    from market_lab_cache import get_cached_routes
 
     capture_route_daily_metrics(db, tours)
     generate_route_alerts(db, get_cached_routes(db))
 
     db.commit()
     db.refresh(daily)
-    invalidate_trend_cache()  # snapshot mới → force refresh trend
-
-    # Auto-prewarm Market Lab cache trong background thread → user mở dashboard không bị cold start 1-2 min.
-    # Chạy detached để không block snapshot pipeline; lỗi prewarm không làm fail capture.
-    def _bg_prewarm() -> None:
-        try:
-            from database import SessionLocal
-
-            with SessionLocal() as bg_db:
-                invalidate_market_lab_cache()
-                prewarm_market_lab_cache(bg_db)
-        except Exception as exc:  # noqa: BLE001
-            import logging
-            logging.getLogger(__name__).warning("background market lab prewarm failed: %s", exc)
-
-    threading.Thread(target=_bg_prewarm, daemon=True, name="market-lab-prewarm").start()
-
     return daily
 
 
 def get_trend(db: Session, days: int = 30) -> list[dict]:
-    cache_key = (_today(), days)
-    now = time.time()
-    with _TREND_LOCK:
-        hit = _TREND_CACHE.get(cache_key)
-        if hit and now - hit[0] < _TREND_TTL_SEC:
-            return hit[1]
     since = _today() - timedelta(days=days)
     rows = (
         db.query(DailySnapshot)
@@ -186,7 +144,7 @@ def get_trend(db: Session, days: int = 30) -> list[dict]:
         .order_by(DailySnapshot.snapshot_date)
         .all()
     )
-    result = [
+    return [
         {
             "date": r.snapshot_date.isoformat(),
             "avg_gap_pct": r.avg_gap_pct,
@@ -197,9 +155,6 @@ def get_trend(db: Session, days: int = 30) -> list[dict]:
         }
         for r in rows
     ]
-    with _TREND_LOCK:
-        _TREND_CACHE[cache_key] = (now, result)
-    return result
 
 
 def delta_vs_previous(db: Session) -> dict | None:
