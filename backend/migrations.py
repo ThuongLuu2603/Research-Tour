@@ -172,8 +172,11 @@ def _migrate_search_indexes():
         ON tours (nguon, thi_truong, tuyen_tour)
         WHERE gia IS NOT NULL AND gia > 0
         """,
+        # Index THƯỜNG (không UNIQUE): có dòng trùng (nguon, external_id) trong DB nên UNIQUE
+        # tạo FAIL liên tục → mỗi deploy lại rollback + đẻ job GC. Sync khớp tour bằng SELECT,
+        # không cần ràng buộc unique. Dùng tên mới để không đụng index cũ đang rollback.
         """
-        CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_tours_nguon_external_id
+        CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tours_nguon_extid
         ON tours (nguon, external_id)
         WHERE external_id IS NOT NULL AND external_id <> ''
         """,
