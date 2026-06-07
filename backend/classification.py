@@ -799,6 +799,24 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
     for t in tours:
         if vtr_only and not is_vietravel_tab(t):
             continue
+
+        # Alias mapping (company/departure/duration) gom CẢ tour FindTourGo + tour bị
+        # stats_excluded. User cần map alias cho mọi nguồn, không chỉ Main+Vietravel.
+        # Trước đây canonical filter cắt mất "CU CHI TUNNELS" và các diem_kh lạ từ FTG.
+        raw_co_for_alias = (t.cong_ty or "").strip()
+        if raw_co_for_alias and not is_company_alias_matched(raw_co_for_alias):
+            cong_ty[raw_co_for_alias] = cong_ty.get(raw_co_for_alias, 0) + 1
+        raw_dep_for_alias = (t.diem_kh or "").strip()
+        if raw_dep_for_alias and not is_departure_alias_matched(raw_dep_for_alias):
+            diem_kh[raw_dep_for_alias] = diem_kh.get(raw_dep_for_alias, 0) + 1
+        raw_tg_for_alias = (t.thoi_gian or "").strip()
+        days_for_alias, matched_for_alias = resolve_duration_days(raw_tg_for_alias, t.so_ngay)
+        if days_for_alias is None or (raw_tg_for_alias and not matched_for_alias):
+            key = raw_tg_for_alias or (f"so_ngay={t.so_ngay}" if t.so_ngay else "—")
+            thoi_gian[key] = thoi_gian.get(key, 0) + 1
+
+        # Classify (market/route) chỉ áp dụng cho Main+Vietravel — FTG dùng sheet riêng
+        # nên không tham gia route_keyword_rules. Skip nếu không canonical hoặc excluded.
         if getattr(t, "nguon", None) not in DB_CANONICAL_NGUON:
             continue
         if is_stats_excluded_tour(t):
@@ -840,17 +858,8 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
                 }
             _unmatched_add_member(tuyen_tour[title], title)
 
-        raw_co = (t.cong_ty or "").strip()
-        if raw_co and not is_company_alias_matched(raw_co):
-            cong_ty[raw_co] = cong_ty.get(raw_co, 0) + 1
-        raw_dep = (t.diem_kh or "").strip()
-        if raw_dep and not is_departure_alias_matched(raw_dep):
-            diem_kh[raw_dep] = diem_kh.get(raw_dep, 0) + 1
-        raw_tg = (t.thoi_gian or "").strip()
-        days, matched = resolve_duration_days(raw_tg, t.so_ngay)
-        if days is None or (raw_tg and not matched):
-            key = raw_tg or (f"so_ngay={t.so_ngay}" if t.so_ngay else "—")
-            thoi_gian[key] = thoi_gian.get(key, 0) + 1
+        # Đã gom company/departure/duration aliases ở đầu loop (cho mọi nguồn) — không
+        # lặp lại ở đây để tránh double-count.
 
     def _rows(d: dict[str, int]) -> list[dict]:
         # Trước đây cap [:40] — user nhập alias cho rule mới + có hàng trăm value
