@@ -23,7 +23,7 @@ from classification import (
     seed_route_rules_from_bundle,
 )
 from database import get_db
-from models import CompanyAliasRule, DepartureAliasRule, DurationAliasRule, MarketKeywordRule, RouteKeywordRule, User
+from models import CompanyAliasRule, DepartureAliasRule, DurationAliasRule, MarketKeywordRule, RouteKeywordRule, Tour, User
 from sheets_rules_sync import (
     import_market_rules_from_sheet,
     import_route_rules_to_db,
@@ -495,12 +495,25 @@ def delete_route_rule(
     rule = db.query(RouteKeywordRule).filter(RouteKeywordRule.id == rule_id).first()
     if not rule:
         raise HTTPException(404, "Không tìm thấy rule")
+
+    # Detach tours đang reference rule này trước khi xóa, nếu không
+    # FK constraint tours_classification_rule_id_fkey sẽ chặn DELETE
+    # (Render log 2026-06-07: Key (id)=(1217) referenced from tours).
+    # Các tour sẽ được reclassify trong _auto_apply_tours bên dưới.
+    detached = (
+        db.query(Tour)
+        .filter(Tour.classification_rule_id == rule_id)
+        .update({Tour.classification_rule_id: None, Tour.classified_at: None}, synchronize_session=False)
+    )
+    if detached:
+        db.commit()
+
     db.delete(rule)
     db.commit()
     _on_market_route_rules_changed(db)
     msg = _try_push_route(db) if push_sheet else None
     stats = _auto_apply_tours(db, auto_apply, scope="route")
-    return {"deleted": rule_id, "sheet_sync": msg, "tours_apply": stats}
+    return {"deleted": rule_id, "detached_tours": detached, "sheet_sync": msg, "tours_apply": stats}
 
 
 # ── Sync endpoints ────────────────────────────────────────────────────────────
