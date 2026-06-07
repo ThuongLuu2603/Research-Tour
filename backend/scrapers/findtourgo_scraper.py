@@ -89,17 +89,26 @@ def _fmt_price(v: int | float | None) -> str:
 
 
 def _vnd_price(item: dict[str, Any]) -> int:
-    sale = item.get("salePrice") or 0
-    regular = item.get("regularPrice") or 0
-    if sale and sale > 0:
-        return int(sale)
-    if regular:
-        return int(regular)
+    """Giá VND. CHỈ dùng top-level salePrice/regularPrice khi currency='VND' —
+    nếu không tour USD/SGD/JPY/... sẽ bị scrape sai (vd: ID-099999 USD 280 → hiển
+    thị "280" thay vì ~7,548,683 VND). Luôn ưu tiên VND entry trong prices array."""
+    # Bước 1: tìm VND entry trong prices array (có sẵn cho hầu hết tour đa tiền tệ).
     for p in item.get("prices") or []:
         if p.get("currency") == "VND":
             sp = p.get("salePrice") or 0
             rp = p.get("regularPrice") or 0
-            return int(sp if sp > 0 else rp)
+            val = sp if sp > 0 else rp
+            if val:
+                return int(val)
+
+    # Bước 2: top-level chỉ tin được khi currency='VND' (locale=vi không đảm bảo).
+    if (item.get("currency") or "").upper() == "VND":
+        sale = item.get("salePrice") or 0
+        regular = item.get("regularPrice") or 0
+        if sale and sale > 0:
+            return int(sale)
+        if regular:
+            return int(regular)
     return 0
 
 
@@ -788,10 +797,19 @@ def scrape_all_findtourgo_tours(
                 f"FindTourGo [{i + 1}/{n_src}] {label} ({code})…",
             )
         raw_items = fetch_country_tours(code, session=sess)
+        # Bỏ tour không có giá VND (vd: tour Bali ID-099999 chỉ có currency='USD').
+        # Tour giá 0 không có ý nghĩa so sánh thị trường → loại sớm cho gọn dữ liệu.
+        priced_items = [it for it in raw_items if _vnd_price(it) > 0]
+        skipped = len(raw_items) - len(priced_items)
+        if skipped:
+            import logging
+            logging.getLogger(__name__).info(
+                "FTG %s: bỏ %s/%s tour không có giá VND", code, skipped, len(raw_items),
+            )
         # Pre-fetch song song toàn batch trước khi build row tuần tự → loại bỏ
         # I/O-bound bottleneck của 30% tour có broken city_id.
-        _prefetch_city_caches(raw_items, city_cache, detail_city_cache, sess)
-        for item in raw_items:
+        _prefetch_city_caches(priced_items, city_cache, detail_city_cache, sess)
+        for item in priced_items:
             tour_code = (item.get("tourCode") or "").strip()
             if tour_code and tour_code in seen_codes:
                 continue
