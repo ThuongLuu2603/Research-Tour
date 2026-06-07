@@ -81,6 +81,14 @@ def invalidate_classification_cache() -> None:
     _load_route_rules.cache_clear()
     global _route_matcher
     _route_matcher = None
+    # Throttle DELETE+INSERT ~800 route_rule_tokens rows (Render log 11:34: rebuilt mỗi
+    # 2s khi user bulk delete → 24k row writes/phút → RU storm). 1 phút là đủ vì matcher
+    # in-memory đã clear ngay, tokens chỉ cần đồng bộ trước query lớn tiếp theo.
+    global _tokens_rebuild_last
+    now_ts = _rules_time.monotonic()
+    if now_ts - _tokens_rebuild_last < _TOKENS_REBUILD_THROTTLE_SEC:
+        return
+    _tokens_rebuild_last = now_ts
     try:
         from database import SessionLocal
         from route_rule_tokens import rebuild_route_rule_tokens
@@ -129,6 +137,10 @@ import threading as _rules_threading
 import time as _rules_time
 
 _RULES_INVALIDATE_THROTTLE_SEC = 300.0  # 5 phút — đủ để bulk import xong
+
+# Throttle riêng cho rebuild_route_rule_tokens (DELETE+INSERT ~800 rows).
+_TOKENS_REBUILD_THROTTLE_SEC = 60.0
+_tokens_rebuild_last = 0.0
 _rules_invalidate_lock = _rules_threading.Lock()
 _rules_invalidate_last_clear = 0.0
 _rules_invalidate_pending_clear = False

@@ -113,7 +113,7 @@ class AssignClassificationIn(BaseModel):
         description="Một dòng rule mới (OR). Trong dòng: dấu phẩy = AND.",
     )
     market_keyword: str = Field(default="", max_length=256, description="Để trống = lấy từ keyword tuyến đầu tiên")
-    auto_apply: bool = True
+    auto_apply: bool = False  # default False — user bấm "Áp dụng lên tour" thủ công sau khi sửa
 
 
 class BulkAssignClassificationItem(BaseModel):
@@ -124,7 +124,7 @@ class BulkAssignClassificationItem(BaseModel):
 
 class BulkAssignClassificationIn(BaseModel):
     items: list[BulkAssignClassificationItem] = Field(min_length=1, max_length=100)
-    auto_apply: bool = True
+    auto_apply: bool = False  # default False — user bấm "Áp dụng lên tour" thủ công sau khi sửa
 
 
 def _add_route_rule_row(db: Session, mk: str, route: str, route_kws: str) -> bool:
