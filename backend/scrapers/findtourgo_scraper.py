@@ -470,6 +470,9 @@ def _load_city_name(city_id: int | None, cache: dict[int, str], session: request
             name = (resp.json().get("name") or "").strip()
             cache[city_id] = name
             return name
+        # FindTourGo API trả 500 (NULL_POINTER) cho ~30% city IDs (chủ yếu 228xxx — legacy
+        # records mỗi agency tự tạo, chưa migrate sang master cities). Cache rỗng để không
+        # retry; fallback sang departureCountry diễn ra ở _item_to_row.
     except Exception:
         pass
     cache[city_id] = ""
@@ -504,6 +507,12 @@ def _item_to_row(
     name = (item.get("name") or "").strip()
     url = _tour_url(tour_code, slug)
     dep_city = _load_city_name(item.get("departureCity"), city_cache, session)
+    if not dep_city:
+        # FindTourGo API hỏng cho nhiều city IDs (228xxx → 500 NULL_POINTER). Fallback
+        # dùng departureCountry — không chính xác bằng city nhưng luôn có giá trị, classifier
+        # rule "điểm khởi hành" sẽ tự lọc theo tên country (vd: "Việt Nam"). Tốt hơn rỗng.
+        dep_country_code = (item.get("departureCountry") or "").upper()
+        dep_city = _country_name_vi(dep_country_code, country_cache) if dep_country_code else ""
     lich_trinh = _resolve_quoc_gia(item, listing_label, country_cache)
     price = _vnd_price(item)
     now = fmt_vn()  # giờ VN (GMT+7), không phải UTC của Render
