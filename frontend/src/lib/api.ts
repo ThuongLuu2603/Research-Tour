@@ -542,11 +542,13 @@ export const getCompareCompetitorDetail = async (company: string, filters: Compa
 // ── Classification rules (admin) ──────────────────────────────────────────────
 
 export interface MarketRule {
-  id: number; market: string; keyword: string; active: boolean; sort_order: number;
+  // id là string vì CockroachDB unique_rowid() > 2^53 — JS làm tròn → DELETE sai id.
+  // Backend đã serialize bằng field_serializer("id") trong api/rules.py.
+  id: string; market: string; keyword: string; active: boolean; sort_order: number;
 }
 
 export interface RouteRule {
-  id: number; thi_truong: string; tuyen_tour: string; keywords: string; active: boolean; priority: boolean; sort_order: number;
+  id: string; thi_truong: string; tuyen_tour: string; keywords: string; active: boolean; priority: boolean; sort_order: number;
 }
 
 export const listMarketRules = async (): Promise<MarketRule[]> => {
@@ -559,12 +561,12 @@ export const createMarketRule = async (body: { market: string; keyword: string }
   return data;
 };
 
-export const deleteMarketRule = async (id: number) => {
+export const deleteMarketRule = async (id: string) => {
   const { data } = await api.delete(`/admin/rules/market/${id}`);
   return data;
 };
 
-export const updateMarketRule = async (id: number, body: { market: string; keyword: string }) => {
+export const updateMarketRule = async (id: string, body: { market: string; keyword: string }) => {
   const { data } = await api.patch(`/admin/rules/market/${id}`, body);
   return data;
 };
@@ -579,17 +581,17 @@ export const createRouteRule = async (body: { thi_truong: string; tuyen_tour: st
   return data;
 };
 
-export const deleteRouteRule = async (id: number) => {
+export const deleteRouteRule = async (id: string) => {
   const { data } = await api.delete(`/admin/rules/route/${id}`);
   return data;
 };
 
-export const updateRouteRule = async (id: number, body: { thi_truong: string; tuyen_tour: string; keywords: string }) => {
+export const updateRouteRule = async (id: string, body: { thi_truong: string; tuyen_tour: string; keywords: string }) => {
   const { data } = await api.patch(`/admin/rules/route/${id}`, body);
   return data;
 };
 
-export const setRouteRulePriority = async (id: number, priority: boolean): Promise<RouteRule> => {
+export const setRouteRulePriority = async (id: string, priority: boolean): Promise<RouteRule> => {
   const { data } = await api.patch(`/admin/rules/route/${id}/priority`, { priority });
   return data;
 };
@@ -635,7 +637,7 @@ export const syncAllToSheet = async () => {
 };
 
 export interface CompanyRule {
-  id: number; canonical_name: string; alias: string; active: boolean; sort_order: number;
+  id: string; canonical_name: string; alias: string; active: boolean; sort_order: number;
 }
 
 export const listCompanyRules = async (): Promise<CompanyRule[]> => {
@@ -648,12 +650,12 @@ export const createCompanyRule = async (body: { canonical_name: string; alias: s
   return data;
 };
 
-export const deleteCompanyRule = async (id: number) => {
+export const deleteCompanyRule = async (id: string) => {
   const { data } = await api.delete(`/admin/rules/company/${id}`);
   return data;
 };
 
-export const updateCompanyRule = async (id: number, body: { canonical_name: string; alias: string }) => {
+export const updateCompanyRule = async (id: string, body: { canonical_name: string; alias: string }) => {
   const { data } = await api.put(`/admin/rules/company/${id}`, body);
   return data;
 };
@@ -669,7 +671,7 @@ export const applyCompanyRulesToTours = async () => {
 };
 
 export interface DepartureRule {
-  id: number; canonical_name: string; alias: string; active: boolean; sort_order: number;
+  id: string; canonical_name: string; alias: string; active: boolean; sort_order: number;
 }
 
 export const listDepartureRules = async (): Promise<DepartureRule[]> => {
@@ -682,12 +684,12 @@ export const createDepartureRule = async (body: { canonical_name: string; alias:
   return data;
 };
 
-export const deleteDepartureRule = async (id: number) => {
+export const deleteDepartureRule = async (id: string) => {
   const { data } = await api.delete(`/admin/rules/departure/${id}`);
   return data;
 };
 
-export const updateDepartureRule = async (id: number, body: { canonical_name: string; alias: string }) => {
+export const updateDepartureRule = async (id: string, body: { canonical_name: string; alias: string }) => {
   const { data } = await api.put(`/admin/rules/departure/${id}`, body);
   return data;
 };
@@ -703,7 +705,7 @@ export const applyDepartureRulesToTours = async () => {
 };
 
 export interface DurationRule {
-  id: number; canonical_days: number; alias: string; active: boolean; sort_order: number;
+  id: string; canonical_days: number; alias: string; active: boolean; sort_order: number;
 }
 
 export const listDurationRules = async (): Promise<DurationRule[]> => {
@@ -716,12 +718,12 @@ export const createDurationRule = async (body: { canonical_days: number; alias: 
   return data;
 };
 
-export const updateDurationRule = async (id: number, body: { canonical_days: number; alias: string }) => {
+export const updateDurationRule = async (id: string, body: { canonical_days: number; alias: string }) => {
   const { data } = await api.put(`/admin/rules/duration/${id}`, body);
   return data;
 };
 
-export const deleteDurationRule = async (id: number) => {
+export const deleteDurationRule = async (id: string) => {
   const { data } = await api.delete(`/admin/rules/duration/${id}`);
   return data;
 };

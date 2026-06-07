@@ -40,7 +40,7 @@ type Props = {
   onGapAssignFailed: (values: string[]) => void;
   onError: (e: unknown) => void;
   appendKeywordToRouteRule: (rule: RouteRule, raw: string) => Promise<void>;
-  deleteRouteRule: (id: number) => Promise<void>;
+  deleteRouteRule: (id: string) => Promise<void>;
   toggleRoutePriority: (rule: RouteRule) => Promise<void>;
   editRouteKeywords: (rule: RouteRule, newKeywords: string) => Promise<void>;
   actionBtns: (onDelete: () => void, onSave?: () => void) => React.ReactNode;
@@ -53,7 +53,8 @@ function sortRouteRulesForDisplay(rules: RouteRule[]): RouteRule[] {
     const na = parseRouteKeywordList(a.keywords).length;
     const nb = parseRouteKeywordList(b.keywords).length;
     if (nb !== na) return nb - na;
-    return a.sort_order - b.sort_order || a.id - b.id;
+    // id giờ là string (CockroachDB unique_rowid() > 2^53) → so sánh chuỗi thay cho phép trừ
+    return a.sort_order - b.sort_order || a.id.localeCompare(b.id);
   });
 }
 
@@ -99,11 +100,12 @@ export function ClassificationRulesTab({
   // Preview keyword match (#6)
   const [previewKw, setPreviewKw] = useState("");
   const [previewDebouncedKw, setPreviewDebouncedKw] = useState("");
-  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null); // confirm delete 2-step (#4)
-  const [editingRuleId, setEditingRuleId] = useState<number | null>(null);
+  // id đổi sang string (CockroachDB unique_rowid() > 2^53 → JS làm tròn)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null); // confirm delete 2-step (#4)
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
-  const [togglingPriorityId, setTogglingPriorityId] = useState<number | null>(null);
+  const [togglingPriorityId, setTogglingPriorityId] = useState<string | null>(null);
 
   const startEdit = (rule: RouteRule) => {
     setEditingRuleId(rule.id);

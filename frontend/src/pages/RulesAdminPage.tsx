@@ -55,7 +55,8 @@ export default function RulesAdminPage() {
   const [syncMsg, setSyncMsg] = useState("");
   const [applying, setApplying] = useState(false);
   const [fullScanApply, setFullScanApply] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
+  // id rule giờ là string (CockroachDB unique_rowid() > 2^53)
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Record<string, string>>({});
 
   const [cCanonical, setCCanonical] = useState("");
@@ -256,7 +257,7 @@ export default function RulesAdminPage() {
     if (!opts?.skipPoll) pollAfterRuleSave();
   };
 
-  const startEdit = (id: number, draft: Record<string, string>) => {
+  const startEdit = (id: string, draft: Record<string, string>) => {
     setEditingId(id);
     setEditDraft(draft);
   };
@@ -802,7 +803,7 @@ function AliasTable({
   rows: Array<CompanyRule | DepartureRule>;
   unmatched: UnmatchedItem[];
   canonicalOptions: string[];
-  editingId: number | null;
+  editingId: string | null;
   editDraft: Record<string, string>;
   dropTarget: string | null;
   setDropTarget: (k: string | null) => void;
@@ -816,7 +817,8 @@ function AliasTable({
   hideUnmatched?: boolean;
 }) {
   const [pending, setPending] = useState<Record<string, string>>({});
-  const [confirmId, setConfirmId] = useState<number | null>(null);
+  // id rule giờ là string (CockroachDB unique_rowid() > 2^53)
+  const [confirmId, setConfirmId] = useState<string | null>(null);
   const [expandedUnmatched, setExpandedUnmatched] = useState<Set<string>>(() => new Set());
 
   return (

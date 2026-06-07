@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 from sqlalchemy.orm import Session
 
 from api.auth import require_admin
@@ -55,6 +55,13 @@ class MarketRuleOut(BaseModel):
     sort_order: int
     model_config = {"from_attributes": True}
 
+    @field_serializer("id")
+    def _ser_id(self, v: int) -> str:
+        # CockroachDB unique_rowid() ~1.18e18 > 2^53 (JS Number.MAX_SAFE_INTEGER) →
+        # browser tự làm tròn → DELETE /rules/market/<wrong_id> trả 404.
+        # Cùng pattern với ScrapeJob.JobOut (commit 1d3ded1).
+        return str(v)
+
 
 class MarketRuleIn(BaseModel):
     market: str = Field(max_length=128)
@@ -72,6 +79,11 @@ class RouteRuleOut(BaseModel):
     priority: bool = False
     sort_order: int
     model_config = {"from_attributes": True}
+
+    @field_serializer("id")
+    def _ser_id(self, v: int) -> str:
+        # CockroachDB id > 2^53 → JS rounds → DELETE /rules/route/<wrong_id> = 404.
+        return str(v)
 
 
 class RouteRuleIn(BaseModel):
@@ -705,7 +717,15 @@ def sync_all_to_sheet_endpoint(_: User = Depends(require_admin), db: Session = D
 
 # ── Company alias rules ──────────────────────────────────────────────────────
 
-class CompanyRuleOut(BaseModel):
+class _RuleIdAsStrMixin:
+    """Serialize id field as string — applied to Company/Departure/Duration rule outputs."""
+
+    @field_serializer("id")
+    def _ser_id(self, v: int) -> str:
+        return str(v)
+
+
+class CompanyRuleOut(_RuleIdAsStrMixin, BaseModel):
     id: int
     canonical_name: str
     alias: str
@@ -797,7 +817,7 @@ def apply_company_rules_to_tours(_: User = Depends(require_admin), db: Session =
 
 # ── Departure alias rules (Điểm KH) ──────────────────────────────────────────
 
-class DepartureRuleOut(BaseModel):
+class DepartureRuleOut(_RuleIdAsStrMixin, BaseModel):
     id: int
     canonical_name: str
     alias: str
@@ -928,7 +948,7 @@ def apply_classification_status(_: User = Depends(require_admin)):
 
 # ── Duration alias rules (Thời gian) ─────────────────────────────────────────
 
-class DurationRuleOut(BaseModel):
+class DurationRuleOut(_RuleIdAsStrMixin, BaseModel):
     id: int
     canonical_days: float
     alias: str
