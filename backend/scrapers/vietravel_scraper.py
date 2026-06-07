@@ -344,6 +344,36 @@ def _fetch_dong_tour_detail(url: str) -> str:
     return ""
 
 
+def _fetch_departure_detail(url: str) -> str:
+    """Tour KHÔNG có departureName/Id ở listing card → lấy điểm KH từ trang chi tiết.
+
+    Trang chi tiết của mỗi tour có dropdown gồm 5 city options + 1 city được CHỌN
+    (city thực của tour). City được chọn xuất hiện 2 lần trong JSON (option list +
+    selected state), các city còn lại chỉ 1 lần. Vì vậy lấy city có count >= 2.
+
+    Verified bằng tmp_vtr_check2.py: tour pid-13385 → "Cần Thơ" (count=2),
+    tour pid-3526 → "Hà Nội" (count=2). Cả 2 tour này đều có $undefined ở listing.
+
+    Nếu cấu trúc đổi (không có duplicate) → trả "" để giữ behavior an toàn."""
+    from collections import Counter
+
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=30)
+        resp.raise_for_status()
+        names = [
+            _decode_json_str(v) for v in _DEPARTURE_NAME_RE.findall(resp.text)
+            if v and v.lower() != "$undefined"
+        ]
+        if not names:
+            return ""
+        for city, count in Counter(names).most_common():
+            if count >= 2:
+                return city
+    except Exception as e:  # noqa: BLE001
+        logger.warning("VTR lấy điểm KH từ trang chi tiết lỗi (%s): %s", url, e)
+    return ""
+
+
 def scrape_all_vietravel_tours(
     progress: Callable[[int, str], None] | None = None,
     *,
@@ -370,6 +400,18 @@ def scrape_all_vietravel_tours(
             dt = _fetch_dong_tour_detail(t["link_url"])
             if dt:
                 t["dong_tour"] = dt
+
+    # Bổ sung điểm KH cho tour mà listing không có departureName/Id (vd: tour miền Tây pid-13385,
+    # tour Hong Kong pid-3526 — listing card chứa toàn $undefined). Trang chi tiết luôn có city
+    # được chọn. Giới hạn 60 calls tương tự dong_tour, thực tế chỉ ~2-4 tour/lần scrape.
+    missing_dep = [t for t in all_tours if not (t.get("diem_kh") or "").strip() and t.get("link_url")]
+    if missing_dep:
+        if progress:
+            progress(47, f"Bổ sung điểm KH cho {len(missing_dep)} tour (trang chi tiết)…")
+        for t in missing_dep[:60]:
+            dep = _fetch_departure_detail(t["link_url"])
+            if dep:
+                t["diem_kh"] = dep
 
     df = pd.DataFrame(all_tours)
     if classify:
