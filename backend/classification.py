@@ -122,13 +122,13 @@ def clear_tour_classified_timestamps(db, *, nguon: str | None = None) -> int:
 
 
 # Throttle UPDATE 8560 tour SET classified_at=NULL. Render log 2026-06-07 10:58-59:
-# user bulk edit rules → invalidate_rules_changed bị gọi mỗi 5-7s → mỗi lần UPDATE
-# 8560 dòng → SerializationFailure (WriteTooOldError). Trong cửa sổ 30s chỉ
-# invalidate matcher in-memory; UPDATE classified_at được debounce.
+# user bulk edit rules → invalidate_rules_changed bị gọi mỗi 5-7s → CockroachDB RU spike
+# 98M/400M trong 1h (~25% monthly budget). Throttle 5 phút để chặn RU storm; UPDATE
+# classified_at sẽ dồn vào lần background apply tiếp theo qua flush_pending.
 import threading as _rules_threading
 import time as _rules_time
 
-_RULES_INVALIDATE_THROTTLE_SEC = 30.0
+_RULES_INVALIDATE_THROTTLE_SEC = 300.0  # 5 phút — đủ để bulk import xong
 _rules_invalidate_lock = _rules_threading.Lock()
 _rules_invalidate_last_clear = 0.0
 _rules_invalidate_pending_clear = False

@@ -241,6 +241,14 @@ _apply_state_lock = _threading.Lock()
 _apply_pending_scopes: set[str] = set()
 _apply_thread: _threading.Thread | None = None
 
+# RU budget protection: limit số lần apply chạy trong 1 cửa sổ thời gian.
+# Render log 2026-06-07: bulk rule import → loop chạy liên tục ~10 phút → 98M RU/h
+# (~25% monthly budget). Giới hạn tối đa 3 lần apply mỗi 10 phút; vượt → bỏ qua,
+# user dùng "Áp dụng lên tour" thủ công hoặc apply_rules_offline.py.
+_APPLY_MAX_RUNS_PER_WINDOW = 3
+_APPLY_WINDOW_SEC = 600.0
+_apply_run_timestamps: list[float] = []
+
 
 def _request_background_apply(scope: str) -> None:
     """Đảm bảo có đúng 1 thread đang xử lý apply. Trigger nhiều lần → gộp 1 lần chạy."""
@@ -270,6 +278,18 @@ def _apply_worker_loop() -> None:
         with _apply_state_lock:
             if not _apply_pending_scopes:
                 return
+            # RU budget: nếu đã chạy >= N lần trong window → bỏ pending, exit.
+            now_ts = _time.monotonic()
+            global _apply_run_timestamps
+            _apply_run_timestamps = [t for t in _apply_run_timestamps if now_ts - t < _APPLY_WINDOW_SEC]
+            if len(_apply_run_timestamps) >= _APPLY_MAX_RUNS_PER_WINDOW:
+                log.warning(
+                    "apply-rules: vượt %d lần/%ds (RU budget) → bỏ %s. User chạy thủ công sau.",
+                    _APPLY_MAX_RUNS_PER_WINDOW, int(_APPLY_WINDOW_SEC), _apply_pending_scopes,
+                )
+                _apply_pending_scopes.clear()
+                return
+            _apply_run_timestamps.append(now_ts)
             # "all" cover mọi scope khác — ưu tiên gộp
             scope = "all" if "all" in _apply_pending_scopes else next(iter(_apply_pending_scopes))
             _apply_pending_scopes.clear()
