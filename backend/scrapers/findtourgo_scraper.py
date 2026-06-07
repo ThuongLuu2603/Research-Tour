@@ -15,9 +15,16 @@ import requests
 
 from time_vn import fmt_vn, now_vn
 
-# Số worker khi pre-fetch city/day-1 song song. Cao quá → FindTourGo có thể rate-limit
-# hoặc quá tải; 16 là sweet spot ổn trong test.
-_FTG_PARALLEL_WORKERS = 16
+# Số worker khi pre-fetch city/day-1 song song. Render free tier có 0.1 CPU → 16 worker
+# concurrent SSL handshakes + JSON parse dễ bị CPU-bound và stall progress (đã observed
+# trên CN batch 200 tour). 8 worker an toàn hơn, vẫn cho speedup ~4x so với sequential.
+_FTG_PARALLEL_WORKERS = 8
+# Timeout TỪNG tour detail (giây). Ngắn để không block batch khi một call hang;
+# fallback country sẽ xử lý ổn nếu thiếu day-1.
+_FTG_DETAIL_TIMEOUT = 8.0
+# Hard cap cho toàn bộ pha pre-fetch của 1 country batch. Vượt timeout → log warning
+# và tiếp tục build row với cache hiện tại (avoid stuck mãi).
+_FTG_PREFETCH_MAX_SEC = 90.0
 
 SOURCE = "FindTourGo"
 SHEET_ID = "1sI34D88zsmSrN7Jf9fS3jh4aUvaep-blxnBR1CGq9eM"
@@ -571,7 +578,7 @@ def _fetch_day1_city_from_detail(
             f"{API_BASE}/public/tours/{tour_code}",
             params={"locale": "vi", "currency": "VND"},
             headers=HEADERS,
-            timeout=15,
+            timeout=_FTG_DETAIL_TIMEOUT,
         )
         if not resp.ok:
             detail_cache[tour_code] = ""
@@ -591,6 +598,45 @@ def _fetch_day1_city_from_detail(
     return ""
 
 
+def _run_with_deadline(
+    fn: Callable[[Any], Any],
+    args: list[Any],
+    *,
+    workers: int,
+    deadline_sec: float,
+    label: str,
+) -> None:
+    """ThreadPoolExecutor.map() có thể block vô hạn khi 1 future hang. Wrap để:
+      - submit hết job ngay
+      - chờ tới deadline rồi cancel phần còn lại + return
+    Đảm bảo scraper không stuck mãi trên 1 country.
+    """
+    if not args:
+        return
+    import logging
+    logger = logging.getLogger(__name__)
+    completed = 0
+    timed_out = False
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = [ex.submit(fn, a) for a in args]
+        try:
+            for fut in concurrent.futures.as_completed(futures, timeout=deadline_sec):
+                try:
+                    fut.result()
+                except Exception:  # noqa: BLE001
+                    pass
+                completed += 1
+        except concurrent.futures.TimeoutError:
+            timed_out = True
+            for fut in futures:
+                fut.cancel()
+    if timed_out:
+        logger.warning(
+            "FTG prefetch %s timeout sau %.0fs (%s/%s xong) — tiếp tục với cache hiện tại",
+            label, deadline_sec, completed, len(args),
+        )
+
+
 def _prefetch_city_caches(
     items: list[dict[str, Any]],
     city_cache: dict[int, str],
@@ -599,36 +645,42 @@ def _prefetch_city_caches(
 ) -> None:
     """Hai pha song song để hâm cache trước khi _item_to_row chạy tuần tự.
 
-    Pha 1: lookup tất cả city_id đang chưa cache (16 worker) — phát hiện ID nào broken.
-    Pha 2: với ID broken, fetch detail page lấy day-1 city (16 worker).
+    Pha 1: lookup tất cả city_id đang chưa cache — phát hiện ID nào broken.
+    Pha 2: với ID broken, fetch detail page lấy day-1 city.
 
-    Sequential trước đây: ~30% tour cần extra HTTP call inside loop → scrape chậm
-    đáng kể. Sau pre-fetch: tất cả HTTP calls của một batch chạy song song, _item_to_row
-    chỉ đọc cache (tức thời)."""
+    Mỗi pha có deadline cứng (_FTG_PREFETCH_MAX_SEC) để 1 country chậm không kéo
+    cả scrape job (đã observed: CN batch hang >7 phút trên Render free tier)."""
     # Pha 1: city_id lookups
-    todo_ids = {
+    todo_ids = sorted({
         int(it["departureCity"]) for it in items
         if it.get("departureCity") and int(it["departureCity"]) not in city_cache
-    }
+    })
     if todo_ids:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=_FTG_PARALLEL_WORKERS) as ex:
-            list(ex.map(lambda cid: _load_city_name(cid, city_cache, session), todo_ids))
+        _run_with_deadline(
+            lambda cid: _load_city_name(cid, city_cache, session),
+            todo_ids,
+            workers=_FTG_PARALLEL_WORKERS,
+            deadline_sec=_FTG_PREFETCH_MAX_SEC,
+            label="city-ids",
+        )
 
     # Pha 2: tour với broken ID → fetch day-1 city
-    todo_codes = {
+    todo_codes = sorted({
         (it.get("tourCode") or "").strip()
         for it in items
         if it.get("departureCity")
         and not city_cache.get(int(it["departureCity"]))
         and (it.get("tourCode") or "").strip()
         and (it.get("tourCode") or "").strip() not in detail_cache
-    }
+    })
     if todo_codes:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=_FTG_PARALLEL_WORKERS) as ex:
-            list(ex.map(
-                lambda tc: _fetch_day1_city_from_detail(tc, detail_cache, session),
-                todo_codes,
-            ))
+        _run_with_deadline(
+            lambda tc: _fetch_day1_city_from_detail(tc, detail_cache, session),
+            todo_codes,
+            workers=_FTG_PARALLEL_WORKERS,
+            deadline_sec=_FTG_PREFETCH_MAX_SEC,
+            label="day1-details",
+        )
 
 
 def _resolve_quoc_gia(
