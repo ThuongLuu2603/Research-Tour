@@ -291,6 +291,21 @@ def import_main_chunks() -> int:
     db = SessionLocal()
     total = 0
     try:
+        # Xóa tour_overrides reference tới Main tours TRƯỚC khi delete tours, nếu không
+        # FK constraint tour_overrides_tour_id_fkey sẽ chặn DELETE (đã observed trên Render
+        # log 2026-06-07: ForeignKeyViolation Key (id)=(844)).
+        from sqlalchemy import text as _sa_text
+
+        try:
+            db.execute(_sa_text(
+                "DELETE FROM tour_overrides WHERE tour_id IN ("
+                "SELECT id FROM tours WHERE nguon = :nguon)"
+            ), {"nguon": "Main"})
+            db.commit()
+        except Exception as e:  # noqa: BLE001
+            db.rollback()
+            logger.warning("Tour overrides pre-cleanup skipped: %s", e)
+
         deleted = db.query(Tour).filter(Tour.nguon == "Main").delete()
         db.commit()
         logger.info("Removed %s Main tours, importing %s chunks", deleted, len(chunks))

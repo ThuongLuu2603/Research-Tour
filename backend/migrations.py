@@ -243,7 +243,10 @@ def _migrate_search_indexes():
         with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
             conn.execute(
                 text(
-                    "INSERT INTO app_kv (key, value_json) VALUES (:k, '\"done\"') "
+                    # updated_at NOT NULL — phải supply explicitly vì raw SQL bypass
+                    # SQLAlchemy default=datetime.utcnow ở model _AppKV.
+                    "INSERT INTO app_kv (key, value_json, updated_at) "
+                    "VALUES (:k, '\"done\"', NOW()) "
                     "ON CONFLICT (key) DO NOTHING"
                 ),
                 {"k": _SEARCH_IDX_FLAG},

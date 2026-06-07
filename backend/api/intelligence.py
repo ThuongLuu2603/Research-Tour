@@ -187,17 +187,7 @@ def report_html(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    # Wrap with explicit logging so Render logs surface the real traceback
-    # instead of a generic FastAPI 500. Remove once Báo cáo BGĐ is stable.
-    import logging
-    logger = logging.getLogger(__name__)
-    try:
-        html = build_report_html(db, type)
-        logger.info("report_html OK type=%s html_len=%s", type, len(html))
-        return HTMLResponse(html)
-    except Exception as e:  # noqa: BLE001
-        logger.exception("report_html FAILED type=%s: %s", type, e)
-        raise
+    return HTMLResponse(build_report_html(db, type))
 
 
 @router.get("/alerts")

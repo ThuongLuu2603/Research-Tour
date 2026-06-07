@@ -6,7 +6,7 @@ import threading
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -15,7 +15,11 @@ logger = logging.getLogger(__name__)
 VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 VN_TZ_NAME = "Asia/Ho_Chi_Minh"
 
-_scheduler: AsyncIOScheduler | None = None
+# BackgroundScheduler thay AsyncIOScheduler — start() được gọi từ
+# _bootstrap_database trong daemon thread (không có event loop). AsyncIOScheduler
+# yêu cầu asyncio.get_running_loop() → RuntimeError trong thread mới.
+# BackgroundScheduler tự tạo thread riêng, hoạt động độc lập với event loop FastAPI.
+_scheduler: BackgroundScheduler | None = None
 _schedule_hour = 7
 _schedule_minute = 0
 
@@ -306,23 +310,25 @@ def run_due_scheduled_jobs(*, triggered_by: str = "cron") -> dict:
         db.close()
 
 
-async def _auto_scrape(scraper_name: str):
+def _auto_scrape(scraper_name: str):
+    # Sync wrapper — BackgroundScheduler chạy job trong thread, không hỗ trợ async natively.
+    # Các hàm bên trong vốn dĩ sync (_queue_scrape, _mark_job), nên `async def` chỉ là wrapper thừa.
     job_id = "daily_vietravel" if scraper_name == "vietravel" else "daily_findtourgo"
     if _queue_scrape(scraper_name, triggered_by="scheduler") is not None:
         _mark_job(job_id)
 
 
-async def _daily_snapshot():
+def _daily_snapshot():
     _run_daily_snapshot()
     _mark_job("daily_intel_snapshot")
 
 
-async def _sync_main_sheet():
+def _sync_main_sheet():
     _run_main_sheet_sync()
     _mark_job("daily_main_sheet_sync")
 
 
-async def _daily_sheet_sync():
+def _daily_sheet_sync():
     _run_daily_sheet_sync()
     _mark_job("daily_sheet_sync")
 
@@ -330,7 +336,7 @@ async def _daily_sheet_sync():
 def start_scheduler():
     global _scheduler
     _load_schedule_from_db()
-    _scheduler = AsyncIOScheduler(timezone=VN_TZ)
+    _scheduler = BackgroundScheduler(timezone=VN_TZ)
     ftg_h, ftg_m = _add_minutes(_schedule_hour, _schedule_minute, 20)
     main_h, main_m = _add_minutes(_schedule_hour, _schedule_minute, 50)
 
