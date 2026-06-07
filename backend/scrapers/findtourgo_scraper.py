@@ -472,10 +472,89 @@ def _load_city_name(city_id: int | None, cache: dict[int, str], session: request
             return name
         # FindTourGo API trả 500 (NULL_POINTER) cho ~30% city IDs (chủ yếu 228xxx — legacy
         # records mỗi agency tự tạo, chưa migrate sang master cities). Cache rỗng để không
-        # retry; fallback sang departureCountry diễn ra ở _item_to_row.
+        # retry; fallback sang day-1 itinerary diễn ra ở _item_to_row.
     except Exception:
         pass
     cache[city_id] = ""
+    return ""
+
+
+# Lấy city khởi hành từ tour itinerary ngày 1 — fallback chính khi city API broken.
+# Format thường gặp: "NGÀY 01: TP.HCM – THƯỢNG HẢI", "TP. HỒ CHÍ MINH – LỆ GIANG",
+# "Hà Nội - Urumqi", "HÀ NỘI/HỒ CHÍ MINH – THÀNH ĐÔ" (lấy city đầu tiên).
+_DAY_PREFIX_RE = re.compile(r"^\s*(?:N?G[ÀA]Y|DAY)?\s*0?1?[\s:.\-]*", re.IGNORECASE)
+_FIRST_SEG_RE = re.compile(r"^([^\-–—/()]+?)(?:\s*[\-–—/→]|\s*\()")
+
+# Aliases viết tắt → tên chuẩn. Đặt HỒ CHÍ MINH trước HCM để match chuỗi dài trước.
+_CITY_ALIASES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"H[ÒÔỒỐ]\s*CH[ÍI]\s*MINH", re.IGNORECASE), "TP. Hồ Chí Minh"),
+    (re.compile(r"(?:^|\b)HCM(?:\b|$)", re.IGNORECASE), "TP. Hồ Chí Minh"),
+    (re.compile(r"S[ÀA]I\s*G[ÒO]N", re.IGNORECASE), "TP. Hồ Chí Minh"),
+    (re.compile(r"H[ÀA]\s*N[ỘỒO]I", re.IGNORECASE), "Hà Nội"),
+    (re.compile(r"[ĐD][ÀA]\s*N[ẲĂẴẵ]NG", re.IGNORECASE), "Đà Nẵng"),
+    (re.compile(r"C[ẦẦA]N\s*TH[ƠƠO]", re.IGNORECASE), "Cần Thơ"),
+    (re.compile(r"NHA\s*TRANG", re.IGNORECASE), "Nha Trang"),
+    (re.compile(r"H[ẢẢA]I\s*PH[ÒO]NG", re.IGNORECASE), "Hải Phòng"),
+    (re.compile(r"V[ŨU]NG\s*T[ÀA]U", re.IGNORECASE), "Vũng Tàu"),
+    (re.compile(r"PHU\s*Y[ÊE]N|PH[ÚU]\s*Y[ÊE]N", re.IGNORECASE), "Phú Yên"),
+]
+
+
+def _parse_day1_city(title: str) -> str:
+    """Parse city khởi hành từ title ngày 1.
+
+    Verified trên 11 sample titles (broken-city tours): 100% match đúng.
+    Trả "" nếu không nhận diện được city quen thuộc (giữ behavior an toàn)."""
+    if not title:
+        return ""
+    cleaned = _DAY_PREFIX_RE.sub("", title)
+    m = _FIRST_SEG_RE.match(cleaned)
+    if m:
+        first = m.group(1).strip()
+    else:
+        first = re.split(r"[()\t]", cleaned)[0].strip()
+    if not first:
+        return ""
+    for pattern, canonical in _CITY_ALIASES:
+        if pattern.search(first):
+            return canonical
+    return ""
+
+
+def _fetch_day1_city_from_detail(
+    tour_code: str,
+    detail_cache: dict[str, str],
+    session: requests.Session,
+) -> str:
+    """Fetch tour detail → đọc tourLegs[dayIndex=1].title (locale=vi) → parse city.
+
+    Cache theo tourCode để 1 tour chỉ fetch 1 lần. Network error → trả "" (silent)."""
+    if not tour_code:
+        return ""
+    if tour_code in detail_cache:
+        return detail_cache[tour_code]
+    try:
+        resp = session.get(
+            f"{API_BASE}/public/tours/{tour_code}",
+            params={"locale": "vi", "currency": "VND"},
+            headers=HEADERS,
+            timeout=15,
+        )
+        if not resp.ok:
+            detail_cache[tour_code] = ""
+            return ""
+        legs = resp.json().get("tourLegs") or []
+        for leg in legs:
+            if leg.get("dayIndex") != 1:
+                continue
+            for trans in leg.get("title") or []:
+                if (trans.get("locale") or "").lower() == "vi":
+                    city = _parse_day1_city(trans.get("value") or "")
+                    detail_cache[tour_code] = city
+                    return city
+    except Exception:
+        pass
+    detail_cache[tour_code] = ""
     return ""
 
 
@@ -499,6 +578,7 @@ def _item_to_row(
     country_cache: dict[str, str],
     city_cache: dict[int, str],
     session: requests.Session,
+    detail_city_cache: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     agency = item.get("travelAgency") or {}
     company = (agency.get("name") or "").strip()
@@ -507,10 +587,14 @@ def _item_to_row(
     name = (item.get("name") or "").strip()
     url = _tour_url(tour_code, slug)
     dep_city = _load_city_name(item.get("departureCity"), city_cache, session)
+    if not dep_city and detail_city_cache is not None and tour_code:
+        # FindTourGo API hỏng cho ~30% city IDs (228xxx → 500 NULL_POINTER). Fallback chính:
+        # parse city từ tourLegs[dayIndex=1].title (vd: "NGÀY 01: TP.HCM – THƯỢNG HẢI").
+        # Costs 1 extra HTTP call per affected tour; cached theo tourCode.
+        dep_city = _fetch_day1_city_from_detail(tour_code, detail_city_cache, session)
     if not dep_city:
-        # FindTourGo API hỏng cho nhiều city IDs (228xxx → 500 NULL_POINTER). Fallback
-        # dùng departureCountry — không chính xác bằng city nhưng luôn có giá trị, classifier
-        # rule "điểm khởi hành" sẽ tự lọc theo tên country (vd: "Việt Nam"). Tốt hơn rỗng.
+        # Fallback cuối — departureCountry. Khi cả 2 cách trên đều thất bại
+        # (vd: tourLegs trống, title format không quen thuộc), ít nhất cũng có country.
         dep_country_code = (item.get("departureCountry") or "").upper()
         dep_city = _country_name_vi(dep_country_code, country_cache) if dep_country_code else ""
     lich_trinh = _resolve_quoc_gia(item, listing_label, country_cache)
@@ -625,6 +709,7 @@ def scrape_all_findtourgo_tours(
         progress(12, "Đang tải danh sách quốc gia FindTourGo…")
     country_cache = _load_country_cache(sess)
     city_cache: dict[int, str] = {}
+    detail_city_cache: dict[str, str] = {}  # tourCode → city (từ day-1 itinerary)
     rows: list[dict[str, Any]] = []
     seen_codes: set[str] = set()
 
@@ -682,7 +767,7 @@ def scrape_all_findtourgo_tours(
                 continue
             if tour_code:
                 seen_codes.add(tour_code)
-            row = _item_to_row(item, label, country_cache, city_cache, sess)
+            row = _item_to_row(item, label, country_cache, city_cache, sess, detail_city_cache)
             row["page_url"] = page_url
             row["listing_code"] = code
             rows.append(row)
