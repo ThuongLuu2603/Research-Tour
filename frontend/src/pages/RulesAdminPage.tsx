@@ -653,9 +653,21 @@ export default function RulesAdminPage() {
         <div className="grid lg:grid-cols-[3fr_2fr] gap-4 items-start">
           {/* LEFT: Form thêm + bảng rules */}
           <div className="space-y-3">
+            <div className="rounded-md bg-primary-50/70 border border-primary-100 px-3 py-2 text-[11px] text-primary-800 space-y-1">
+              <p className="font-semibold">🤖 Hệ thống đã tự hiểu các định dạng sau (KHÔNG cần map tay):</p>
+              <ul className="list-disc pl-4 space-y-0.5">
+                <li><code className="bg-white px-1 rounded">18/06/2026</code> — chuẩn DD/MM/YYYY</li>
+                <li><code className="bg-white px-1 rounded">Khởi hành ngày 17/06</code> → tự thêm năm gần nhất</li>
+                <li><code className="bg-white px-1 rounded">Tháng 6: 13, 20, 27</code> → expand thành 13/06/YY, 20/06/YY, 27/06/YY</li>
+                <li><code className="bg-white px-1 rounded">04/06, 11/06, 18/06</code> → tự thêm năm chung</li>
+                <li><code className="bg-white px-1 rounded">Thứ 4 và thứ 7 hàng tuần</code> → expand 12 tháng</li>
+                <li><code className="bg-white px-1 rounded">Tối thứ 5 hàng tuần</code> → expand 12 tháng</li>
+              </ul>
+              <p>Tab này chỉ dùng cho text KHÔNG phải date: <code className="bg-white px-1 rounded">Theo yêu cầu</code>, <code className="bg-white px-1 rounded">Liên hệ</code>… → map sang "Tên chính thức" để hệ thống xử lý.</p>
+            </div>
             <div className="card p-4 flex flex-wrap gap-2 items-end">
               <div>
-                <label className="text-xs text-gray-500">Canonical (rỗng = bỏ qua)</label>
+                <label className="text-xs text-gray-500">Tên chính thức (rỗng = bỏ qua tour)</label>
                 <input className="input text-sm" value={sCanonical} onChange={(e) => setSCanonical(e.target.value)} placeholder="(bỏ qua) | Theo yêu cầu" />
               </div>
               <div className="flex-1 min-w-[180px]">
@@ -664,14 +676,14 @@ export default function RulesAdminPage() {
                   onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); setSAlias(e.dataTransfer.getData("text/plain")); }} />
               </div>
               <div className="flex gap-2">
-                {/* Lưu ý: chỉ cần alias — canonical rỗng là hợp lệ (= bỏ qua tour). */}
+                {/* Lưu ý: chỉ cần alias — Tên chính thức rỗng là hợp lệ (= bỏ qua tour). */}
                 <button onClick={() => addSchedule.mutate()} disabled={!sAlias} className="btn-primary text-sm"><Plus size={14} /> Thêm</button>
                 <button onClick={() => seedScheduleDefaults().then(() => afterRuleSaved("Đã import alias mặc định"))} className="btn-secondary text-sm"><Database size={14} /> Mặc định</button>
               </div>
             </div>
             <p className="text-xs text-gray-500 inline-flex items-center gap-1">
-              Map text lạ trong cột Ngày KH ("Theo yêu cầu", "Liên hệ"…) → canonical.
-              <InfoTip text="Canonical rỗng = bỏ qua tour khỏi thống kê tần suất đoàn. Giá trị chuẩn (vd 18/06/2026) không cần map." />
+              Chuẩn hóa text trong cột Ngày KH ("Theo yêu cầu", "Liên hệ"…) → Tên chính thức.
+              <InfoTip text="Tên chính thức rỗng = bỏ qua tour khỏi thống kê tần suất đoàn. Date chuẩn (18/06/2026) và các format Vietnamese (Khởi hành ngày DD/MM, Tháng MM: DD, …) đã được parser tự hiểu — không cần map ở đây." />
             </p>
             <AliasTable
               rows={filteredSchedule} unmatched={filteredUnmatched} hideUnmatched
@@ -682,7 +694,7 @@ export default function RulesAdminPage() {
               onDraftChange={setEditDraft} onCancel={cancelEdit}
               onSave={(r) => updateScheduleRule(r.id, { canonical_name: editDraft.canonical_name ?? "", alias: editDraft.alias }).then(() => { cancelEdit(); afterRuleSaved("Đã cập nhật alias lịch khởi hành"); })}
               onDelete={(r) => deleteScheduleRule(r.id).then(() => afterRuleSaved("Đã xóa alias"))}
-              canonicalLabel="Canonical"
+              canonicalLabel="Tên chính thức"
             />
           </div>
           {/* RIGHT: Chưa khớp */}
@@ -690,7 +702,7 @@ export default function RulesAdminPage() {
             items={filteredUnmatched}
             canonicalOptions={canonicalOptions}
             onAssign={(canonical, alias) => assignScheduleAlias(canonical, alias)}
-            label="Canonical"
+            label="Tên chính thức"
           />
         </div>
       )}

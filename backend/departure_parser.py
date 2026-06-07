@@ -1,16 +1,72 @@
 """Parse lich_kh (lịch khởi hành) into estimated monthly departure frequency."""
 from __future__ import annotations
 
+import calendar as _calendar
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 DATE_RE = re.compile(r"\b(\d{1,2}/\d{1,2}/(?:\d{2}|\d{4}))\b")
+# DD/MM thuần (không có năm) — "04/06", "11/06". Lookahead chặn nuốt nhầm DD/MM/YYYY.
+DATE_NO_YEAR_RE = re.compile(r"(?<!\d)(\d{1,2})/(\d{1,2})(?!/\d)")
+# "Tháng 6: 13, 14, 20" hoặc "Tháng 6: 13/06, 14/06"
+MONTH_DAYS_RE = re.compile(r"th[áa]ng\s*(\d{1,2})\s*[:\-]\s*([\d,\s/]+)", re.I)
+# "Khởi hành ngày 17/06" → DD/MM (DATE_NO_YEAR_RE đã catch, nhưng giữ pattern để rõ ý)
+KHOI_HANH_NGAY_RE = re.compile(r"kh[ởo]i\s*h[àa]nh\s*(?:ng[àa]y\s*)?(\d{1,2}/\d{1,2})", re.I)
+
 EXTRA_DATES_RE = re.compile(r"\(\+(\d+)\s*ngày khác\)", re.I)
-WEEKDAY_RE = re.compile(r"thứ\s*(\d|cn|chủ nhật)", re.I)
+WEEKDAY_RE = re.compile(r"th[ứu]\s*(\d|cn|chủ nhật|chu nhat)", re.I)
+# "Thứ 4 và thứ 7 hàng tuần", "Tối thứ 5 hàng tuần"
+WEEKLY_RECURRING_RE = re.compile(
+    r"(?:s[áa]ng|chi[ềe]u|t[ốo]i|tr[ưu]a)?\s*th[ứu]\s*(\d|cn|ch[ủu]\s*nh[ậa]t)"
+    r"(?:[^.\d]*?(?:v[àa]|,|và|/)[^.\d]*?th[ứu]\s*(\d|cn|ch[ủu]\s*nh[ậa]t))?"
+    r"[^.\d]*?h[àa]ng\s*tu[ầa]n",
+    re.I,
+)
+
 PERIOD_WINDOW_DAYS = 45
+# Expand recurring/no-year patterns trong bao nhiêu tháng tới (mặc định 12).
+EXPAND_MONTHS_AHEAD = 12
 
 # Python weekday(): Monday=0 … Sunday=6
 WEEKDAY_LABELS = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "CN"]
+
+
+def _today() -> datetime:
+    return datetime.now()
+
+
+def _resolve_year_for_day_month(day: int, month: int, today: datetime | None = None) -> int:
+    """Năm gần nhất sao cho DD/MM chưa qua. Nếu đã qua trong năm hiện tại → năm tiếp theo."""
+    today = today or _today()
+    try:
+        candidate = datetime(today.year, month, day)
+    except ValueError:
+        return today.year
+    if candidate.date() >= today.date():
+        return today.year
+    return today.year + 1
+
+
+def _resolve_common_year(dates_dm: list[tuple[int, int]], today: datetime | None = None) -> int:
+    """Chọn 1 năm chung cho NHIỀU DD/MM trong cùng 1 chuỗi.
+
+    Logic: nếu MỌI date đều đã qua trong năm hiện tại → năm tiếp theo. Ngược lại
+    (có ít nhất 1 date trong tương lai) → năm hiện tại. Giữ past dates ở năm hiện
+    tại thay vì split (vd: '04/06, 11/06, 18/06, 25/06' khi today=08/06 → tất cả
+    đều 2026 thay vì 04/06/2027 + 11-25/06/2026)."""
+    today = today or _today()
+    if not dates_dm:
+        return today.year
+    has_future = False
+    for d, mo in dates_dm:
+        try:
+            candidate = datetime(today.year, mo, d)
+        except ValueError:
+            continue
+        if candidate.date() >= today.date():
+            has_future = True
+            break
+    return today.year if has_future else today.year + 1
 
 
 def _weekday_index_from_token(token: str) -> int | None:
@@ -79,9 +135,24 @@ def vtr_period_label(vtr_dates: list[datetime]) -> str:
 
 
 def parse_departure_dates(lich_kh: str) -> list[datetime]:
-    """Trích ngày khởi hành cố định dd/mm/yyyy từ lich_kh."""
+    """Trích ngày khởi hành từ lich_kh — hỗ trợ nhiều format Vietnamese.
+
+    Pattern được nhận:
+      1. "17/06/2026", "17/06/26"                  — DD/MM/YYYY chuẩn
+      2. "17/06", "Khởi hành ngày 17/06"           — DD/MM → suy năm gần nhất chưa qua
+      3. "Tháng 6: 13, 14, 20, 21"                  — DD trong tháng X
+      4. "04/06, 11/06, 18/06, 25/06"               — chuỗi DD/MM
+      5. "Thứ 4 và thứ 7 hàng tuần"                 — expand 12 tháng
+      6. "Tối thứ 5 hàng tuần"                      — expand 12 tháng
+    """
+    text = lich_kh or ""
+    if not text.strip():
+        return []
     dates: list[datetime] = []
-    for m in DATE_RE.finditer(lich_kh or ""):
+    consumed_spans: list[tuple[int, int]] = []  # tránh double-count
+
+    # 1. DD/MM/YYYY chuẩn — ưu tiên cao nhất, có năm explicit
+    for m in DATE_RE.finditer(text):
         parts = m.group(1).split("/")
         if len(parts) != 3:
             continue
@@ -90,9 +161,81 @@ def parse_departure_dates(lich_kh: str) -> list[datetime]:
             y += 2000
         try:
             dates.append(datetime(y, mo, d))
+            consumed_spans.append(m.span())
         except ValueError:
             continue
-    return dates
+
+    today = _today()
+
+    # 2. "Tháng X: D1, D2, D3" — gom mọi (day, month) trước, RỒI resolve năm chung.
+    pending_dm: list[tuple[int, int]] = []
+    for m in MONTH_DAYS_RE.finditer(text):
+        if any(s <= m.start() < e for s, e in consumed_spans):
+            continue
+        month = int(m.group(1))
+        if not (1 <= month <= 12):
+            continue
+        days_text = m.group(2)
+        for d_match in re.finditer(r"\b(\d{1,2})(?!\s*[/\-]\s*\d)", days_text):
+            d = int(d_match.group(1))
+            if 1 <= d <= 31:
+                pending_dm.append((d, month))
+        consumed_spans.append(m.span())
+
+    # 3. DD/MM thuần (no year) — gom tiếp vào pending_dm
+    for m in DATE_NO_YEAR_RE.finditer(text):
+        if any(s <= m.start() < e for s, e in consumed_spans):
+            continue
+        d, mo = int(m.group(1)), int(m.group(2))
+        if 1 <= d <= 31 and 1 <= mo <= 12:
+            pending_dm.append((d, mo))
+
+    # Resolve 1 năm CHUNG cho mọi DD/MM trong chuỗi (tránh split 2026/2027 khi
+    # vài date đã qua, vài date còn tương lai).
+    if pending_dm:
+        common_year = _resolve_common_year(pending_dm, today)
+        for d, mo in pending_dm:
+            try:
+                dates.append(datetime(common_year, mo, d))
+            except ValueError:
+                continue
+
+    # 4. Weekly recurring — "Thứ X và thứ Y hàng tuần", "Tối thứ N hàng tuần"
+    if not dates and WEEKLY_RECURRING_RE.search(text):
+        weekdays_found = set()
+        for m in WEEKLY_RECURRING_RE.finditer(text):
+            for g in m.groups():
+                if g is None:
+                    continue
+                idx = _weekday_index_from_token(g)
+                if idx is not None:
+                    weekdays_found.add(idx)
+        # Bổ sung weekday từ WEEKDAY_RE nếu có (xử lý "thứ 2, thứ 4, thứ 6 hàng tuần")
+        if "hàng tuần" in text.lower() or "hang tuan" in text.lower():
+            for m in WEEKDAY_RE.finditer(text):
+                idx = _weekday_index_from_token(m.group(1))
+                if idx is not None:
+                    weekdays_found.add(idx)
+        if weekdays_found:
+            cur = today.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = cur + timedelta(days=EXPAND_MONTHS_AHEAD * 31)
+            d = cur
+            while d <= end:
+                if d.weekday() in weekdays_found:
+                    dates.append(d)
+                d += timedelta(days=1)
+
+    # Sort + dedupe
+    if dates:
+        seen = set()
+        uniq = []
+        for d in sorted(dates):
+            key = (d.year, d.month, d.day)
+            if key not in seen:
+                seen.add(key)
+                uniq.append(d)
+        return uniq
+    return []
 
 
 def has_recurring_schedule(lich_kh: str) -> bool:
