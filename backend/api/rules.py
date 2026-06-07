@@ -277,6 +277,14 @@ def _apply_worker_loop() -> None:
         session = SessionLocal()
         success = False
         try:
+            # Flush throttled UPDATE classified_at trước khi apply chạy.
+            # Bulk rule changes có thể đã set pending flag mà chưa kịp clear.
+            from classification import flush_pending_rules_invalidate
+            try:
+                flush_pending_rules_invalidate(session)
+            except Exception as _flush_err:  # noqa: BLE001
+                log.warning("flush pending invalidate failed: %s", _flush_err)
+
             if scope in ("market", "route", "all"):
                 from classification import apply_classification_rules_to_tours
                 apply_classification_rules_to_tours(session)

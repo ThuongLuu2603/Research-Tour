@@ -294,6 +294,10 @@ def run_due_scheduled_jobs(*, triggered_by: str = "cron") -> dict:
         ran: list[str] = []
         skipped: list[str] = []
         for job_id, _label, hh, mm in _job_plan():
+            # Bỏ qua bước trong chuỗi (hh=None): chúng tự chạy khi bước trước xong,
+            # không có cron riêng. _is_due() ném TypeError nếu pass None.
+            if hh is None or mm is None:
+                continue
             if not _is_due(now_vn, hh, mm):
                 continue
             if _already_ran_today(last_runs, job_id, now_vn):

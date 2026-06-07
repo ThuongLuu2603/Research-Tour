@@ -121,9 +121,38 @@ def clear_tour_classified_timestamps(db, *, nguon: str | None = None) -> int:
     return run_with_retry(_do, db=db, label="clear-classified")
 
 
+# Throttle UPDATE 8560 tour SET classified_at=NULL. Render log 2026-06-07 10:58-59:
+# user bulk edit rules → invalidate_rules_changed bị gọi mỗi 5-7s → mỗi lần UPDATE
+# 8560 dòng → SerializationFailure (WriteTooOldError). Trong cửa sổ 30s chỉ
+# invalidate matcher in-memory; UPDATE classified_at được debounce.
+import threading as _rules_threading
+import time as _rules_time
+
+_RULES_INVALIDATE_THROTTLE_SEC = 30.0
+_rules_invalidate_lock = _rules_threading.Lock()
+_rules_invalidate_last_clear = 0.0
+_rules_invalidate_pending_clear = False
+
+
 def invalidate_rules_changed(db=None) -> None:
-    """Sau khi sửa rule tuyến/thị trường — cache matcher mới + tour cần áp dụng lại."""
-    invalidate_classification_cache()
+    """Sau khi sửa rule tuyến/thị trường — cache matcher mới + tour cần áp dụng lại.
+
+    UPDATE classified_at trên hàng nghìn tour bị throttle 30s/lần để tránh contention.
+    Lần gọi trong cửa sổ throttle chỉ set pending; flush_pending_rules_invalidate()
+    sẽ catch up khi background apply chạy."""
+    global _rules_invalidate_last_clear, _rules_invalidate_pending_clear
+
+    invalidate_classification_cache()  # in-memory matcher — luôn cập nhật ngay
+
+    now_ts = _rules_time.monotonic()
+    with _rules_invalidate_lock:
+        elapsed = now_ts - _rules_invalidate_last_clear
+        if elapsed < _RULES_INVALIDATE_THROTTLE_SEC:
+            _rules_invalidate_pending_clear = True
+            return
+        _rules_invalidate_last_clear = now_ts
+        _rules_invalidate_pending_clear = False
+
     if db is None:
         db = SessionLocal()
         own = True
@@ -132,6 +161,32 @@ def invalidate_rules_changed(db=None) -> None:
     try:
         cleared = clear_tour_classified_timestamps(db)
         logger.info("Rules changed — cleared classified_at on %s tours", cleared)
+    finally:
+        if own:
+            db.close()
+
+
+def flush_pending_rules_invalidate(db=None) -> None:
+    """Force clear classified_at nếu có pending từ throttle window. Gọi từ
+    background apply worker để không bỏ sót UPDATE đã debounce."""
+    global _rules_invalidate_last_clear, _rules_invalidate_pending_clear
+
+    with _rules_invalidate_lock:
+        if not _rules_invalidate_pending_clear:
+            return
+        _rules_invalidate_pending_clear = False
+        _rules_invalidate_last_clear = _rules_time.monotonic()
+
+    if db is None:
+        db = SessionLocal()
+        own = True
+    else:
+        own = False
+    try:
+        cleared = clear_tour_classified_timestamps(db)
+        logger.info(
+            "Rules changed (flushed pending) — cleared classified_at on %s tours", cleared,
+        )
     finally:
         if own:
             db.close()
