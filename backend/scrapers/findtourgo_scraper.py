@@ -340,14 +340,41 @@ def _collect_schedule_date_values(
                 if dt:
                     found.append(dt)
             found.extend(_dates_from_schedule_name(name, ref_year))
-            # Fallback khi agency nhập thiếu (vd VN-590530: scheduleName="Khởi Hành Mùng 2 Tết",
-            # day_list=["18"], không có tháng). Trả label thô để cell không trống — user lọc sau.
+            # API không trả month/year cho departureDates dạng ["18"], ["15"]. Website JS tự
+            # tính: với mỗi day DD, lấy tháng/năm gần nhất sao cho ngày DD chưa qua. Verified
+            # screenshot user gửi:
+            #   VN-590530 (DD=18, today=2026-06-07) → 2026-06-18  ✓
+            #   VN-004878 (DD=15, today=2026-06-07) → 2026-06-15  ✓
+            # Chỉ chạy fallback này khi đã hoàn toàn không parse được date nào ở trên.
+            if len(found) == count_before and isinstance(day_list, list) and day_list:
+                today = now_vn().replace(tzinfo=None, hour=0, minute=0, second=0, microsecond=0)
+                for d in day_list:
+                    try:
+                        day_num = int(str(d).strip())
+                    except (TypeError, ValueError):
+                        continue
+                    if not (1 <= day_num <= 31):
+                        continue
+                    import calendar as _cal
+                    cur_year, cur_month = today.year, today.month
+                    for _ in range(13):  # ≤12 tháng tìm slot, safety +1
+                        last_day_of_month = _cal.monthrange(cur_year, cur_month)[1]
+                        if day_num <= last_day_of_month:
+                            candidate = datetime(cur_year, cur_month, day_num)
+                            if candidate >= today:
+                                found.append(candidate)
+                                break
+                        cur_month += 1
+                        if cur_month > 12:
+                            cur_month = 1
+                            cur_year += 1
+            # Vẫn rỗng và có scheduleName mang nghĩa date label (Tết/Lễ/Mùng/Khởi hành) →
+            # giữ làm label gợi ý cho người vận hành (vd VN-907589 không có day_list cũng không
+            # có gì cứu được).
             if len(found) == count_before:
                 bits: list[str] = []
                 if name and re.search(r"(?:t[ếe]t|l[ễe]|m[ùu]ng|kh[ởo]i\s*h[àa]nh)", name, re.IGNORECASE):
                     bits.append(name.strip())
-                if isinstance(day_list, list) and day_list:
-                    bits.append(", ".join(f"ngày {d}" for d in day_list))
                 if bits:
                     labels.append(" — ".join(bits))
             continue
