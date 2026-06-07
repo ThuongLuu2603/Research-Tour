@@ -54,17 +54,17 @@ def _load_schedule_from_db() -> None:
         logger.warning("Could not load scraper schedule from DB: %s", e)
 
 
-def _job_plan(hour: int | None = None, minute: int | None = None) -> list[tuple[str, str, int, int]]:
+def _job_plan(hour: int | None = None, minute: int | None = None) -> list[tuple[str, str, int | None, int | None]]:
+    """Mỗi entry = (job_id, label, hour, minute). hour=None nghĩa là bước trong chuỗi —
+    chạy tự động ngay sau bước trước (không có giờ cố định)."""
     h = _schedule_hour if hour is None else hour
     m = _schedule_minute if minute is None else minute
-    ftg_h, ftg_m = _add_minutes(h, m, 20)
-    main_h, main_m = _add_minutes(h, m, 50)
     return [
-        ("daily_vietravel", "Scrape Vietravel", h, m),
-        ("daily_findtourgo", "Scrape FindTourGo → Sheet", ftg_h, ftg_m),
-        ("daily_main_sheet_sync", "Sync Main → DB", main_h, main_m),
-        ("daily_intel_snapshot", "Snapshot", 8, 30),
-        ("daily_sheet_sync", "Sync Main + Vietravel Sheet → DB", 9, 0),
+        ("daily_vietravel", "1. Scrape Vietravel", h, m),
+        ("daily_findtourgo", "2. Scrape FindTourGo → Sheet", None, None),
+        ("daily_main_sheet_sync", "3. Sync Main → DB", None, None),
+        ("daily_sheet_sync", "4. Sync All Sheets → DB", None, None),
+        ("daily_intel_snapshot", "5. Snapshot BGĐ", None, None),
     ]
 
 
@@ -73,7 +73,12 @@ def get_schedule_config() -> dict:
     from scheduler_store import load_last_runs
 
     jobs = [
-        {"id": job_id, "label": label, "time_vn": f"{hh:02d}:{mm:02d}"}
+        {
+            "id": job_id,
+            "label": label,
+            "time_vn": (f"{hh:02d}:{mm:02d}" if hh is not None else "→ sau bước trước"),
+            "is_trigger": hh is not None,  # FE phân biệt bước có cron riêng vs bước chuỗi
+        }
         for job_id, label, hh, mm in _job_plan()
     ]
     last_runs: dict[str, str] = {}
@@ -101,7 +106,6 @@ def update_schedule_config(hour: int, minute: int, db=None) -> None:
     global _schedule_hour, _schedule_minute
     _schedule_hour = hour
     _schedule_minute = minute
-    ftg_h, ftg_m = _add_minutes(hour, minute, 20)
 
     own_session = db is None
     if own_session:
@@ -117,17 +121,14 @@ def update_schedule_config(hour: int, minute: int, db=None) -> None:
             db.close()
 
     if _scheduler:
-        _scheduler.reschedule_job("daily_vietravel", trigger=_vn_cron(hour, minute))
-        _scheduler.reschedule_job("daily_findtourgo", trigger=_vn_cron(ftg_h, ftg_m))
-        main_h, main_m = _add_minutes(hour, minute, 50)
-        _scheduler.reschedule_job("daily_main_sheet_sync", trigger=_vn_cron(main_h, main_m))
+        # Chỉ chuỗi có cron trigger; các bước nội bộ tự kích hoạt khi bước trước xong.
+        try:
+            _scheduler.reschedule_job("daily_chain", trigger=_vn_cron(hour, minute))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Reschedule daily_chain failed: %s", e)
     logger.info(
-        "Schedule updated (VN): Vietravel %02d:%02d, FindTourGo %02d:%02d, Main sync %02d:%02d",
-        hour,
-        minute,
-        ftg_h,
-        ftg_m,
-        *_add_minutes(hour, minute, 50),
+        "Schedule updated (VN): chuỗi khởi động %02d:%02d (Vietravel → FindTourGo → Sync → Snapshot)",
+        hour, minute,
     )
 
 
@@ -333,45 +334,109 @@ def _daily_sheet_sync():
     _mark_job("daily_sheet_sync")
 
 
+# Hard cap khi đợi 1 scrape job hoàn tất (giây). Vietravel/FindTourGo thực tế ~5-15ph;
+# 90' là ceiling an toàn để chain không treo mãi nếu 1 job kẹt sau khi reaper bỏ sót.
+_CHAIN_SCRAPE_WAIT_SEC = 90 * 60
+# Khoảng polling DB scrape_jobs để kiểm tra trạng thái (giây).
+_CHAIN_POLL_INTERVAL_SEC = 15.0
+
+
+def _wait_for_scraper_to_finish(scraper_name: str) -> bool:
+    """Poll scrape_jobs đến khi không còn job pending/running cho scraper_name.
+    Block tối đa _CHAIN_SCRAPE_WAIT_SEC. Trả True nếu xong sạch, False nếu timeout."""
+    import time
+    from database import SessionLocal
+    from models import ScrapeJob
+
+    deadline = time.monotonic() + _CHAIN_SCRAPE_WAIT_SEC
+    while time.monotonic() < deadline:
+        db = SessionLocal()
+        try:
+            still_active = (
+                db.query(ScrapeJob)
+                .filter(
+                    ScrapeJob.scraper_name == scraper_name,
+                    ScrapeJob.status.in_(("pending", "running")),
+                )
+                .first()
+            )
+        finally:
+            db.close()
+        if not still_active:
+            return True
+        time.sleep(_CHAIN_POLL_INTERVAL_SEC)
+    logger.warning(
+        "Chain: đợi %s quá %ss vẫn còn pending/running — chuyển bước kế tiếp",
+        scraper_name, _CHAIN_SCRAPE_WAIT_SEC,
+    )
+    return False
+
+
+def _run_daily_chain():
+    """Chuỗi tự động: Vietravel → FindTourGo → Sync Main → Sync All Sheets → Snapshot.
+
+    Mỗi bước chạy NGAY sau khi bước trước hoàn tất (thay vì chờ cron giờ cố định).
+    Bước scrape là async (queue) nên dùng polling DB; bước sync/snapshot chạy inline.
+    Một bước fail không chặn các bước sau — log warning và tiếp tục."""
+    logger.info("[CHAIN] Bắt đầu chuỗi tự động hàng ngày")
+
+    # 1. Scrape Vietravel
+    logger.info("[CHAIN 1/5] Scrape Vietravel")
+    try:
+        _auto_scrape("vietravel")
+        _wait_for_scraper_to_finish("vietravel")
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[CHAIN 1/5] Vietravel scrape lỗi: %s", e)
+
+    # 2. Scrape FindTourGo → Sheet
+    logger.info("[CHAIN 2/5] Scrape FindTourGo")
+    try:
+        _auto_scrape("findtourgo")
+        _wait_for_scraper_to_finish("findtourgo")
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[CHAIN 2/5] FindTourGo scrape lỗi: %s", e)
+
+    # 3. Sync Main → DB (inline block)
+    logger.info("[CHAIN 3/5] Sync Main sheet → DB")
+    try:
+        _sync_main_sheet()
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[CHAIN 3/5] Sync Main lỗi: %s", e)
+
+    # 4. Sync All Sheets → DB (Main + Vietravel + FindTourGo tab)
+    logger.info("[CHAIN 4/5] Sync tất cả sheet → DB")
+    try:
+        _daily_sheet_sync()
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[CHAIN 4/5] Sync all sheets lỗi: %s", e)
+
+    # 5. Snapshot (cuối chuỗi để có data mới nhất)
+    logger.info("[CHAIN 5/5] Daily intelligence snapshot")
+    try:
+        _daily_snapshot()
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[CHAIN 5/5] Snapshot lỗi: %s", e)
+
+    logger.info("[CHAIN] Hoàn tất chuỗi tự động")
+
+
 def start_scheduler():
     global _scheduler
     _load_schedule_from_db()
     _scheduler = BackgroundScheduler(timezone=VN_TZ)
-    ftg_h, ftg_m = _add_minutes(_schedule_hour, _schedule_minute, 20)
-    main_h, main_m = _add_minutes(_schedule_hour, _schedule_minute, 50)
 
+    # 1 trigger duy nhất cho cả chuỗi — các bước sau tự kích hoạt khi bước trước xong.
+    # max_instances=1 + coalesce=True chặn chồng chuỗi nếu lần chạy trước chưa hết.
     _scheduler.add_job(
-        _auto_scrape,
+        _run_daily_chain,
         _vn_cron(_schedule_hour, _schedule_minute),
-        id="daily_vietravel",
-        args=["vietravel"],
+        id="daily_chain",
         replace_existing=True,
+        max_instances=1,
+        coalesce=True,
     )
-    _scheduler.add_job(
-        _auto_scrape,
-        _vn_cron(ftg_h, ftg_m),
-        id="daily_findtourgo",
-        args=["findtourgo"],
-        replace_existing=True,
-    )
-    _scheduler.add_job(
-        _sync_main_sheet,
-        _vn_cron(main_h, main_m),
-        id="daily_main_sheet_sync",
-        replace_existing=True,
-    )
-    _scheduler.add_job(
-        _daily_snapshot,
-        _vn_cron(8, 30),
-        id="daily_intel_snapshot",
-        replace_existing=True,
-    )
-    _scheduler.add_job(
-        _daily_sheet_sync,
-        _vn_cron(9, 0),
-        id="daily_sheet_sync",
-        replace_existing=True,
-    )
+
+    # Catch-up tick cho các scheduled job thủ công ngoài chuỗi (workspace, ad-hoc)
     _scheduler.add_job(
         run_due_scheduled_jobs,
         IntervalTrigger(minutes=15),
@@ -379,16 +444,26 @@ def start_scheduler():
         kwargs={"triggered_by": "scheduler_tick"},
         replace_existing=True,
     )
+
+    # Dọn job cũ (5 cron riêng lẻ trước commit chuỗi) — chỉ remove nếu vẫn còn trong store.
+    for stale_id in (
+        "daily_vietravel",
+        "daily_findtourgo",
+        "daily_main_sheet_sync",
+        "daily_intel_snapshot",
+        "daily_sheet_sync",
+    ):
+        try:
+            _scheduler.remove_job(stale_id)
+            logger.info("Scheduler: gỡ job cũ %s (đã gộp vào daily_chain)", stale_id)
+        except Exception:  # noqa: BLE001
+            pass
+
     _scheduler.start()
     logger.info(
-        "Scheduler (VN %s): Vietravel %02d:%02d, FindTourGo %02d:%02d, Main sync %02d:%02d, snapshot 08:30, all sheets 09:00 + catchup/15m",
-        VN_TZ_NAME,
-        _schedule_hour,
-        _schedule_minute,
-        ftg_h,
-        ftg_m,
-        main_h,
-        main_m,
+        "Scheduler (VN %s): chuỗi tự động khởi động %02d:%02d → Vietravel → FindTourGo → "
+        "Sync Main → Sync All → Snapshot (chain mode, mỗi bước chờ bước trước xong)",
+        VN_TZ_NAME, _schedule_hour, _schedule_minute,
     )
 
 

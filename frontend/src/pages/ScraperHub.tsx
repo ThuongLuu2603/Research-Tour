@@ -397,6 +397,10 @@ export default function ScraperHub() {
             {schedule?.timezone ? ` — ${schedule.timezone}` : ""}
           </p>
         </div>
+        <div className="rounded-md bg-primary-50/60 border border-primary-100 px-3 py-2 text-[11px] text-primary-700 mb-2">
+          <strong>Chế độ chuỗi tự động:</strong> chỉ bước 1 chạy theo giờ cố định. Các bước sau tự kích hoạt
+          ngay khi bước trước hoàn tất → tiết kiệm thời gian chờ, hoàn tất sớm vào ban đêm.
+        </div>
         <table className="w-full text-xs">
           <thead>
             <tr className="text-left text-gray-500 border-b">
@@ -407,24 +411,27 @@ export default function ScraperHub() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {(schedule?.jobs ?? [
-              { label: "Scrape Vietravel → DB → Sheet", time_vn: `${String(schedHour).padStart(2, "0")}:${String(schedMin).padStart(2, "0")}` },
-              { label: "Scrape FindTourGo → Sheet", time_vn: (() => { const t = addMinutes(schedHour, schedMin, 20); return `${String(t.h).padStart(2, "0")}:${String(t.m).padStart(2, "0")}`; })() },
-              { label: "Sync Main → DB", time_vn: (() => { const t = addMinutes(schedHour, schedMin, 50); return `${String(t.h).padStart(2, "0")}:${String(t.m).padStart(2, "0")}`; })() },
-              { label: "Snapshot", time_vn: "08:30" },
-              { label: "Sync Main + Vietravel → DB", time_vn: "09:00" },
-            ]).map((j) => (
-              <tr key={j.label}>
-                <td className="py-2 text-gray-800">{j.label}</td>
-                <td className="py-2 font-mono text-gray-600">{j.time_vn}</td>
-                <td className="py-2 text-gray-500 whitespace-nowrap">
-                  {"last_run_at" in j && j.last_run_at ? fmtDate(String(j.last_run_at)) : "—"}
-                </td>
-              </tr>
-            ))}
+              { label: "1. Scrape Vietravel", time_vn: `${String(schedHour).padStart(2, "0")}:${String(schedMin).padStart(2, "0")}`, is_trigger: true },
+              { label: "2. Scrape FindTourGo → Sheet", time_vn: "→ sau bước trước", is_trigger: false },
+              { label: "3. Sync Main → DB", time_vn: "→ sau bước trước", is_trigger: false },
+              { label: "4. Sync All Sheets → DB", time_vn: "→ sau bước trước", is_trigger: false },
+              { label: "5. Snapshot BGĐ", time_vn: "→ sau bước trước", is_trigger: false },
+            ]).map((j) => {
+              const isTrigger = "is_trigger" in j ? (j as { is_trigger?: boolean }).is_trigger : true;
+              return (
+                <tr key={j.label}>
+                  <td className="py-2 text-gray-800">{j.label}</td>
+                  <td className={cn("py-2 font-mono", isTrigger ? "text-primary-700 font-semibold" : "text-gray-400 italic")}>{j.time_vn}</td>
+                  <td className="py-2 text-gray-500 whitespace-nowrap">
+                    {"last_run_at" in j && j.last_run_at ? fmtDate(String(j.last_run_at)) : "—"}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
         <div className="border-t border-gray-100 pt-4">
-          <p className="text-xs text-gray-600 mb-2">Chỉnh giờ 2 scraper (Vietravel + FindTourGo +20 phút):</p>
+          <p className="text-xs text-gray-600 mb-2">Giờ kích hoạt chuỗi (các bước sau tự chạy theo thứ tự):</p>
           <div className="flex flex-wrap items-center gap-3">
             <div>
               <label className="block text-xs text-gray-500 mb-1">Giờ VN</label>
