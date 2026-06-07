@@ -125,17 +125,31 @@ def _rules_fingerprint(db) -> tuple:
     from sqlalchemy import func
 
     from classify_market_order import MARKET_ORDER_KV_KEY
-    from models import AppKv, MarketKeywordRule, RouteKeywordRule
+    from models import (
+        AppKv,
+        CompanyAliasRule,
+        DepartureAliasRule,
+        DurationAliasRule,
+        MarketKeywordRule,
+        RouteKeywordRule,
+    )
 
     mk = db.query(func.count(MarketKeywordRule.id), func.max(MarketKeywordRule.updated_at)).one()
     rt = db.query(func.count(RouteKeywordRule.id), func.max(RouteKeywordRule.updated_at)).one()
+    # BUG fix: cache key trước đây chỉ gồm market+route rules → khi user thêm/xóa
+    # company/departure/duration alias, fingerprint không đổi → cache hit data cũ,
+    # tab "Điểm khởi hành" và "Thời gian" không thấy alias chưa khớp mới.
+    co = db.query(func.count(CompanyAliasRule.id), func.max(CompanyAliasRule.updated_at)).one()
+    dp = db.query(func.count(DepartureAliasRule.id), func.max(DepartureAliasRule.updated_at)).one()
+    du = db.query(func.count(DurationAliasRule.id), func.max(DurationAliasRule.updated_at)).one()
     kv = db.get(AppKv, MARKET_ORDER_KV_KEY)
     kv_ts = kv.updated_at.isoformat() if kv and kv.updated_at else None
     return (
-        int(mk[0] or 0),
-        mk[1].isoformat() if mk[1] else None,
-        int(rt[0] or 0),
-        rt[1].isoformat() if rt[1] else None,
+        int(mk[0] or 0), mk[1].isoformat() if mk[1] else None,
+        int(rt[0] or 0), rt[1].isoformat() if rt[1] else None,
+        int(co[0] or 0), co[1].isoformat() if co[1] else None,
+        int(dp[0] or 0), dp[1].isoformat() if dp[1] else None,
+        int(du[0] or 0), du[1].isoformat() if du[1] else None,
         kv_ts,
     )
 

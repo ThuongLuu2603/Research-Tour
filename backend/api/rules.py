@@ -449,7 +449,7 @@ def list_market_rules(_: User = Depends(require_admin), db: Session = Depends(ge
 def create_market_rule(
     body: MarketRuleIn,
     push_sheet: bool = Query(False),
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -469,7 +469,7 @@ def update_market_rule(
     rule_id: int,
     body: MarketRuleIn,
     push_sheet: bool = Query(False),
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -491,7 +491,7 @@ def update_market_rule(
 def delete_market_rule(
     rule_id: int,
     push_sheet: bool = Query(False),
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -555,7 +555,7 @@ def replace_all_route_rules(
 def create_route_rule(
     body: RouteRuleIn,
     push_sheet: bool = Query(False),
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -576,7 +576,7 @@ def update_route_rule(
     rule_id: int,
     body: RouteRuleIn,
     push_sheet: bool = Query(False),
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -617,7 +617,7 @@ def set_route_rule_priority(
 def delete_route_rule(
     rule_id: int,
     push_sheet: bool = Query(False),
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -677,7 +677,7 @@ def seed_market_defaults(
 
 @router.post("/seed-route-defaults")
 def seed_route_defaults(
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     force: bool = Query(False, description="Ghi đè toàn bộ rule tuyến trong DB bằng bản bundle"),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -694,7 +694,7 @@ def seed_route_defaults(
 
 @router.post("/sync-route-from-sheet")
 def sync_route_from_sheet(
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -717,7 +717,7 @@ def sync_route_to_sheet(_: User = Depends(require_admin), db: Session = Depends(
 
 @router.post("/sync-market-from-sheet")
 def sync_market_from_sheet(
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -740,7 +740,7 @@ def sync_market_to_sheet(_: User = Depends(require_admin), db: Session = Depends
 
 @router.post("/sync-all-from-sheet")
 def sync_all_from_sheet_endpoint(
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -799,7 +799,7 @@ def list_company_rules(_: User = Depends(require_admin), db: Session = Depends(g
 @router.post("/company", response_model=CompanyRuleOut)
 def create_company_rule(
     body: CompanyRuleIn,
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -816,7 +816,7 @@ def create_company_rule(
 def update_company_rule(
     rule_id: int,
     body: CompanyRuleIn,
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -835,7 +835,7 @@ def update_company_rule(
 @router.delete("/company/{rule_id}")
 def delete_company_rule(
     rule_id: int,
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -891,7 +891,7 @@ def list_departure_rules(_: User = Depends(require_admin), db: Session = Depends
 @router.post("/departure", response_model=DepartureRuleOut)
 def create_departure_rule(
     body: DepartureRuleIn,
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -908,7 +908,7 @@ def create_departure_rule(
 def update_departure_rule(
     rule_id: int,
     body: DepartureRuleIn,
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -927,7 +927,7 @@ def update_departure_rule(
 @router.delete("/departure/{rule_id}")
 def delete_departure_rule(
     rule_id: int,
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -1022,7 +1022,7 @@ def list_duration_rules(_: User = Depends(require_admin), db: Session = Depends(
 @router.post("/duration", response_model=DurationRuleOut)
 def create_duration_rule(
     body: DurationRuleIn,
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -1039,7 +1039,7 @@ def create_duration_rule(
 def update_duration_rule(
     rule_id: int,
     body: DurationRuleIn,
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -1058,7 +1058,7 @@ def update_duration_rule(
 @router.delete("/duration/{rule_id}")
 def delete_duration_rule(
     rule_id: int,
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -1335,7 +1335,7 @@ def assign_classification_bulk(
 def assign_market_keyword(
     market: str = Query(..., min_length=1),
     keyword: str = Query(..., min_length=1),
-    auto_apply: bool = Query(True),
+    auto_apply: bool = Query(False),
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
