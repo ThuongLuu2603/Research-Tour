@@ -445,7 +445,7 @@ export default function RulesAdminPage() {
                 : tab === "company" ? (companyRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
                 : tab === "departure" ? (departureRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
                 : tab === "duration" ? (durationRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
-                : tab === "schedule" ? 0  // count quản lý trong DateFormatRulesTab
+                : tab === "schedule" ? (unmatched?.items?.length ?? 0)
                 : (durationRules?.length ?? 0)
             }
             filtered={
@@ -453,7 +453,7 @@ export default function RulesAdminPage() {
                 : tab === "company" ? filteredCompany.length + filteredUnmatched.length
                 : tab === "departure" ? filteredDeparture.length + filteredUnmatched.length
                 : tab === "duration" ? filteredDuration.length + filteredUnmatched.length
-                : tab === "schedule" ? 0  // count quản lý trong DateFormatRulesTab
+                : tab === "schedule" ? filteredUnmatched.length
                 : filteredDuration.length
             }
           />
@@ -640,6 +640,9 @@ export default function RulesAdminPage() {
         <DateFormatRulesTab
           search={search}
           onMessage={setSyncMsg}
+          unmatched={filteredUnmatched}
+          unmatchedLoading={unmatchedLoading}
+          onMarkHandled={markGapsHandled}
         />
       )}
 
@@ -1001,9 +1004,15 @@ const OUTPUT_TYPE_LABELS: Record<DateFormatOutputType, string> = {
 function DateFormatRulesTab({
   search,
   onMessage,
+  unmatched,
+  unmatchedLoading,
+  onMarkHandled,
 }: {
   search: string;
   onMessage: (msg: string) => void;
+  unmatched: UnmatchedItem[];
+  unmatchedLoading: boolean;
+  onMarkHandled: (values: string[]) => void;
 }) {
   const qc = useQueryClient();
   const { data: rules, isLoading } = useQuery({
@@ -1419,6 +1428,71 @@ function DateFormatRulesTab({
             ) : (
               <p className="text-gray-600">Không có rule nào match — bạn có thể thêm rule mới ở bên trái.</p>
             )}
+          </div>
+        )}
+      </div>
+
+      {/* RIGHT: Panel "Chưa khớp rule" */}
+      <div className="card sticky top-4 max-h-[calc(100vh-120px)] overflow-hidden flex flex-col">
+        <div className="bg-amber-50 border-b border-amber-200 px-3 py-2">
+          <p className="text-xs font-semibold text-amber-900">
+            Chưa khớp rule ({unmatched.length}) — click để Test
+          </p>
+          <p className="text-[10px] text-amber-700 mt-0.5">
+            Giá trị <code>lich_kh</code> trong DB chưa có rule nào match. Click 1 item → load vào Test → thêm rule phù hợp.
+          </p>
+        </div>
+        <div className="overflow-y-auto flex-1 divide-y divide-gray-100">
+          {unmatchedLoading && (
+            <p className="px-3 py-4 text-xs text-gray-400 text-center">Đang tải…</p>
+          )}
+          {!unmatchedLoading && unmatched.length === 0 && (
+            <p className="px-3 py-6 text-xs text-gray-400 text-center">
+              Tuyệt vời! Không còn giá trị chưa khớp 🎉
+            </p>
+          )}
+          {unmatched.slice(0, 100).map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              onClick={() => {
+                setTestText(item.value);
+                setTestResult(null);
+                setTestError("");
+                // Scroll test widget vào view
+                setTimeout(() => {
+                  document.querySelector("textarea[placeholder*='Test']")?.scrollIntoView({ behavior: "smooth", block: "center" });
+                }, 50);
+              }}
+              className="w-full text-left px-3 py-2 hover:bg-amber-50 transition-colors group"
+              title="Click để load vào Test widget"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-[11px] font-mono text-gray-800 break-all flex-1 line-clamp-2 group-hover:line-clamp-none">
+                  {item.value}
+                </span>
+                <span className="text-[10px] text-amber-700 font-semibold shrink-0">
+                  ×{item.count}
+                </span>
+              </div>
+            </button>
+          ))}
+          {unmatched.length > 100 && (
+            <p className="px-3 py-2 text-[10px] text-gray-400 text-center bg-gray-50">
+              ... còn {unmatched.length - 100} giá trị khác (lọc bằng Search ở trên)
+            </p>
+          )}
+        </div>
+        {unmatched.length > 0 && (
+          <div className="border-t border-gray-200 p-2">
+            <button
+              type="button"
+              onClick={() => onMarkHandled(unmatched.map((u) => u.value))}
+              className="w-full text-[10px] btn-secondary py-1"
+              title="Đánh dấu đã xử lý — ẩn khỏi panel cho đến lần refresh tới"
+            >
+              ✓ Đánh dấu tất cả đã xử lý
+            </button>
           </div>
         )}
       </div>
