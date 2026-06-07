@@ -853,7 +853,10 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
             thoi_gian[key] = thoi_gian.get(key, 0) + 1
 
     def _rows(d: dict[str, int]) -> list[dict]:
-        return sorted([{"value": k, "count": v} for k, v in d.items()], key=lambda x: -x["count"])[:40]
+        # Trước đây cap [:40] — user nhập alias cho rule mới + có hàng trăm value
+        # khác chưa khớp → 40 dòng đầu mất hết, panel "Chưa khớp" trông trống.
+        # Bump lên 500: đủ rộng cho thực tế nhưng vẫn có ceiling an toàn.
+        return sorted([{"value": k, "count": v} for k, v in d.items()], key=lambda x: -x["count"])[:500]
 
     market_rows = sorted(
         [
@@ -870,7 +873,7 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
             for k, v in thi_truong.items()
         ],
         key=lambda x: -x["count"],
-    )[:40]
+    )[:500]  # bump từ 40 — xem điều chỉnh ceiling trong _rows()
     route_rows = sorted(
         [
             {
@@ -886,7 +889,7 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
             for k, v in tuyen_tour.items()
         ],
         key=lambda x: -x["count"],
-    )[:40]
+    )[:500]
 
     classify_rows = sorted(
         [
@@ -905,7 +908,7 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
             for k, v in classify_gaps.items()
         ],
         key=lambda x: -x["count"],
-    )[:50]
+    )[:500]
 
     return {
         "thi_truong": market_rows,

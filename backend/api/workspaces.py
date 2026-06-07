@@ -442,7 +442,10 @@ def export_workspace_csv(
 
     q = _apply_tour_filters(db.query(Tour), search, thi_truong, tuyen_tour, cong_ty, nguon, flagged, phan_khuc)
     q = q.filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
-    tours = q.limit(5000).all()
+    # Trước đây cap 5000 — user phản ánh DB có ~7000 tour Main + Vietravel nhưng tải về
+    # chỉ thấy 5000. Tăng lên 50000 (ceiling an toàn để không OOM); CSV ~7000 tour
+    # khoảng vài MB, vẫn thoải mái streaming.
+    tours = q.limit(50000).all()
     overrides = _override_map(db, workspace_id, [t.id for t in tours])
     rows = [merge_tour(t, overrides.get(t.id)).to_dict() for t in tours]
     df = pd.DataFrame(rows)
