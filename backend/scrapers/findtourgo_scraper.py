@@ -327,6 +327,7 @@ def _collect_schedule_date_values(
         if dep_type == "FIXED_DATES":
             month = _month_from_schedule_name(name)
             day_list = sch.get("departureDates") or []
+            count_before = len(found)
             if month and isinstance(day_list, list):
                 for d in day_list:
                     try:
@@ -339,6 +340,16 @@ def _collect_schedule_date_values(
                 if dt:
                     found.append(dt)
             found.extend(_dates_from_schedule_name(name, ref_year))
+            # Fallback khi agency nhập thiếu (vd VN-590530: scheduleName="Khởi Hành Mùng 2 Tết",
+            # day_list=["18"], không có tháng). Trả label thô để cell không trống — user lọc sau.
+            if len(found) == count_before:
+                bits: list[str] = []
+                if name and re.search(r"(?:t[ếe]t|l[ễe]|m[ùu]ng|kh[ởo]i\s*h[àa]nh)", name, re.IGNORECASE):
+                    bits.append(name.strip())
+                if isinstance(day_list, list) and day_list:
+                    bits.append(", ".join(f"ngày {d}" for d in day_list))
+                if bits:
+                    labels.append(" — ".join(bits))
             continue
 
         # FLEXIBLE_DATES và các loại khác
@@ -495,9 +506,11 @@ def _load_city_name(city_id: int | None, cache: dict[int, str], session: request
 
 # Lấy city khởi hành từ tour itinerary ngày 1 — fallback chính khi city API broken.
 # Format thường gặp: "NGÀY 01: TP.HCM – THƯỢNG HẢI", "TP. HỒ CHÍ MINH – LỆ GIANG",
-# "Hà Nội - Urumqi", "HÀ NỘI/HỒ CHÍ MINH – THÀNH ĐÔ" (lấy city đầu tiên).
+# "Hà Nội - Urumqi", "TP/HCM – THÂM QUYẾN", "HÀ NỘI/HỒ CHÍ MINH – THÀNH ĐÔ".
+# QUAN TRỌNG: '/' KHÔNG phải separator — vài agency viết "TP/HCM", "TP/HN" gắn liền tên thành phố.
+# Trả nguyên văn (kể cả "HÀ NỘI/HỒ CHÍ MINH"), user dùng Quy tắc phân loại để chuẩn hóa.
 _DAY_PREFIX_RE = re.compile(r"^\s*(?:N?G[ÀA]Y|DAY)?\s*0?1?[\s:.\-]*", re.IGNORECASE)
-_FIRST_SEG_RE = re.compile(r"^([^\-–—/()]+?)(?:\s*[\-–—/→]|\s*\()")
+_FIRST_SEG_RE = re.compile(r"^([^\-–—()]+?)(?:\s*[\-–—→]|\s*\()")
 
 
 def _parse_day1_city(title: str) -> str:
