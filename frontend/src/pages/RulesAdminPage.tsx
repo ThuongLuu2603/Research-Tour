@@ -159,16 +159,25 @@ export default function RulesAdminPage() {
   };
 
   const toggleRoutePriority = async (rule: RouteRule) => {
+    // Optimistic update: flip priority trong cache ngay → ngôi sao đổi màu instant.
+    // Trước đây user phải chờ API (~1s) + refetch (~1-2s) mới thấy UI cập nhật,
+    // dễ tưởng click không ăn → click lại nhiều lần.
+    const newPriority = !rule.priority;
+    qc.setQueryData<RouteRule[]>(["route-rules"], (old) =>
+      old?.map((r) => (r.id === rule.id ? { ...r, priority: newPriority } : r)) ?? old,
+    );
     try {
-      await setRouteRulePriority(rule.id, !rule.priority);
+      await setRouteRulePriority(rule.id, newPriority);
     } catch (e) {
+      // Rollback optimistic update — refetch để đồng bộ với server.
+      qc.invalidateQueries({ queryKey: ["route-rules"] });
       // id cũ (danh sách rule đã thay đổi) → làm mới rồi báo người dùng thử lại.
       if ((e as { response?: { status?: number } })?.response?.status === 404) {
-        await qc.invalidateQueries({ queryKey: ["route-rules"] });
         throw new Error("Danh sách rule vừa thay đổi — đã làm mới, vui lòng bấm lại.");
       }
       throw e;
     }
+    // Background refetch để pick up sort_order mới (priority ảnh hưởng thứ tự).
     qc.invalidateQueries({ queryKey: ["route-rules"] });
   };
 

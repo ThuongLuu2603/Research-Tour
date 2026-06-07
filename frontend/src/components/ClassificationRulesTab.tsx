@@ -536,7 +536,11 @@ export function ClassificationRulesTab({
                             const { dropClassName, ...drop } = dropHandlers(dropKey, dropTarget, setDropTarget, (raw) =>
                               appendKeywordToRouteRule(r, raw),
                             );
-                            const tourCount = routeStats?.[String(r.id)];
+                            // Backend route-stats chỉ trả những rule có >=1 tour (filter WHERE
+                            // classification_rule_id IS NOT NULL + GROUP BY). Rule chưa khớp tour
+                            // nào sẽ KHÔNG xuất hiện trong dict → trước đây hiện "—" (giống loading).
+                            // Phân biệt: routeStats undefined = đang load, có data + key missing = 0.
+                            const tourCount = routeStats?.[String(r.id)] ?? (routeStats ? 0 : undefined);
                             const isEditing = editingRuleId === r.id;
                             const isPriorityToggling = togglingPriorityId === r.id;
                             return (
