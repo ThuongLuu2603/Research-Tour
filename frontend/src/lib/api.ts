@@ -738,6 +738,37 @@ export const applyDurationRulesToTours = async () => {
   return data;
 };
 
+// Schedule alias rules (Ngày KH / lich_kh) — map "Theo yêu cầu", "Liên hệ"…
+// về canonical (rỗng = bỏ qua tour khỏi thống kê tần suất đoàn).
+export interface ScheduleRule {
+  id: string; canonical_name: string; alias: string; active: boolean; sort_order: number;
+}
+
+export const listScheduleRules = async (): Promise<ScheduleRule[]> => {
+  const { data } = await api.get("/admin/rules/schedule");
+  return data;
+};
+
+export const createScheduleRule = async (body: { canonical_name: string; alias: string }) => {
+  const { data } = await api.post("/admin/rules/schedule", body);
+  return data;
+};
+
+export const deleteScheduleRule = async (id: string) => {
+  const { data } = await api.delete(`/admin/rules/schedule/${id}`);
+  return data;
+};
+
+export const updateScheduleRule = async (id: string, body: { canonical_name: string; alias: string }) => {
+  const { data } = await api.put(`/admin/rules/schedule/${id}`, body);
+  return data;
+};
+
+export const seedScheduleDefaults = async () => {
+  const { data } = await api.post("/admin/rules/schedule/seed-defaults");
+  return data;
+};
+
 export type UnmatchedTourMember = { title: string; count: number };
 
 export type UnmatchedItem = {
@@ -805,7 +836,7 @@ export const assignClassificationBulk = async (body: {
 };
 
 export const getRulesUnmatched = async (
-  scope: "market" | "route" | "classify" | "company" | "departure" | "duration",
+  scope: "market" | "route" | "classify" | "company" | "departure" | "duration" | "schedule",
   fresh = false,
 ) => {
   const { data } = await api.get(`/admin/rules/unmatched?scope=${scope}${fresh ? "&fresh=1" : ""}`);

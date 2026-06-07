@@ -19,11 +19,21 @@ from classification import (
     seed_company_aliases_from_defaults,
     seed_departure_aliases_from_defaults,
     seed_duration_aliases_from_defaults,
+    seed_schedule_aliases_from_defaults,
     seed_market_rules_from_hardcode,
     seed_route_rules_from_bundle,
 )
 from database import get_db
-from models import CompanyAliasRule, DepartureAliasRule, DurationAliasRule, MarketKeywordRule, RouteKeywordRule, Tour, User
+from models import (
+    CompanyAliasRule,
+    DepartureAliasRule,
+    DurationAliasRule,
+    MarketKeywordRule,
+    RouteKeywordRule,
+    ScheduleAliasRule,
+    Tour,
+    User,
+)
 from sheets_rules_sync import (
     import_market_rules_from_sheet,
     import_route_rules_to_db,
@@ -314,6 +324,10 @@ def _apply_worker_loop() -> None:
                 apply_departure_aliases_to_tours(session)
             elif scope == "duration":
                 apply_duration_aliases_to_tours(session)
+            elif scope == "schedule":
+                # Lich_kh không có apply-to-tours (Tour.lich_kh giữ nguyên text gốc;
+                # alias chỉ ảnh hưởng collect_unmatched_values). Chỉ invalidate cache.
+                invalidate_classification_cache()
             else:
                 apply_all_rules_to_tours(session)
             success = True
@@ -1084,6 +1098,93 @@ def apply_duration_rules_to_tours(_: User = Depends(require_admin), db: Session 
     return {"updated": updated, "message": f"Đã chuẩn hóa số ngày cho {updated} tour"}
 
 
+# ── Schedule alias rules (Ngày KH / lich_kh) ─────────────────────────────────
+
+class ScheduleRuleOut(_RuleIdAsStrMixin, BaseModel):
+    id: int
+    canonical_name: str
+    alias: str
+    active: bool
+    sort_order: int
+    model_config = {"from_attributes": True}
+
+
+class ScheduleRuleIn(BaseModel):
+    # canonical_name có thể RỖNG = đánh dấu "bỏ qua tour khỏi thống kê tần suất đoàn".
+    canonical_name: str = Field(default="", max_length=128)
+    alias: str = Field(max_length=256)
+    active: bool = True
+    sort_order: int = 0
+
+
+@router.get("/schedule", response_model=list[ScheduleRuleOut])
+def list_schedule_rules(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return (
+        db.query(ScheduleAliasRule)
+        .order_by(ScheduleAliasRule.sort_order, ScheduleAliasRule.canonical_name, ScheduleAliasRule.alias)
+        .all()
+    )
+
+
+@router.post("/schedule", response_model=ScheduleRuleOut)
+def create_schedule_rule(
+    body: ScheduleRuleIn,
+    auto_apply: bool = Query(False),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    rule = ScheduleAliasRule(**body.model_dump())
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    invalidate_classification_cache()
+    _auto_apply_tours(db, auto_apply, scope="schedule")
+    return rule
+
+
+@router.put("/schedule/{rule_id}", response_model=ScheduleRuleOut)
+def update_schedule_rule(
+    rule_id: int,
+    body: ScheduleRuleIn,
+    auto_apply: bool = Query(False),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    rule = db.query(ScheduleAliasRule).filter(ScheduleAliasRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(404, "Rule không tồn tại")
+    for k, v in body.model_dump().items():
+        setattr(rule, k, v)
+    db.commit()
+    db.refresh(rule)
+    invalidate_classification_cache()
+    _auto_apply_tours(db, auto_apply, scope="schedule")
+    return rule
+
+
+@router.delete("/schedule/{rule_id}")
+def delete_schedule_rule(
+    rule_id: int,
+    auto_apply: bool = Query(False),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    rule = db.query(ScheduleAliasRule).filter(ScheduleAliasRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(404, "Rule không tồn tại")
+    db.delete(rule)
+    db.commit()
+    invalidate_classification_cache()
+    stats = _auto_apply_tours(db, auto_apply, scope="schedule")
+    return {"deleted": rule_id, "tours_apply": stats}
+
+
+@router.post("/schedule/seed-defaults")
+def seed_schedule_defaults(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    added = seed_schedule_aliases_from_defaults()
+    return {"added": added, "message": f"Đã thêm {added} alias lịch khởi hành mặc định"}
+
+
 class ClassifyMarketOrderIn(BaseModel):
     markets: list[str] = Field(default_factory=list)
 
@@ -1196,9 +1297,10 @@ def unmatched_summary(_: User = Depends(require_admin), db: Session = Depends(ge
             "company": len(data.get("cong_ty", [])),
             "departure": len(data.get("diem_kh", [])),
             "duration": len(data.get("thoi_gian", [])),
+            "schedule": len(data.get("lich_kh", [])),
         }
     except Exception:
-        return {"classify": 0, "company": 0, "departure": 0, "duration": 0}
+        return {"classify": 0, "company": 0, "departure": 0, "duration": 0, "schedule": 0}
 
 
 @router.get("/stats-exclusions")
@@ -1216,7 +1318,7 @@ def list_stats_exclusions(_: User = Depends(require_admin)):
 def list_unmatched_rules(
     scope: str = Query(
         "company",
-        pattern="^(market|route|classify|company|departure|duration|all)$",
+        pattern="^(market|route|classify|company|departure|duration|schedule|all)$",
     ),
     fresh: bool = Query(False, description="Bỏ cache — dùng ngay sau Gán/Áp dụng"),
     _: User = Depends(require_admin),
@@ -1264,6 +1366,8 @@ def list_unmatched_rules(
         return {"scope": scope, "items": data["diem_kh"]}
     if scope == "duration":
         return {"scope": scope, "items": data["thoi_gian"]}
+    if scope == "schedule":
+        return {"scope": scope, "items": data["lich_kh"]}
     return {"scope": "all", **data}
 
 

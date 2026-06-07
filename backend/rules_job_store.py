@@ -132,16 +132,18 @@ def _rules_fingerprint(db) -> tuple:
         DurationAliasRule,
         MarketKeywordRule,
         RouteKeywordRule,
+        ScheduleAliasRule,
     )
 
     mk = db.query(func.count(MarketKeywordRule.id), func.max(MarketKeywordRule.updated_at)).one()
     rt = db.query(func.count(RouteKeywordRule.id), func.max(RouteKeywordRule.updated_at)).one()
     # BUG fix: cache key trước đây chỉ gồm market+route rules → khi user thêm/xóa
-    # company/departure/duration alias, fingerprint không đổi → cache hit data cũ,
-    # tab "Điểm khởi hành" và "Thời gian" không thấy alias chưa khớp mới.
+    # company/departure/duration/schedule alias, fingerprint không đổi → cache hit
+    # data cũ, các tab tương ứng không thấy alias chưa khớp mới.
     co = db.query(func.count(CompanyAliasRule.id), func.max(CompanyAliasRule.updated_at)).one()
     dp = db.query(func.count(DepartureAliasRule.id), func.max(DepartureAliasRule.updated_at)).one()
     du = db.query(func.count(DurationAliasRule.id), func.max(DurationAliasRule.updated_at)).one()
+    sc = db.query(func.count(ScheduleAliasRule.id), func.max(ScheduleAliasRule.updated_at)).one()
     kv = db.get(AppKv, MARKET_ORDER_KV_KEY)
     kv_ts = kv.updated_at.isoformat() if kv and kv.updated_at else None
     return (
@@ -150,6 +152,7 @@ def _rules_fingerprint(db) -> tuple:
         int(co[0] or 0), co[1].isoformat() if co[1] else None,
         int(dp[0] or 0), dp[1].isoformat() if dp[1] else None,
         int(du[0] or 0), du[1].isoformat() if du[1] else None,
+        int(sc[0] or 0), sc[1].isoformat() if sc[1] else None,
         kv_ts,
     )
 

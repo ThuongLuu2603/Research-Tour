@@ -7,14 +7,15 @@ import {
   listCompanyRules, createCompanyRule, deleteCompanyRule, updateCompanyRule,
   listDepartureRules, createDepartureRule, deleteDepartureRule, updateDepartureRule,
   listDurationRules, createDurationRule, deleteDurationRule, updateDurationRule,
-  seedCompanyDefaults, seedDepartureDefaults, seedDurationDefaults,
+  listScheduleRules, createScheduleRule, deleteScheduleRule, updateScheduleRule,
+  seedCompanyDefaults, seedDepartureDefaults, seedDurationDefaults, seedScheduleDefaults,
   applyClassificationToTours,
   getApplyClassificationStatus,
   getRulesUnmatched,
   getRulesUnmatchedSummary,
   getRuleRouteStats,
   getDataQuality,
-  RouteRule, CompanyRule, DepartureRule, DurationRule, UnmatchedItem,
+  RouteRule, CompanyRule, DepartureRule, DurationRule, ScheduleRule, UnmatchedItem,
 } from "@/lib/api";
 import { COL } from "@/lib/glossary";
 import { InfoTip } from "@/components/InfoTip";
@@ -25,7 +26,7 @@ import { dropHandlers, dragAliasProps, keepInputKeys, keywordForRouteDrop, match
 import { ClassificationRulesTab } from "@/components/ClassificationRulesTab";
 import { Plus, Trash2, RefreshCw, Database, Search, Pencil, Check, X, GripVertical } from "lucide-react";
 
-type Tab = "classify" | "company" | "departure" | "duration";
+type Tab = "classify" | "company" | "departure" | "duration" | "schedule";
 const matchSearch = matchRulesSearch;
 
 function RuleSearchBar({ value, onChange, total, filtered }: { value: string; onChange: (v: string) => void; total: number; filtered: number }) {
@@ -65,16 +66,20 @@ export default function RulesAdminPage() {
   const [dAlias, setDAlias] = useState("");
   const [durDays, setDurDays] = useState("");
   const [durAlias, setDurAlias] = useState("");
+  // Tab "Ngày KH": s = schedule. Canonical thường rỗng (= bỏ qua tour).
+  const [sCanonical, setSCanonical] = useState("");
+  const [sAlias, setSAlias] = useState("");
   const [dropTarget, setDropTarget] = useState<string | null>(null);
 
   const { data: routeRules } = useQuery({ queryKey: ["route-rules"], queryFn: listRouteRules, enabled: isAdmin });
   const { data: companyRules } = useQuery({ queryKey: ["company-rules"], queryFn: listCompanyRules, enabled: isAdmin });
   const { data: departureRules } = useQuery({ queryKey: ["departure-rules"], queryFn: listDepartureRules, enabled: isAdmin });
   const { data: durationRules } = useQuery({ queryKey: ["duration-rules"], queryFn: listDurationRules, enabled: isAdmin });
+  const { data: scheduleRules } = useQuery({ queryKey: ["schedule-rules"], queryFn: listScheduleRules, enabled: isAdmin });
   const { data: unmatchedSummary } = useQuery({ queryKey: ["rules-unmatched-summary"], queryFn: getRulesUnmatchedSummary, enabled: isAdmin, staleTime: 120_000 });
   const { data: routeStats } = useQuery({ queryKey: ["rules-route-stats"], queryFn: getRuleRouteStats, enabled: isAdmin && tab === "classify", staleTime: 120_000 });
   const { data: quality } = useQuery({ queryKey: ["data-quality"], queryFn: getDataQuality, enabled: isAdmin, staleTime: 120_000 });
-  const unmatchedScope = tab === "classify" || tab === "company" || tab === "departure" || tab === "duration" ? tab : null;
+  const unmatchedScope = tab === "classify" || tab === "company" || tab === "departure" || tab === "duration" || tab === "schedule" ? tab : null;
   const [hiddenGapValues, setHiddenGapValues] = useState<Set<string>>(() => new Set());
   const { data: unmatched, isLoading: unmatchedLoading } = useQuery({
     queryKey: ["rules-unmatched", unmatchedScope],
@@ -119,6 +124,7 @@ export default function RulesAdminPage() {
     qc.invalidateQueries({ queryKey: ["company-rules"] });
     qc.invalidateQueries({ queryKey: ["departure-rules"] });
     qc.invalidateQueries({ queryKey: ["duration-rules"] });
+    qc.invalidateQueries({ queryKey: ["schedule-rules"] });
     qc.invalidateQueries({ queryKey: ["rules-unmatched"] });
     qc.invalidateQueries({ queryKey: ["rules-unmatched-summary"] });
     qc.invalidateQueries({ queryKey: ["rules-route-stats"] });
@@ -142,6 +148,12 @@ export default function RulesAdminPage() {
     await createDurationRule({ canonical_days: days, alias });
     invalidate();
     setSyncMsg(`Đã gán "${alias}" → ${days}N`);
+  };
+  // Canonical rỗng = bỏ qua tour khỏi thống kê tần suất đoàn.
+  const assignScheduleAlias = async (canonical: string, alias: string) => {
+    await createScheduleRule({ canonical_name: canonical, alias });
+    invalidate();
+    setSyncMsg(`Đã gán "${alias}" → ${canonical || "(bỏ qua)"}`);
   };
   const appendKeywordToRouteRule = async (rule: RouteRule, raw: string) => {
     const add = parseRouteKeywordList(keywordForRouteDrop(raw) || raw);
@@ -286,6 +298,10 @@ export default function RulesAdminPage() {
     ),
     [durationRules, search],
   );
+  const filteredSchedule = useMemo(
+    () => (scheduleRules ?? []).filter((r) => matchSearch(search, r.canonical_name, r.alias)),
+    [scheduleRules, search],
+  );
   const routeKeywordConflicts = useMemo(
     () => buildRouteKeywordConflicts(routeRules ?? []),
     [routeRules],
@@ -324,8 +340,9 @@ export default function RulesAdminPage() {
   const canonicalOptions = useMemo(() => {
     if (tab === "company") return [...new Set((companyRules ?? []).map((r) => r.canonical_name))];
     if (tab === "departure") return [...new Set((departureRules ?? []).map((r) => r.canonical_name))];
+    if (tab === "schedule") return [...new Set((scheduleRules ?? []).map((r) => r.canonical_name))];
     return [];
-  }, [tab, companyRules, departureRules]);
+  }, [tab, companyRules, departureRules, scheduleRules]);
   const marketOptions = useMemo(
     () => [...new Set((routeRules ?? []).map((r) => r.thi_truong))].sort(),
     [routeRules],
@@ -342,6 +359,11 @@ export default function RulesAdminPage() {
   const addDuration = useMutation({
     mutationFn: () => createDurationRule({ canonical_days: parsedDurDays!, alias: durAlias }),
     onSuccess: () => { setDurDays(""); setDurAlias(""); afterRuleSaved("Đã thêm alias thời gian"); },
+  });
+  const addSchedule = useMutation({
+    // canonical_name có thể rỗng = bỏ qua tour khỏi thống kê tần suất đoàn.
+    mutationFn: () => createScheduleRule({ canonical_name: sCanonical, alias: sAlias }),
+    onSuccess: () => { setSAlias(""); afterRuleSaved("Đã thêm alias lịch khởi hành"); },
   });
 
   if (!isAdmin) return <Navigate to="/" replace />;
@@ -413,6 +435,7 @@ export default function RulesAdminPage() {
             ["company", COL.congTy, unmatchedSummary?.company],
             ["departure", COL.diemKhoiHanh, unmatchedSummary?.departure],
             ["duration", COL.thoiGian, unmatchedSummary?.duration],
+            ["schedule", "Ngày KH", unmatchedSummary?.schedule],
           ] as const).map(([t, label, badgeCount]) => (
             <button key={t} onClick={() => { setTab(t); setSearch(""); cancelEdit(); }}
               className={cn("px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5", tab === t ? "bg-primary-600 text-white" : "bg-gray-100 hover:bg-gray-200")}>
@@ -435,6 +458,7 @@ export default function RulesAdminPage() {
                 : tab === "company" ? (companyRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
                 : tab === "departure" ? (departureRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
                 : tab === "duration" ? (durationRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
+                : tab === "schedule" ? (scheduleRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
                 : (durationRules?.length ?? 0)
             }
             filtered={
@@ -442,6 +466,7 @@ export default function RulesAdminPage() {
                 : tab === "company" ? filteredCompany.length + filteredUnmatched.length
                 : tab === "departure" ? filteredDeparture.length + filteredUnmatched.length
                 : tab === "duration" ? filteredDuration.length + filteredUnmatched.length
+                : tab === "schedule" ? filteredSchedule.length + filteredUnmatched.length
                 : filteredDuration.length
             }
           />
@@ -621,6 +646,52 @@ export default function RulesAdminPage() {
           </div>
           {/* RIGHT: Chưa khớp */}
           <SideUnmatchedDuration items={filteredUnmatched} onAssign={(days, alias) => assignDurationAlias(days, alias)} />
+        </div>
+      )}
+
+      {tab === "schedule" && (
+        <div className="grid lg:grid-cols-[3fr_2fr] gap-4 items-start">
+          {/* LEFT: Form thêm + bảng rules */}
+          <div className="space-y-3">
+            <div className="card p-4 flex flex-wrap gap-2 items-end">
+              <div>
+                <label className="text-xs text-gray-500">Canonical (rỗng = bỏ qua)</label>
+                <input className="input text-sm" value={sCanonical} onChange={(e) => setSCanonical(e.target.value)} placeholder="(bỏ qua) | Theo yêu cầu" />
+              </div>
+              <div className="flex-1 min-w-[180px]">
+                <label className="text-xs text-gray-500">Alias (text gốc trong lich_kh)</label>
+                <input className="input text-sm" value={sAlias} onChange={(e) => setSAlias(e.target.value)} placeholder="theo yêu cầu, liên hệ..."
+                  onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); setSAlias(e.dataTransfer.getData("text/plain")); }} />
+              </div>
+              <div className="flex gap-2">
+                {/* Lưu ý: chỉ cần alias — canonical rỗng là hợp lệ (= bỏ qua tour). */}
+                <button onClick={() => addSchedule.mutate()} disabled={!sAlias} className="btn-primary text-sm"><Plus size={14} /> Thêm</button>
+                <button onClick={() => seedScheduleDefaults().then(() => afterRuleSaved("Đã import alias mặc định"))} className="btn-secondary text-sm"><Database size={14} /> Mặc định</button>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 inline-flex items-center gap-1">
+              Map text lạ trong cột Ngày KH ("Theo yêu cầu", "Liên hệ"…) → canonical.
+              <InfoTip text="Canonical rỗng = bỏ qua tour khỏi thống kê tần suất đoàn. Giá trị chuẩn (vd 18/06/2026) không cần map." />
+            </p>
+            <AliasTable
+              rows={filteredSchedule} unmatched={filteredUnmatched} hideUnmatched
+              canonicalOptions={canonicalOptions} editingId={editingId} editDraft={editDraft}
+              dropTarget={dropTarget} setDropTarget={setDropTarget}
+              onDropAssign={(canonical, alias) => assignScheduleAlias(canonical, alias)}
+              onStartEdit={(r) => startEdit(r.id, { canonical_name: r.canonical_name, alias: r.alias })}
+              onDraftChange={setEditDraft} onCancel={cancelEdit}
+              onSave={(r) => updateScheduleRule(r.id, { canonical_name: editDraft.canonical_name ?? "", alias: editDraft.alias }).then(() => { cancelEdit(); afterRuleSaved("Đã cập nhật alias lịch khởi hành"); })}
+              onDelete={(r) => deleteScheduleRule(r.id).then(() => afterRuleSaved("Đã xóa alias"))}
+              canonicalLabel="Canonical"
+            />
+          </div>
+          {/* RIGHT: Chưa khớp */}
+          <SideUnmatchedAlias
+            items={filteredUnmatched}
+            canonicalOptions={canonicalOptions}
+            onAssign={(canonical, alias) => assignScheduleAlias(canonical, alias)}
+            label="Canonical"
+          />
         </div>
       )}
 
@@ -809,7 +880,7 @@ function AliasTable({
   rows, unmatched, canonicalOptions, editingId, editDraft, dropTarget, setDropTarget, onDropAssign,
   onStartEdit, onDraftChange, onCancel, onSave, onDelete, canonicalLabel, hideUnmatched = false,
 }: {
-  rows: Array<CompanyRule | DepartureRule>;
+  rows: Array<CompanyRule | DepartureRule | ScheduleRule>;
   unmatched: UnmatchedItem[];
   canonicalOptions: string[];
   editingId: string | null;
@@ -817,11 +888,11 @@ function AliasTable({
   dropTarget: string | null;
   setDropTarget: (k: string | null) => void;
   onDropAssign: (canonical: string, alias: string) => void | Promise<void>;
-  onStartEdit: (r: CompanyRule | DepartureRule) => void;
+  onStartEdit: (r: CompanyRule | DepartureRule | ScheduleRule) => void;
   onDraftChange: (d: Record<string, string>) => void;
   onCancel: () => void;
-  onSave: (r: CompanyRule | DepartureRule) => void;
-  onDelete: (r: CompanyRule | DepartureRule) => void;
+  onSave: (r: CompanyRule | DepartureRule | ScheduleRule) => void;
+  onDelete: (r: CompanyRule | DepartureRule | ScheduleRule) => void;
   canonicalLabel: string;
   hideUnmatched?: boolean;
 }) {

@@ -11,7 +11,7 @@ import re
 from functools import lru_cache
 
 from database import SessionLocal
-from models import MarketKeywordRule, RouteKeywordRule, CompanyAliasRule, DepartureAliasRule
+from models import MarketKeywordRule, RouteKeywordRule, CompanyAliasRule, DepartureAliasRule, ScheduleAliasRule
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +78,7 @@ def invalidate_classification_cache() -> None:
     _company_alias_pairs.cache_clear()
     _departure_alias_pairs.cache_clear()
     _duration_alias_pairs.cache_clear()
+    _schedule_alias_pairs.cache_clear()
     _load_route_rules.cache_clear()
     global _route_matcher
     _route_matcher = None
@@ -468,6 +469,14 @@ def is_departure_alias_matched(raw: str) -> bool:
     return _match_departure_alias(raw) is not None
 
 
+def is_schedule_alias_matched(raw: str) -> bool:
+    """Lich_kh có khớp một alias trong bảng schedule_alias_rules không.
+
+    True = text đã được map về canonical (kể cả canonical="" = bỏ qua) → không
+    đưa vào panel «chưa khớp» nữa."""
+    return _match_schedule_alias(raw) is not None
+
+
 def is_duration_alias_matched(thoi_gian: str, so_ngay: float | None) -> bool:
     if so_ngay and 0 < so_ngay <= 45:
         return True
@@ -791,9 +800,13 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
     cong_ty: dict[str, int] = {}
     diem_kh: dict[str, int] = {}
     thoi_gian: dict[str, int] = {}
+    lich_kh: dict[str, int] = {}
     thi_truong: dict[str, dict] = {}
     tuyen_tour: dict[str, dict] = {}
     classify_gaps: dict[str, dict] = {}
+
+    # Import muộn để tránh import vòng nếu departure_parser import classification.
+    from departure_parser import parse_departure_dates
 
     matcher = get_route_rule_matcher()
     for t in tours:
@@ -814,6 +827,15 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
         if days_for_alias is None or (raw_tg_for_alias and not matched_for_alias):
             key = raw_tg_for_alias or (f"so_ngay={t.so_ngay}" if t.so_ngay else "—")
             thoi_gian[key] = thoi_gian.get(key, 0) + 1
+
+        # Ngày KH (lich_kh): chỉ gom giá trị "toàn text lạ" — không parse được ngày
+        # cụ thể nào VÀ chưa map alias. Ví dụ: "Theo yêu cầu", "Liên hệ", "Hàng tháng"…
+        # Giá trị chuẩn "18/06/2026, 25/06/2026" sẽ parse được → không vào panel.
+        raw_lkh = (t.lich_kh or "").strip()
+        if raw_lkh:
+            parsed = parse_departure_dates(raw_lkh)
+            if not parsed and not is_schedule_alias_matched(raw_lkh):
+                lich_kh[raw_lkh] = lich_kh.get(raw_lkh, 0) + 1
 
         # Classify (market/route) chỉ áp dụng cho Main+Vietravel — FTG dùng sheet riêng
         # nên không tham gia route_keyword_rules. Skip nếu không canonical hoặc excluded.
@@ -926,6 +948,7 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
         "cong_ty": _rows(cong_ty),
         "diem_kh": _rows(diem_kh),
         "thoi_gian": _rows(thoi_gian),
+        "lich_kh": _rows(lich_kh),
     }
 
 
@@ -1165,6 +1188,92 @@ def apply_departure_aliases_to_tours(db) -> int:
 
         count += run_with_retry(_do, db=db, label="departure-aliases-batch")
     return count
+
+
+# ── Schedule (lich_kh) alias rules ───────────────────────────────────────────
+
+# Mặc định seed khi bảng trống: các text lạ phổ biến → "" (bỏ qua khỏi
+# thống kê tần suất đoàn). User có thể tự thêm canonical khác nếu muốn.
+DEFAULT_SCHEDULE_ALIASES: list[tuple[str, list[str]]] = [
+    ("", [
+        "theo yêu cầu", "theo yeu cau",
+        "liên hệ", "lien he",
+        "hết hạn áp dụng", "het han ap dung",
+        "ngưng khai thác", "ngung khai thac",
+        "đang cập nhật", "dang cap nhat",
+        "n/a", "—",
+    ]),
+]
+
+
+def _schedule_pairs_from_defaults() -> tuple[tuple[str, str], ...]:
+    pairs = []
+    for canonical, aliases in DEFAULT_SCHEDULE_ALIASES:
+        for a in aliases:
+            pairs.append((0, len(a), a.lower().strip(), canonical))
+    pairs.sort(key=lambda x: (x[0], -x[1]))
+    return tuple((a, c) for _, _, a, c in pairs)
+
+
+@lru_cache(maxsize=1)
+def _schedule_alias_pairs() -> tuple[tuple[str, str], ...]:
+    db = SessionLocal()
+    try:
+        rules = (
+            db.query(ScheduleAliasRule)
+            .filter(ScheduleAliasRule.active == True)
+            .order_by(ScheduleAliasRule.sort_order, ScheduleAliasRule.id)
+            .all()
+        )
+        if rules:
+            pairs = [
+                (r.sort_order, len(r.alias), r.alias.lower().strip(), (r.canonical_name or "").strip())
+                for r in rules
+                if r.alias.strip()
+            ]
+            pairs.sort(key=lambda x: (x[0], -x[1]))
+            return tuple((a, c) for _, _, a, c in pairs)
+    finally:
+        db.close()
+    return _schedule_pairs_from_defaults()
+
+
+def _match_schedule_alias(text: str) -> str | None:
+    """Trả về canonical (có thể là "") nếu khớp alias, None nếu không."""
+    lower = (text or "").strip().lower()
+    if not lower:
+        return None
+    for alias, canonical in _schedule_alias_pairs():
+        if alias == lower:
+            return canonical
+    for alias, canonical in _schedule_alias_pairs():
+        if _alias_matches_text(alias, lower):
+            return canonical
+    return None
+
+
+def seed_schedule_aliases_from_defaults() -> int:
+    from db_retry import run_with_retry
+
+    def _do():
+        db = SessionLocal()
+        try:
+            if db.query(ScheduleAliasRule).count() > 0:
+                return 0
+            order = 0
+            for canonical, aliases in DEFAULT_SCHEDULE_ALIASES:
+                for a in aliases:
+                    db.add(ScheduleAliasRule(canonical_name=canonical, alias=a, sort_order=order))
+                    order += 1
+            db.commit()
+            return order
+        finally:
+            db.close()
+
+    n = run_with_retry(_do, label="seed-schedule-aliases")
+    if n:
+        invalidate_classification_cache()
+    return n
 
 
 def _stamp_tour_classified(t) -> None:
