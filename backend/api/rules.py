@@ -203,6 +203,24 @@ def _auto_apply_tours(
                 "message": msg,
                 "result": result,
             }
+        except RuntimeError as e:
+            # Lock busy: tours_write đang bị job khác giữ. Thay vì 500, đẩy sang
+            # background worker (debounce) — worker sẽ retry sau khi lock free.
+            # UI nhận "Đang áp dụng nền" thay vì error đỏ.
+            if "đang có job khác" in str(e).lower():
+                import logging
+                logging.getLogger(__name__).info(
+                    "sync apply busy → defer to background worker (scope=%s, keywords=%s)",
+                    scope, keywords,
+                )
+                _request_background_apply(scope)
+                return {
+                    "started": True,
+                    "applied": False,
+                    "sync": False,
+                    "message": "Đang đợi job khác xong rồi áp dụng nền — không cần làm gì thêm.",
+                }
+            raise  # other RuntimeError: bubble up
         except Exception as e:
             import logging
 
