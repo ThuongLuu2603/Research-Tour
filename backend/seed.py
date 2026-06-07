@@ -265,6 +265,21 @@ def import_sheet_tab(nguon: str, gid: str, snapshot: str, replace: bool = False)
     db = SessionLocal()
     try:
         if replace:
+            # Pre-clean tour_overrides cho cùng nguon TRƯỚC khi xóa tours, nếu không
+            # FK tour_overrides_tour_id_fkey sẽ chặn DELETE (đã observed trên Main chunks).
+            # Sibling fix với import_main_chunks (commit 5dcdeaa).
+            from sqlalchemy import text as _sa_text
+
+            try:
+                db.execute(_sa_text(
+                    "DELETE FROM tour_overrides WHERE tour_id IN ("
+                    "SELECT id FROM tours WHERE nguon = :nguon)"
+                ), {"nguon": nguon})
+                db.commit()
+            except Exception as e:  # noqa: BLE001
+                db.rollback()
+                logger.warning("Tour overrides pre-cleanup skipped for %s: %s", nguon, e)
+
             deleted = db.query(Tour).filter(Tour.nguon == nguon).delete()
             db.commit()
             logger.info("Removed %s %s tours", deleted, nguon)
