@@ -80,6 +80,19 @@ _FIELD_RE = {
     "dayNight": re.compile(r'\\"dayNight\\":\\"([^\\"]*)\\"'),
 }
 
+# VTR (Next.js) đặt departureName="$undefined" trong listDepartureDate nhưng
+# vẫn lưu departureId ở cấp card. Mapping ID → tên thành phố lấy từ live page
+# (cross-check 5 city codes & counts khớp nhau, ngày 2026-06-07).
+_DEPARTURE_NAME_RE = re.compile(r'\\"departureName\\":\\"([^\\"]*)\\"')
+_DEPARTURE_ID_RE = re.compile(r'\\"departureId\\":(\d+)')
+_DEPARTURE_ID_TO_NAME = {
+    1: "TP. Hồ Chí Minh",
+    3: "Hà Nội",
+    4: "Đà Nẵng",
+    5: "Cần Thơ",
+    8: "Nha Trang",
+}
+
 
 def _field_in_block(block: str, key: str) -> str:
     pat = _FIELD_RE.get(key)
@@ -235,11 +248,21 @@ def _extract_destination(chunk: str, max_len: int = 8000) -> str:
 
 
 def _extract_departure(block: str) -> str:
-    """Điểm khởi hành — bỏ giá trị '$undefined' (site mới để departureName rỗng ở cấp card)."""
-    v = _field_in_block(block, "departureName").strip()
-    if not v or v.lower() == "$undefined":
-        return ""
-    return v
+    """Điểm khởi hành — VTR đặt departureName='$undefined' trong listDepartureDate
+    (re.search() match nhầm cái này → trả rỗng cho ~100% card). Fix 2 lớp:
+      1) findall + filter $undefined → lấy giá trị valid đầu tiên (thường là card-level)
+      2) Fallback: departureId → city map (verify bằng tmp_vtr_verify.py 2026-06-07,
+         79/80 card hồi phục được điểm KH trên cả 2 trang)."""
+    candidates = [
+        _decode_json_str(v) for v in _DEPARTURE_NAME_RE.findall(block)
+        if v and v.lower() != "$undefined"
+    ]
+    if candidates:
+        return candidates[0].strip()
+    m = _DEPARTURE_ID_RE.search(block)
+    if m:
+        return _DEPARTURE_ID_TO_NAME.get(int(m.group(1)), "")
+    return ""
 
 
 def scrape_listing_page(url: str) -> list[dict[str, Any]]:
