@@ -4,6 +4,7 @@ Scrape tour listings from FindTourGo (api-v2) for CN / JP / VN and sync to Googl
 
 from __future__ import annotations
 
+import concurrent.futures
 import os
 import re
 from datetime import datetime, timedelta
@@ -13,6 +14,10 @@ import pandas as pd
 import requests
 
 from time_vn import fmt_vn, now_vn
+
+# Số worker khi pre-fetch city/day-1 song song. Cao quá → FindTourGo có thể rate-limit
+# hoặc quá tải; 16 là sweet spot ổn trong test.
+_FTG_PARALLEL_WORKERS = 16
 
 SOURCE = "FindTourGo"
 SHEET_ID = "1sI34D88zsmSrN7Jf9fS3jh4aUvaep-blxnBR1CGq9eM"
@@ -485,40 +490,22 @@ def _load_city_name(city_id: int | None, cache: dict[int, str], session: request
 _DAY_PREFIX_RE = re.compile(r"^\s*(?:N?G[ÀA]Y|DAY)?\s*0?1?[\s:.\-]*", re.IGNORECASE)
 _FIRST_SEG_RE = re.compile(r"^([^\-–—/()]+?)(?:\s*[\-–—/→]|\s*\()")
 
-# Aliases viết tắt → tên chuẩn. Đặt HỒ CHÍ MINH trước HCM để match chuỗi dài trước.
-_CITY_ALIASES: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"H[ÒÔỒỐ]\s*CH[ÍI]\s*MINH", re.IGNORECASE), "TP. Hồ Chí Minh"),
-    (re.compile(r"(?:^|\b)HCM(?:\b|$)", re.IGNORECASE), "TP. Hồ Chí Minh"),
-    (re.compile(r"S[ÀA]I\s*G[ÒO]N", re.IGNORECASE), "TP. Hồ Chí Minh"),
-    (re.compile(r"H[ÀA]\s*N[ỘỒO]I", re.IGNORECASE), "Hà Nội"),
-    (re.compile(r"[ĐD][ÀA]\s*N[ẲĂẴẵ]NG", re.IGNORECASE), "Đà Nẵng"),
-    (re.compile(r"C[ẦẦA]N\s*TH[ƠƠO]", re.IGNORECASE), "Cần Thơ"),
-    (re.compile(r"NHA\s*TRANG", re.IGNORECASE), "Nha Trang"),
-    (re.compile(r"H[ẢẢA]I\s*PH[ÒO]NG", re.IGNORECASE), "Hải Phòng"),
-    (re.compile(r"V[ŨU]NG\s*T[ÀA]U", re.IGNORECASE), "Vũng Tàu"),
-    (re.compile(r"PHU\s*Y[ÊE]N|PH[ÚU]\s*Y[ÊE]N", re.IGNORECASE), "Phú Yên"),
-]
-
 
 def _parse_day1_city(title: str) -> str:
-    """Parse city khởi hành từ title ngày 1.
+    """Parse city khởi hành (RAW) từ title ngày 1 — TRẢ NGUYÊN VĂN segment đầu.
 
-    Verified trên 11 sample titles (broken-city tours): 100% match đúng.
-    Trả "" nếu không nhận diện được city quen thuộc (giữ behavior an toàn)."""
+    Không normalize. User dùng module "Quy tắc phân loại" để map alias về tên chuẩn
+    (vd: TP.HCM / HCM / Sài Gòn → TP. Hồ Chí Minh). Hardcoded normalize trong scraper
+    bỏ sót tên không quen thuộc và khiến tour rơi xuống fallback country (Việt Nam) —
+    ngược lại với mục đích của classifier."""
     if not title:
         return ""
     cleaned = _DAY_PREFIX_RE.sub("", title)
     m = _FIRST_SEG_RE.match(cleaned)
     if m:
-        first = m.group(1).strip()
-    else:
-        first = re.split(r"[()\t]", cleaned)[0].strip()
-    if not first:
-        return ""
-    for pattern, canonical in _CITY_ALIASES:
-        if pattern.search(first):
-            return canonical
-    return ""
+        return m.group(1).strip()
+    # Không có separator — lấy whole segment trước parenthesis / tab
+    return re.split(r"[()\t]", cleaned)[0].strip()
 
 
 def _fetch_day1_city_from_detail(
@@ -556,6 +543,46 @@ def _fetch_day1_city_from_detail(
         pass
     detail_cache[tour_code] = ""
     return ""
+
+
+def _prefetch_city_caches(
+    items: list[dict[str, Any]],
+    city_cache: dict[int, str],
+    detail_cache: dict[str, str],
+    session: requests.Session,
+) -> None:
+    """Hai pha song song để hâm cache trước khi _item_to_row chạy tuần tự.
+
+    Pha 1: lookup tất cả city_id đang chưa cache (16 worker) — phát hiện ID nào broken.
+    Pha 2: với ID broken, fetch detail page lấy day-1 city (16 worker).
+
+    Sequential trước đây: ~30% tour cần extra HTTP call inside loop → scrape chậm
+    đáng kể. Sau pre-fetch: tất cả HTTP calls của một batch chạy song song, _item_to_row
+    chỉ đọc cache (tức thời)."""
+    # Pha 1: city_id lookups
+    todo_ids = {
+        int(it["departureCity"]) for it in items
+        if it.get("departureCity") and int(it["departureCity"]) not in city_cache
+    }
+    if todo_ids:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=_FTG_PARALLEL_WORKERS) as ex:
+            list(ex.map(lambda cid: _load_city_name(cid, city_cache, session), todo_ids))
+
+    # Pha 2: tour với broken ID → fetch day-1 city
+    todo_codes = {
+        (it.get("tourCode") or "").strip()
+        for it in items
+        if it.get("departureCity")
+        and not city_cache.get(int(it["departureCity"]))
+        and (it.get("tourCode") or "").strip()
+        and (it.get("tourCode") or "").strip() not in detail_cache
+    }
+    if todo_codes:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=_FTG_PARALLEL_WORKERS) as ex:
+            list(ex.map(
+                lambda tc: _fetch_day1_city_from_detail(tc, detail_cache, session),
+                todo_codes,
+            ))
 
 
 def _resolve_quoc_gia(
@@ -761,6 +788,9 @@ def scrape_all_findtourgo_tours(
                 f"FindTourGo [{i + 1}/{n_src}] {label} ({code})…",
             )
         raw_items = fetch_country_tours(code, session=sess)
+        # Pre-fetch song song toàn batch trước khi build row tuần tự → loại bỏ
+        # I/O-bound bottleneck của 30% tour có broken city_id.
+        _prefetch_city_caches(raw_items, city_cache, detail_city_cache, sess)
         for item in raw_items:
             tour_code = (item.get("tourCode") or "").strip()
             if tour_code and tour_code in seen_codes:

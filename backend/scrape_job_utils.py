@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
@@ -9,6 +11,14 @@ from sqlalchemy.orm import Session
 from models import ScrapeJob
 
 logger = logging.getLogger(__name__)
+
+# Throttle reconcile để giảm tải SELECT IN trên scrape_jobs.
+# Endpoint GET /jobs/{id} (UI poll) gọi reconcile mỗi request → CockroachDB cảnh báo
+# ReadWithinUncertaintyIntervalError vì heartbeat write đồng thời. Reconcile chỉ cần
+# chạy mỗi 30s là đủ phát hiện zombie thread.
+_RECONCILE_THROTTLE_SEC = 30.0
+_reconcile_last_run = 0.0
+_reconcile_lock = threading.Lock()
 
 # Job đang quét thật (có heartbeat gần đây) — cho phép chạy lâu
 _STALE_HOURS: dict[str, float] = {
@@ -71,11 +81,27 @@ def _is_stale_job(job: ScrapeJob, now: datetime) -> str | None:
     return None
 
 
-def reconcile_stale_scrape_jobs(db: Session, *, now: datetime | None = None) -> list[int]:
+def reconcile_stale_scrape_jobs(
+    db: Session,
+    *,
+    now: datetime | None = None,
+    force: bool = False,
+) -> list[int]:
     """
     Đánh dấu failed các job pending/running không còn thread thật.
     Trả về danh sách job id đã sửa.
+
+    Throttle: mặc định bỏ qua nếu chạy lần gần nhất < 30s (giảm contention với
+    heartbeat write trên scrape_jobs). Truyền force=True khi user bấm nút thủ công.
     """
+    global _reconcile_last_run
+    if not force:
+        with _reconcile_lock:
+            now_ts = time.monotonic()
+            if now_ts - _reconcile_last_run < _RECONCILE_THROTTLE_SEC:
+                return []
+            _reconcile_last_run = now_ts
+
     now = now or datetime.utcnow()
     fixed: list[int] = []
 

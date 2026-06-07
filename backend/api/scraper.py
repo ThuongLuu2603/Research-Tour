@@ -135,7 +135,7 @@ def reconcile_stale_jobs(
     """Dọn mọi job pending/running treo — gọi khi Job History kẹt «running»."""
     from scrape_job_utils import reconcile_stale_scrape_jobs
 
-    fixed = reconcile_stale_scrape_jobs(db)
+    fixed = reconcile_stale_scrape_jobs(db, force=True)  # nút thủ công bypass throttle
     return {"message": f"Đã dọn {len(fixed)} job treo", "fixed_ids": fixed}
 
 
