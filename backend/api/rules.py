@@ -197,19 +197,58 @@ def _auto_apply_tours(
             logging.getLogger(__name__).exception("sync apply after assign failed: %s", e)
             raise HTTPException(500, f"Gán rule xong nhưng áp dụng tour thất bại: {e}") from e
 
-    import logging
-    import threading
+    _request_background_apply(scope)
+    return {"started": True, "message": "Đang áp dụng quy tắc lên tour (chạy nền)…"}
 
+
+# Debounce state cho apply background — KHÔNG spawn nhiều thread cùng lúc khi user xóa
+# nhiều rule liên tiếp. Nếu thread hiện tại đang chạy, các trigger sau chỉ set flag;
+# thread sẽ kiểm tra flag sau khi xong và chạy thêm 1 lần nếu cần.
+import threading as _threading
+import time as _time
+
+_apply_state_lock = _threading.Lock()
+_apply_pending_scopes: set[str] = set()
+_apply_thread: _threading.Thread | None = None
+
+
+def _request_background_apply(scope: str) -> None:
+    """Đảm bảo có đúng 1 thread đang xử lý apply. Trigger nhiều lần → gộp 1 lần chạy."""
+    global _apply_thread
+    with _apply_state_lock:
+        _apply_pending_scopes.add(scope)
+        if _apply_thread is not None and _apply_thread.is_alive():
+            return  # thread đang chạy sẽ tự pick up scope mới qua _apply_pending_scopes
+        _apply_thread = _threading.Thread(
+            target=_apply_worker_loop, daemon=True, name="apply-rules-debounce",
+        )
+        _apply_thread.start()
+
+
+def _apply_worker_loop() -> None:
+    """Loop pop scope → chạy apply → repeat đến hết pending.
+
+    Nếu lock_busy (job khác đang ghi tour) → log INFO không phải ERROR, retry 1 lần
+    sau 5s rồi bỏ; user vẫn có thể bấm "Áp dụng lên tour" thủ công."""
+    import logging
     from database import SessionLocal
 
     log = logging.getLogger(__name__)
+    lock_busy_retries = 0
 
-    def _work() -> None:
+    while True:
+        with _apply_state_lock:
+            if not _apply_pending_scopes:
+                return
+            # "all" cover mọi scope khác — ưu tiên gộp
+            scope = "all" if "all" in _apply_pending_scopes else next(iter(_apply_pending_scopes))
+            _apply_pending_scopes.clear()
+
         session = SessionLocal()
+        success = False
         try:
             if scope in ("market", "route", "all"):
                 from classification import apply_classification_rules_to_tours
-
                 apply_classification_rules_to_tours(session)
             elif scope == "company":
                 apply_company_aliases_to_tours(session)
@@ -219,20 +258,39 @@ def _auto_apply_tours(
                 apply_duration_aliases_to_tours(session)
             else:
                 apply_all_rules_to_tours(session)
-        except Exception as e:
-            log.exception("auto_apply_tours failed scope=%s: %s", scope, e)
+            success = True
+            lock_busy_retries = 0  # reset sau khi chạy thành công
+        except RuntimeError as e:
+            if "đang có job khác" in str(e).lower() and lock_busy_retries < 1:
+                # Lock contention — re-queue 1 lần, không log ERROR.
+                lock_busy_retries += 1
+                with _apply_state_lock:
+                    _apply_pending_scopes.add(scope)
+                log.info(
+                    "apply-rules: lock đang bận, retry %d/1 sau 5s (scope=%s)",
+                    lock_busy_retries, scope,
+                )
+                session.close()
+                _time.sleep(5)
+                continue
+            # Đã retry rồi hoặc lỗi khác — log info (không phải error) rồi bỏ
+            log.info("apply-rules: bỏ qua (%s); user có thể bấm Áp dụng thủ công", e)
+            lock_busy_retries = 0
+        except Exception as e:  # noqa: BLE001
+            log.exception("apply-rules failed scope=%s: %s", scope, e)
+            lock_busy_retries = 0
         finally:
             try:
                 invalidate_classification_cache()
                 from rules_job_store import invalidate_unmatched_cache
-
                 invalidate_unmatched_cache()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             session.close()
-
-    threading.Thread(target=_work, daemon=True, name=f"apply-rules-{scope}").start()
-    return {"started": True, "message": "Đang áp dụng quy tắc lên tour (chạy nền)…"}
+        # Loop sẽ check pending lần nữa — nếu user thêm flag trong lúc đang chạy → tiếp tục
+        if not success and lock_busy_retries == 0:
+            # Tránh tight loop nếu có lỗi liên tục
+            _time.sleep(1)
 
 
 def _start_apply_all_rules_background(*, recompute_phan_khuc: bool = False, incremental: bool = True) -> dict:
