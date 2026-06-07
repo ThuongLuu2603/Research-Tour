@@ -49,6 +49,7 @@ Lưu ý chung:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 import unicodedata
@@ -68,11 +69,51 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-# ─── Cấu hình ──────────────────────────────────────────────────────────────────
-DATABASE_URL = (
-    "postgresql://postgres.hjoqbknulolkxqqwjxno:Thuong%402603"
-    "@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres?sslmode=require"
-)
+# ─── Cấu hình DB ───────────────────────────────────────────────────────────────
+# Production đã migrate sang CockroachDB Cloud (06/2026). KHÔNG hard-code URL trong file
+# (tránh lỡ commit secret). Lấy theo thứ tự ưu tiên:
+#   1) --db-url <URL> trên CLI (override mọi thứ)
+#   2) DATABASE_URL env var
+#   3) DATABASE_POOLER_URL env var (Render Supabase legacy, vẫn fallback nếu muốn dùng)
+# Nếu không có nguồn nào → in hướng dẫn và exit để khỏi import lầm vào DB cũ.
+
+
+def _resolve_db_url(cli_url: str | None) -> str:
+    url = (
+        cli_url
+        or os.environ.get("DATABASE_URL")
+        or os.environ.get("DATABASE_POOLER_URL")
+        or ""
+    ).strip()
+    if not url:
+        sys.stderr.write(
+            "❌ Chưa có DB URL.\n"
+            "   Cách 1: set env var trước khi chạy\n"
+            "     Windows PowerShell:  $env:DATABASE_URL = 'postgresql://...cockroachlabs.cloud:26257/...'\n"
+            "     macOS/Linux:        export DATABASE_URL='postgresql://...cockroachlabs.cloud:26257/...'\n"
+            "   Cách 2: truyền qua CLI\n"
+            "     python rules_offline.py --db-url 'postgresql://...' --list\n"
+            "\n"
+            "   Lấy URL từ: Render dashboard → service → Environment → DATABASE_URL\n"
+            "   hoặc CockroachDB Cloud → Cluster → Connect → 'sql' driver.\n"
+        )
+        sys.exit(2)
+    # Cảnh báo sớm nếu vẫn trỏ Supabase mà production đã chuyển sang CockroachDB
+    if "cockroachlabs.cloud" not in url and "supabase" in url.lower():
+        sys.stderr.write(
+            "⚠️  URL đang trỏ Supabase. App production hiện chạy CockroachDB Cloud — "
+            "import vào Supabase sẽ KHÔNG hiện trên UI Render.\n"
+            "    Bấm Ctrl+C để hủy, hoặc Enter để tiếp tục.\n"
+        )
+        try:
+            input()
+        except (EOFError, KeyboardInterrupt):
+            sys.exit(2)
+    return url
+
+
+# Lazy — chỉ tính khi parse args xong.
+DATABASE_URL: str = ""
 
 CANONICAL_NGUON = ("Main", "Vietravel")
 
@@ -571,12 +612,20 @@ Format file import (rules_to_add.txt):
     parser.add_argument("--only-priority", action="store_true", help="Dùng với --list: chỉ hiện rules ưu tiên")
     parser.add_argument("--dry-run", action="store_true", help="Không ghi DB, chỉ xem kết quả")
     parser.add_argument("--yes", "-y", action="store_true", help="Bỏ qua bước xác nhận")
-    parser.add_argument("--db-url", default=DATABASE_URL, help="Override DATABASE_URL")
+    parser.add_argument(
+        "--db-url",
+        default=None,
+        help="Override DATABASE_URL (mặc định lấy từ env var DATABASE_URL hoặc DATABASE_POOLER_URL)",
+    )
 
     args = parser.parse_args()
 
+    # Resolve DB URL: --db-url > DATABASE_URL env > DATABASE_POOLER_URL env > error.
+    # Cảnh báo nếu URL trỏ Supabase (production đã sang CockroachDB).
+    db_url = _resolve_db_url(args.db_url)
+
     try:
-        conn = connect(args.db_url)
+        conn = connect(db_url)
     except Exception as e:
         print(f"Lỗi kết nối DB: {e}")
         sys.exit(1)
