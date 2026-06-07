@@ -382,8 +382,21 @@ def delete_market_rule(
     rule = db.query(MarketKeywordRule).filter(MarketKeywordRule.id == rule_id).first()
     if not rule:
         raise HTTPException(404, "Không tìm thấy rule")
-    db.delete(rule)
-    db.commit()
+
+    # Wrap commit trong run_with_retry — CockroachDB Serializable mode hay throw
+    # 40001 SerializationFailure khi DELETE chạm contention với scrape/sync khác
+    # (Render log 2026-06-07: id=827 ABORT_REASON_PUSHER_ABORTED).
+    from db_retry import run_with_retry
+
+    def _do():
+        db.rollback()  # session fresh cho mỗi attempt
+        r = db.query(MarketKeywordRule).filter(MarketKeywordRule.id == rule_id).first()
+        if r is None:
+            return  # idempotent: lần thử trước đã xóa thành công
+        db.delete(r)
+        db.commit()
+
+    run_with_retry(_do, db=db, label="delete-market-rule")
     _on_market_route_rules_changed(db)
     msg = _try_push_market(db) if push_sheet else None
     stats = _auto_apply_tours(db, auto_apply, scope="market")
@@ -496,24 +509,35 @@ def delete_route_rule(
     if not rule:
         raise HTTPException(404, "Không tìm thấy rule")
 
-    # Detach tours đang reference rule này trước khi xóa, nếu không
-    # FK constraint tours_classification_rule_id_fkey sẽ chặn DELETE
-    # (Render log 2026-06-07: Key (id)=(1217) referenced from tours).
-    # Các tour sẽ được reclassify trong _auto_apply_tours bên dưới.
-    detached = (
-        db.query(Tour)
-        .filter(Tour.classification_rule_id == rule_id)
-        .update({Tour.classification_rule_id: None, Tour.classified_at: None}, synchronize_session=False)
-    )
-    if detached:
+    # Wrap detach + delete trong 1 retry-able transaction.
+    # Trước đây 2 commit riêng → nếu attempt 1 detach OK rồi delete fail (40001
+    # SerializationFailure như Render log 2026-06-07 id=827 ABORT_REASON_PUSHER_ABORTED),
+    # tours bị detach nhưng rule chưa xóa → trạng thái nửa vời. Gộp 1 commit + retry.
+    from db_retry import run_with_retry
+
+    detached_count = 0
+
+    def _do():
+        nonlocal detached_count
+        db.rollback()
+        r = db.query(RouteKeywordRule).filter(RouteKeywordRule.id == rule_id).first()
+        if r is None:
+            detached_count = 0
+            return  # idempotent
+        # Detach tours đang reference rule (FK tours_classification_rule_id_fkey).
+        detached_count = (
+            db.query(Tour)
+            .filter(Tour.classification_rule_id == rule_id)
+            .update({Tour.classification_rule_id: None, Tour.classified_at: None}, synchronize_session=False)
+        )
+        db.delete(r)
         db.commit()
 
-    db.delete(rule)
-    db.commit()
+    run_with_retry(_do, db=db, label="delete-route-rule")
     _on_market_route_rules_changed(db)
     msg = _try_push_route(db) if push_sheet else None
     stats = _auto_apply_tours(db, auto_apply, scope="route")
-    return {"deleted": rule_id, "detached_tours": detached, "sheet_sync": msg, "tours_apply": stats}
+    return {"deleted": rule_id, "detached_tours": detached_count, "sheet_sync": msg, "tours_apply": stats}
 
 
 # ── Sync endpoints ────────────────────────────────────────────────────────────
