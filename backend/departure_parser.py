@@ -144,10 +144,27 @@ def parse_departure_dates(lich_kh: str) -> list[datetime]:
       4. "04/06, 11/06, 18/06, 25/06"               — chuỗi DD/MM
       5. "Thứ 4 và thứ 7 hàng tuần"                 — expand 12 tháng
       6. "Tối thứ 5 hàng tuần"                      — expand 12 tháng
+
+    Pattern-based rules (DateFormatRule) được thử TRƯỚC — admin có thể thêm
+    rule mới qua tab "Định dạng Ngày KH". Nếu không rule nào match → fallback
+    hardcoded logic dưới đây (backward compat).
     """
     text = lich_kh or ""
     if not text.strip():
         return []
+
+    # ── Thử DB-driven rule trước (admin định nghĩa qua UI) ──────────────────
+    try:
+        from date_format_rules import match_text as _match_dfr
+
+        dfr_dates, dfr_type, _ = _match_dfr(text)
+        if dfr_type is not None:
+            # Match (kể cả skip/verbatim → trả [] để bỏ qua tour)
+            return dfr_dates
+    except Exception:
+        # DB error / cache miss — fallback gracefully về logic hardcoded.
+        pass
+
     dates: list[datetime] = []
     consumed_spans: list[tuple[int, int]] = []  # tránh double-count
 

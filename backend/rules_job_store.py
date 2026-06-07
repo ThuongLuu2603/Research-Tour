@@ -128,6 +128,7 @@ def _rules_fingerprint(db) -> tuple:
     from models import (
         AppKv,
         CompanyAliasRule,
+        DateFormatRule,
         DepartureAliasRule,
         DurationAliasRule,
         MarketKeywordRule,
@@ -144,6 +145,9 @@ def _rules_fingerprint(db) -> tuple:
     dp = db.query(func.count(DepartureAliasRule.id), func.max(DepartureAliasRule.updated_at)).one()
     du = db.query(func.count(DurationAliasRule.id), func.max(DurationAliasRule.updated_at)).one()
     sc = db.query(func.count(ScheduleAliasRule.id), func.max(ScheduleAliasRule.updated_at)).one()
+    # DateFormatRule (pattern-based parser cho lich_kh) — thay đổi sẽ ảnh hưởng
+    # parse_departure_dates → tần suất KH; invalidate cache khi rule mutation.
+    df = db.query(func.count(DateFormatRule.id), func.max(DateFormatRule.updated_at)).one()
     kv = db.get(AppKv, MARKET_ORDER_KV_KEY)
     kv_ts = kv.updated_at.isoformat() if kv and kv.updated_at else None
     return (
@@ -153,6 +157,7 @@ def _rules_fingerprint(db) -> tuple:
         int(dp[0] or 0), dp[1].isoformat() if dp[1] else None,
         int(du[0] or 0), du[1].isoformat() if du[1] else None,
         int(sc[0] or 0), sc[1].isoformat() if sc[1] else None,
+        int(df[0] or 0), df[1].isoformat() if df[1] else None,
         kv_ts,
     )
 

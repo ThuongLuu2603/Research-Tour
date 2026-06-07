@@ -769,6 +769,75 @@ export const seedScheduleDefaults = async () => {
   return data;
 };
 
+// ── Date format rules (pattern-based parser cho lich_kh) ────────────────────
+// Pattern dùng placeholder {dd} {mm} {yyyy} {yy} {weekday} {...}.
+// Output type: dates | weekly | monthly_recurring | skip | verbatim.
+
+export type DateFormatOutputType =
+  | "dates"
+  | "weekly"
+  | "monthly_recurring"
+  | "skip"
+  | "verbatim";
+
+export interface DateFormatRule {
+  id: string;
+  pattern: string;
+  output_type: DateFormatOutputType;
+  priority: number;
+  active: boolean;
+  description: string;
+}
+
+export interface DateFormatRuleInput {
+  pattern: string;
+  output_type: DateFormatOutputType;
+  priority?: number;
+  active?: boolean;
+  description?: string;
+}
+
+export const listDateFormatRules = async (): Promise<DateFormatRule[]> => {
+  const { data } = await api.get("/admin/rules/date-format");
+  return data;
+};
+
+export const createDateFormatRule = async (body: DateFormatRuleInput): Promise<DateFormatRule> => {
+  const { data } = await api.post("/admin/rules/date-format", body);
+  return data;
+};
+
+export const updateDateFormatRule = async (
+  id: string,
+  body: DateFormatRuleInput,
+): Promise<DateFormatRule> => {
+  const { data } = await api.put(`/admin/rules/date-format/${id}`, body);
+  return data;
+};
+
+export const deleteDateFormatRule = async (id: string) => {
+  const { data } = await api.delete(`/admin/rules/date-format/${id}`);
+  return data;
+};
+
+export const seedDateFormatDefaults = async () => {
+  const { data } = await api.post("/admin/rules/date-format/seed-defaults");
+  return data;
+};
+
+export interface DateFormatTestResult {
+  matched_rule_id: string | null;
+  output_type: DateFormatOutputType | null;
+  dates: string[];
+  count: number;
+  input: string;
+}
+
+export const testDateFormat = async (text: string): Promise<DateFormatTestResult> => {
+  const { data } = await api.post("/admin/rules/date-format/test", { text });
+  return data;
+};
+
 export type UnmatchedTourMember = { title: string; count: number };
 
 export type UnmatchedItem = {

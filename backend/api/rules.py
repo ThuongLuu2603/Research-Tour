@@ -1185,6 +1185,149 @@ def seed_schedule_defaults(_: User = Depends(require_admin), db: Session = Depen
     return {"added": added, "message": f"Đã thêm {added} alias lịch khởi hành mặc định"}
 
 
+# ── Date format rules (pattern-based parser cho lich_kh) ─────────────────────
+
+
+class DateFormatRuleOut(_RuleIdAsStrMixin, BaseModel):
+    id: int
+    pattern: str
+    output_type: str
+    priority: int
+    active: bool
+    description: str
+    model_config = {"from_attributes": True}
+
+
+class DateFormatRuleIn(BaseModel):
+    # Pattern DSL: {dd} {mm} {yyyy} {yy} {weekday} {...} + literal text
+    pattern: str = Field(min_length=1, max_length=512)
+    # Loại output: dates | weekly | monthly_recurring | skip | verbatim
+    output_type: str = Field(max_length=32)
+    priority: int = Field(default=100, ge=1, le=10_000)
+    active: bool = True
+    description: str = Field(default="", max_length=256)
+
+
+_VALID_OUTPUT_TYPES = {"dates", "weekly", "monthly_recurring", "skip", "verbatim"}
+
+
+def _validate_date_format_rule(body: DateFormatRuleIn) -> None:
+    if body.output_type not in _VALID_OUTPUT_TYPES:
+        raise HTTPException(
+            400,
+            f"output_type không hợp lệ ({body.output_type}); cho phép: {sorted(_VALID_OUTPUT_TYPES)}",
+        )
+    # Kiểm pattern compile được (chặn regex sai sớm)
+    from date_format_rules import compile_pattern
+    try:
+        compile_pattern(body.pattern)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@router.get("/date-format", response_model=list[DateFormatRuleOut])
+def list_date_format_rules(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from models import DateFormatRule
+
+    return (
+        db.query(DateFormatRule)
+        .order_by(DateFormatRule.priority.asc(), DateFormatRule.id.asc())
+        .all()
+    )
+
+
+@router.post("/date-format", response_model=DateFormatRuleOut)
+def create_date_format_rule(
+    body: DateFormatRuleIn,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    from date_format_rules import invalidate_date_format_cache
+    from models import DateFormatRule
+
+    _validate_date_format_rule(body)
+    rule = DateFormatRule(**body.model_dump())
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    invalidate_date_format_cache()
+    invalidate_classification_cache()
+    return rule
+
+
+@router.put("/date-format/{rule_id}", response_model=DateFormatRuleOut)
+def update_date_format_rule(
+    rule_id: int,
+    body: DateFormatRuleIn,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    from date_format_rules import invalidate_date_format_cache
+    from models import DateFormatRule
+
+    _validate_date_format_rule(body)
+    rule = db.query(DateFormatRule).filter(DateFormatRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(404, "Rule không tồn tại")
+    for k, v in body.model_dump().items():
+        setattr(rule, k, v)
+    db.commit()
+    db.refresh(rule)
+    invalidate_date_format_cache()
+    invalidate_classification_cache()
+    return rule
+
+
+@router.delete("/date-format/{rule_id}")
+def delete_date_format_rule(
+    rule_id: int,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    from date_format_rules import invalidate_date_format_cache
+    from models import DateFormatRule
+
+    rule = db.query(DateFormatRule).filter(DateFormatRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(404, "Rule không tồn tại")
+    db.delete(rule)
+    db.commit()
+    invalidate_date_format_cache()
+    invalidate_classification_cache()
+    return {"deleted": rule_id}
+
+
+@router.post("/date-format/seed-defaults")
+def seed_date_format_defaults(_: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from date_format_rules import seed_default_rules
+
+    added = seed_default_rules(db)
+    invalidate_classification_cache()
+    return {"added": added, "message": f"Đã thêm {added} rule mặc định"}
+
+
+class DateFormatTestIn(BaseModel):
+    text: str = Field(min_length=1, max_length=2048)
+
+
+@router.post("/date-format/test")
+def test_date_format(
+    body: DateFormatTestIn,
+    _: User = Depends(require_admin),
+):
+    """Test input text → return matched rule + parsed dates. Không ghi DB."""
+    from date_format_rules import match_text
+
+    dates, output_type, rule_id = match_text(body.text)
+    return {
+        "matched_rule_id": str(rule_id) if rule_id is not None else None,
+        "output_type": output_type,
+        "dates": [d.isoformat() for d in dates],
+        "count": len(dates),
+        "input": body.text,
+    }
+
+
 class ClassifyMarketOrderIn(BaseModel):
     markets: list[str] = Field(default_factory=list)
 

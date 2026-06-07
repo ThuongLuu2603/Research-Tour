@@ -7,15 +7,20 @@ import {
   listCompanyRules, createCompanyRule, deleteCompanyRule, updateCompanyRule,
   listDepartureRules, createDepartureRule, deleteDepartureRule, updateDepartureRule,
   listDurationRules, createDurationRule, deleteDurationRule, updateDurationRule,
-  listScheduleRules, createScheduleRule, deleteScheduleRule, updateScheduleRule,
-  seedCompanyDefaults, seedDepartureDefaults, seedDurationDefaults, seedScheduleDefaults,
+  // Schedule alias rules (bảng schedule_alias_rules) — giữ model + API backward
+  // compat, nhưng tab UI cũ đã thay bằng DateFormatRulesTab. Các hàm này chỉ còn
+  // dùng trong AliasTable type union để tránh phải refactor component shared.
+  seedCompanyDefaults, seedDepartureDefaults, seedDurationDefaults,
+  listDateFormatRules, createDateFormatRule, updateDateFormatRule,
+  deleteDateFormatRule, seedDateFormatDefaults, testDateFormat,
   applyClassificationToTours,
   getApplyClassificationStatus,
   getRulesUnmatched,
   getRulesUnmatchedSummary,
   getRuleRouteStats,
   getDataQuality,
-  RouteRule, CompanyRule, DepartureRule, DurationRule, ScheduleRule, UnmatchedItem,
+  RouteRule, CompanyRule, DepartureRule, DurationRule, UnmatchedItem,
+  DateFormatRule, DateFormatOutputType, DateFormatTestResult,
 } from "@/lib/api";
 import { COL } from "@/lib/glossary";
 import { InfoTip } from "@/components/InfoTip";
@@ -66,20 +71,19 @@ export default function RulesAdminPage() {
   const [dAlias, setDAlias] = useState("");
   const [durDays, setDurDays] = useState("");
   const [durAlias, setDurAlias] = useState("");
-  // Tab "Ngày KH": s = schedule. Canonical thường rỗng (= bỏ qua tour).
-  const [sCanonical, setSCanonical] = useState("");
-  const [sAlias, setSAlias] = useState("");
+  // Tab "Định dạng Ngày KH" (schedule): DateFormatRulesTab tự quản lý state riêng,
+  // không dùng các state s* phía trên nữa.
   const [dropTarget, setDropTarget] = useState<string | null>(null);
 
   const { data: routeRules } = useQuery({ queryKey: ["route-rules"], queryFn: listRouteRules, enabled: isAdmin });
   const { data: companyRules } = useQuery({ queryKey: ["company-rules"], queryFn: listCompanyRules, enabled: isAdmin });
   const { data: departureRules } = useQuery({ queryKey: ["departure-rules"], queryFn: listDepartureRules, enabled: isAdmin });
   const { data: durationRules } = useQuery({ queryKey: ["duration-rules"], queryFn: listDurationRules, enabled: isAdmin });
-  const { data: scheduleRules } = useQuery({ queryKey: ["schedule-rules"], queryFn: listScheduleRules, enabled: isAdmin });
   const { data: unmatchedSummary } = useQuery({ queryKey: ["rules-unmatched-summary"], queryFn: getRulesUnmatchedSummary, enabled: isAdmin, staleTime: 120_000 });
   const { data: routeStats } = useQuery({ queryKey: ["rules-route-stats"], queryFn: getRuleRouteStats, enabled: isAdmin && tab === "classify", staleTime: 120_000 });
   const { data: quality } = useQuery({ queryKey: ["data-quality"], queryFn: getDataQuality, enabled: isAdmin, staleTime: 120_000 });
-  const unmatchedScope = tab === "classify" || tab === "company" || tab === "departure" || tab === "duration" || tab === "schedule" ? tab : null;
+  // Tab "schedule" giờ là Định dạng Ngày KH (pattern-based) — không dùng unmatched alias list.
+  const unmatchedScope = tab === "classify" || tab === "company" || tab === "departure" || tab === "duration" ? tab : null;
   const [hiddenGapValues, setHiddenGapValues] = useState<Set<string>>(() => new Set());
   const { data: unmatched, isLoading: unmatchedLoading } = useQuery({
     queryKey: ["rules-unmatched", unmatchedScope],
@@ -124,7 +128,7 @@ export default function RulesAdminPage() {
     qc.invalidateQueries({ queryKey: ["company-rules"] });
     qc.invalidateQueries({ queryKey: ["departure-rules"] });
     qc.invalidateQueries({ queryKey: ["duration-rules"] });
-    qc.invalidateQueries({ queryKey: ["schedule-rules"] });
+    qc.invalidateQueries({ queryKey: ["date-format-rules"] });
     qc.invalidateQueries({ queryKey: ["rules-unmatched"] });
     qc.invalidateQueries({ queryKey: ["rules-unmatched-summary"] });
     qc.invalidateQueries({ queryKey: ["rules-route-stats"] });
@@ -148,12 +152,6 @@ export default function RulesAdminPage() {
     await createDurationRule({ canonical_days: days, alias });
     invalidate();
     setSyncMsg(`Đã gán "${alias}" → ${days}N`);
-  };
-  // Canonical rỗng = bỏ qua tour khỏi thống kê tần suất đoàn.
-  const assignScheduleAlias = async (canonical: string, alias: string) => {
-    await createScheduleRule({ canonical_name: canonical, alias });
-    invalidate();
-    setSyncMsg(`Đã gán "${alias}" → ${canonical || "(bỏ qua)"}`);
   };
   const appendKeywordToRouteRule = async (rule: RouteRule, raw: string) => {
     const add = parseRouteKeywordList(keywordForRouteDrop(raw) || raw);
@@ -298,10 +296,6 @@ export default function RulesAdminPage() {
     ),
     [durationRules, search],
   );
-  const filteredSchedule = useMemo(
-    () => (scheduleRules ?? []).filter((r) => matchSearch(search, r.canonical_name, r.alias)),
-    [scheduleRules, search],
-  );
   const routeKeywordConflicts = useMemo(
     () => buildRouteKeywordConflicts(routeRules ?? []),
     [routeRules],
@@ -340,9 +334,8 @@ export default function RulesAdminPage() {
   const canonicalOptions = useMemo(() => {
     if (tab === "company") return [...new Set((companyRules ?? []).map((r) => r.canonical_name))];
     if (tab === "departure") return [...new Set((departureRules ?? []).map((r) => r.canonical_name))];
-    if (tab === "schedule") return [...new Set((scheduleRules ?? []).map((r) => r.canonical_name))];
     return [];
-  }, [tab, companyRules, departureRules, scheduleRules]);
+  }, [tab, companyRules, departureRules]);
   const marketOptions = useMemo(
     () => [...new Set((routeRules ?? []).map((r) => r.thi_truong))].sort(),
     [routeRules],
@@ -360,12 +353,6 @@ export default function RulesAdminPage() {
     mutationFn: () => createDurationRule({ canonical_days: parsedDurDays!, alias: durAlias }),
     onSuccess: () => { setDurDays(""); setDurAlias(""); afterRuleSaved("Đã thêm alias thời gian"); },
   });
-  const addSchedule = useMutation({
-    // canonical_name có thể rỗng = bỏ qua tour khỏi thống kê tần suất đoàn.
-    mutationFn: () => createScheduleRule({ canonical_name: sCanonical, alias: sAlias }),
-    onSuccess: () => { setSAlias(""); afterRuleSaved("Đã thêm alias lịch khởi hành"); },
-  });
-
   if (!isAdmin) return <Navigate to="/" replace />;
 
   const actionBtns = (onDelete: () => void, onSave?: () => void) => (
@@ -435,7 +422,7 @@ export default function RulesAdminPage() {
             ["company", COL.congTy, unmatchedSummary?.company],
             ["departure", COL.diemKhoiHanh, unmatchedSummary?.departure],
             ["duration", COL.thoiGian, unmatchedSummary?.duration],
-            ["schedule", "Ngày KH", unmatchedSummary?.schedule],
+            ["schedule", "Định dạng Ngày KH", unmatchedSummary?.schedule],
           ] as const).map(([t, label, badgeCount]) => (
             <button key={t} onClick={() => { setTab(t); setSearch(""); cancelEdit(); }}
               className={cn("px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5", tab === t ? "bg-primary-600 text-white" : "bg-gray-100 hover:bg-gray-200")}>
@@ -458,7 +445,7 @@ export default function RulesAdminPage() {
                 : tab === "company" ? (companyRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
                 : tab === "departure" ? (departureRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
                 : tab === "duration" ? (durationRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
-                : tab === "schedule" ? (scheduleRules?.length ?? 0) + (unmatched?.items?.length ?? 0)
+                : tab === "schedule" ? 0  // count quản lý trong DateFormatRulesTab
                 : (durationRules?.length ?? 0)
             }
             filtered={
@@ -466,7 +453,7 @@ export default function RulesAdminPage() {
                 : tab === "company" ? filteredCompany.length + filteredUnmatched.length
                 : tab === "departure" ? filteredDeparture.length + filteredUnmatched.length
                 : tab === "duration" ? filteredDuration.length + filteredUnmatched.length
-                : tab === "schedule" ? filteredSchedule.length + filteredUnmatched.length
+                : tab === "schedule" ? 0  // count quản lý trong DateFormatRulesTab
                 : filteredDuration.length
             }
           />
@@ -650,61 +637,10 @@ export default function RulesAdminPage() {
       )}
 
       {tab === "schedule" && (
-        <div className="grid lg:grid-cols-[3fr_2fr] gap-4 items-start">
-          {/* LEFT: Form thêm + bảng rules */}
-          <div className="space-y-3">
-            <div className="rounded-md bg-primary-50/70 border border-primary-100 px-3 py-2 text-[11px] text-primary-800 space-y-1">
-              <p className="font-semibold">🤖 Hệ thống đã tự hiểu các định dạng sau (KHÔNG cần map tay):</p>
-              <ul className="list-disc pl-4 space-y-0.5">
-                <li><code className="bg-white px-1 rounded">18/06/2026</code> — chuẩn DD/MM/YYYY</li>
-                <li><code className="bg-white px-1 rounded">Khởi hành ngày 17/06</code> → tự thêm năm gần nhất</li>
-                <li><code className="bg-white px-1 rounded">Tháng 6: 13, 20, 27</code> → expand thành 13/06/YY, 20/06/YY, 27/06/YY</li>
-                <li><code className="bg-white px-1 rounded">04/06, 11/06, 18/06</code> → tự thêm năm chung</li>
-                <li><code className="bg-white px-1 rounded">Thứ 4 và thứ 7 hàng tuần</code> → expand 12 tháng</li>
-                <li><code className="bg-white px-1 rounded">Tối thứ 5 hàng tuần</code> → expand 12 tháng</li>
-              </ul>
-              <p>Tab này chỉ dùng cho text KHÔNG phải date: <code className="bg-white px-1 rounded">Theo yêu cầu</code>, <code className="bg-white px-1 rounded">Liên hệ</code>… → map sang "Tên chính thức" để hệ thống xử lý.</p>
-            </div>
-            <div className="card p-4 flex flex-wrap gap-2 items-end">
-              <div>
-                <label className="text-xs text-gray-500">Tên chính thức (rỗng = bỏ qua tour)</label>
-                <input className="input text-sm" value={sCanonical} onChange={(e) => setSCanonical(e.target.value)} placeholder="(bỏ qua) | Theo yêu cầu" />
-              </div>
-              <div className="flex-1 min-w-[180px]">
-                <label className="text-xs text-gray-500">Alias (text gốc trong lich_kh)</label>
-                <input className="input text-sm" value={sAlias} onChange={(e) => setSAlias(e.target.value)} placeholder="theo yêu cầu, liên hệ..."
-                  onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); setSAlias(e.dataTransfer.getData("text/plain")); }} />
-              </div>
-              <div className="flex gap-2">
-                {/* Lưu ý: chỉ cần alias — Tên chính thức rỗng là hợp lệ (= bỏ qua tour). */}
-                <button onClick={() => addSchedule.mutate()} disabled={!sAlias} className="btn-primary text-sm"><Plus size={14} /> Thêm</button>
-                <button onClick={() => seedScheduleDefaults().then(() => afterRuleSaved("Đã import alias mặc định"))} className="btn-secondary text-sm"><Database size={14} /> Mặc định</button>
-              </div>
-            </div>
-            <p className="text-xs text-gray-500 inline-flex items-center gap-1">
-              Chuẩn hóa text trong cột Ngày KH ("Theo yêu cầu", "Liên hệ"…) → Tên chính thức.
-              <InfoTip text="Tên chính thức rỗng = bỏ qua tour khỏi thống kê tần suất đoàn. Date chuẩn (18/06/2026) và các format Vietnamese (Khởi hành ngày DD/MM, Tháng MM: DD, …) đã được parser tự hiểu — không cần map ở đây." />
-            </p>
-            <AliasTable
-              rows={filteredSchedule} unmatched={filteredUnmatched} hideUnmatched
-              canonicalOptions={canonicalOptions} editingId={editingId} editDraft={editDraft}
-              dropTarget={dropTarget} setDropTarget={setDropTarget}
-              onDropAssign={(canonical, alias) => assignScheduleAlias(canonical, alias)}
-              onStartEdit={(r) => startEdit(r.id, { canonical_name: r.canonical_name, alias: r.alias })}
-              onDraftChange={setEditDraft} onCancel={cancelEdit}
-              onSave={(r) => updateScheduleRule(r.id, { canonical_name: editDraft.canonical_name ?? "", alias: editDraft.alias }).then(() => { cancelEdit(); afterRuleSaved("Đã cập nhật alias lịch khởi hành"); })}
-              onDelete={(r) => deleteScheduleRule(r.id).then(() => afterRuleSaved("Đã xóa alias"))}
-              canonicalLabel="Tên chính thức"
-            />
-          </div>
-          {/* RIGHT: Chưa khớp */}
-          <SideUnmatchedAlias
-            items={filteredUnmatched}
-            canonicalOptions={canonicalOptions}
-            onAssign={(canonical, alias) => assignScheduleAlias(canonical, alias)}
-            label="Tên chính thức"
-          />
-        </div>
+        <DateFormatRulesTab
+          search={search}
+          onMessage={setSyncMsg}
+        />
       )}
 
       {/* ─── Sticky Apply Bar (fixed bottom) ─────────────────────────────── */}
@@ -892,7 +828,7 @@ function AliasTable({
   rows, unmatched, canonicalOptions, editingId, editDraft, dropTarget, setDropTarget, onDropAssign,
   onStartEdit, onDraftChange, onCancel, onSave, onDelete, canonicalLabel, hideUnmatched = false,
 }: {
-  rows: Array<CompanyRule | DepartureRule | ScheduleRule>;
+  rows: Array<CompanyRule | DepartureRule>;
   unmatched: UnmatchedItem[];
   canonicalOptions: string[];
   editingId: string | null;
@@ -900,11 +836,11 @@ function AliasTable({
   dropTarget: string | null;
   setDropTarget: (k: string | null) => void;
   onDropAssign: (canonical: string, alias: string) => void | Promise<void>;
-  onStartEdit: (r: CompanyRule | DepartureRule | ScheduleRule) => void;
+  onStartEdit: (r: CompanyRule | DepartureRule) => void;
   onDraftChange: (d: Record<string, string>) => void;
   onCancel: () => void;
-  onSave: (r: CompanyRule | DepartureRule | ScheduleRule) => void;
-  onDelete: (r: CompanyRule | DepartureRule | ScheduleRule) => void;
+  onSave: (r: CompanyRule | DepartureRule) => void;
+  onDelete: (r: CompanyRule | DepartureRule) => void;
   canonicalLabel: string;
   hideUnmatched?: boolean;
 }) {
@@ -1046,4 +982,447 @@ function AliasTable({
 }
 
 // UnmatchedDurationRow đã được thay thế bởi SideUnmatchedDurationRow trong SideUnmatchedDuration
+
+
+// ── Định dạng Ngày KH (pattern-based date format rules) ─────────────────────
+// Admin tự định nghĩa pattern parse lich_kh (vd "Tháng {mm}: {dd}, {dd}") qua UI
+// thay vì hardcode trong code. Mỗi rule có:
+//   - pattern: DSL với {dd} {mm} {yyyy} {yy} {weekday} {...} + literal text
+//   - output_type: dates | weekly | monthly_recurring | skip | verbatim
+//   - priority asc: rule có priority nhỏ thử trước
+const OUTPUT_TYPE_LABELS: Record<DateFormatOutputType, string> = {
+  dates: "Danh sách ngày",
+  weekly: "Hàng tuần (recurring)",
+  monthly_recurring: "Hàng tháng (recurring)",
+  skip: "Bỏ qua tour",
+  verbatim: "Text cố định (bỏ qua)",
+};
+
+function DateFormatRulesTab({
+  search,
+  onMessage,
+}: {
+  search: string;
+  onMessage: (msg: string) => void;
+}) {
+  const qc = useQueryClient();
+  const { data: rules, isLoading } = useQuery({
+    queryKey: ["date-format-rules"],
+    queryFn: listDateFormatRules,
+  });
+
+  // Form thêm rule
+  const [pattern, setPattern] = useState("");
+  const [outputType, setOutputType] = useState<DateFormatOutputType>("dates");
+  const [priority, setPriority] = useState<string>("100");
+  const [description, setDescription] = useState("");
+
+  // Edit state — id string (CockroachDB unique_rowid())
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<{
+    pattern: string;
+    output_type: DateFormatOutputType;
+    priority: string;
+    description: string;
+    active: boolean;
+  } | null>(null);
+
+  // Test widget
+  const [testText, setTestText] = useState("");
+  const [testResult, setTestResult] = useState<DateFormatTestResult | null>(null);
+  const [testError, setTestError] = useState("");
+
+  const filtered = useMemo(() => {
+    return (rules ?? []).filter((r) =>
+      matchSearch(search, r.pattern, r.output_type, r.description, r.priority),
+    );
+  }, [rules, search]);
+
+  const invalidate = useCallback(() => {
+    qc.invalidateQueries({ queryKey: ["date-format-rules"] });
+    qc.invalidateQueries({ queryKey: ["rules-unmatched-summary"] });
+  }, [qc]);
+
+  const showErr = (e: unknown) => {
+    const msg =
+      (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      || (e as Error)?.message
+      || String(e);
+    onMessage(msg);
+  };
+
+  const addMut = useMutation({
+    mutationFn: () =>
+      createDateFormatRule({
+        pattern: pattern.trim(),
+        output_type: outputType,
+        priority: parseInt(priority, 10) || 100,
+        description: description.trim(),
+        active: true,
+      }),
+    onSuccess: () => {
+      setPattern("");
+      setDescription("");
+      setPriority("100");
+      invalidate();
+      onMessage("Đã thêm rule mới");
+    },
+    onError: showErr,
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => deleteDateFormatRule(id),
+    onSuccess: () => {
+      invalidate();
+      onMessage("Đã xóa rule");
+    },
+    onError: showErr,
+  });
+
+  const startEdit = (r: DateFormatRule) => {
+    setEditingId(r.id);
+    setEditDraft({
+      pattern: r.pattern,
+      output_type: r.output_type,
+      priority: String(r.priority),
+      description: r.description,
+      active: r.active,
+    });
+  };
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditDraft(null);
+  };
+  const saveEdit = async () => {
+    if (!editingId || !editDraft) return;
+    try {
+      await updateDateFormatRule(editingId, {
+        pattern: editDraft.pattern.trim(),
+        output_type: editDraft.output_type,
+        priority: parseInt(editDraft.priority, 10) || 100,
+        description: editDraft.description.trim(),
+        active: editDraft.active,
+      });
+      cancelEdit();
+      invalidate();
+      onMessage("Đã lưu rule");
+    } catch (e) {
+      showErr(e);
+    }
+  };
+
+  const onSeedDefaults = async () => {
+    try {
+      const res = await seedDateFormatDefaults();
+      invalidate();
+      onMessage(res.message || "Đã import rule mặc định");
+    } catch (e) {
+      showErr(e);
+    }
+  };
+
+  const onTest = async () => {
+    setTestError("");
+    setTestResult(null);
+    if (!testText.trim()) return;
+    try {
+      const res = await testDateFormat(testText);
+      setTestResult(res);
+    } catch (e) {
+      const msg =
+        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        || (e as Error)?.message
+        || String(e);
+      setTestError(msg);
+    }
+  };
+
+  return (
+    <div className="grid lg:grid-cols-[3fr_2fr] gap-4 items-start">
+      {/* LEFT: Form + bảng rules */}
+      <div className="space-y-3">
+        {/* Banner */}
+        <div className="rounded-md bg-primary-50/70 border border-primary-100 px-3 py-2 text-[11px] text-primary-800 space-y-1">
+          <p className="font-semibold">
+            Hệ thống parse ngày KH theo các rule dưới đây. Bạn có thể thêm/sửa pattern.
+          </p>
+          <p>
+            Pattern dùng placeholder:
+            <code className="bg-white px-1 rounded mx-0.5">{"{dd}"}</code>
+            <code className="bg-white px-1 rounded mx-0.5">{"{mm}"}</code>
+            <code className="bg-white px-1 rounded mx-0.5">{"{yyyy}"}</code>
+            <code className="bg-white px-1 rounded mx-0.5">{"{yy}"}</code>
+            <code className="bg-white px-1 rounded mx-0.5">{"{weekday}"}</code>
+            <code className="bg-white px-1 rounded mx-0.5">{"{...}"}</code> (wildcard).
+            Rule có priority nhỏ thử trước.
+          </p>
+        </div>
+
+        {/* Form thêm */}
+        <div className="card p-4 grid grid-cols-12 gap-2 items-end">
+          <div className="col-span-12 sm:col-span-5">
+            <label className="text-xs text-gray-500">Pattern</label>
+            <input
+              className="input text-sm font-mono"
+              value={pattern}
+              onChange={(e) => setPattern(e.target.value)}
+              placeholder="Tháng {mm}: {dd}, {dd}"
+              onKeyDown={keepInputKeys}
+            />
+          </div>
+          <div className="col-span-6 sm:col-span-3">
+            <label className="text-xs text-gray-500">Output type</label>
+            <select
+              className="input text-sm"
+              value={outputType}
+              onChange={(e) => setOutputType(e.target.value as DateFormatOutputType)}
+            >
+              {Object.entries(OUTPUT_TYPE_LABELS).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
+          </div>
+          <div className="col-span-6 sm:col-span-2">
+            <label className="text-xs text-gray-500">Priority</label>
+            <input
+              className="input text-sm"
+              type="number"
+              min={1}
+              max={10000}
+              value={priority}
+              onChange={(e) => setPriority(e.target.value)}
+            />
+          </div>
+          <div className="col-span-12 sm:col-span-9">
+            <label className="text-xs text-gray-500">Mô tả (tùy chọn)</label>
+            <input
+              className="input text-sm"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Liệt kê ngày trong tháng…"
+              onKeyDown={keepInputKeys}
+            />
+          </div>
+          <div className="col-span-12 sm:col-span-3 flex gap-2">
+            <button
+              type="button"
+              className="btn-primary text-sm"
+              disabled={!pattern.trim() || addMut.isPending}
+              onClick={() => addMut.mutate()}
+            >
+              <Plus size={14} /> Thêm rule
+            </button>
+            <button
+              type="button"
+              className="btn-secondary text-sm"
+              onClick={onSeedDefaults}
+            >
+              <Database size={14} /> Mặc định
+            </button>
+          </div>
+        </div>
+
+        {/* Bảng rules */}
+        <div className="card overflow-auto" style={{ maxHeight: "calc(100vh - 360px)" }}>
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 sticky top-0">
+              <tr>
+                <th className="px-3 py-2 text-left w-16">Prio</th>
+                <th className="px-3 py-2 text-left">Pattern</th>
+                <th className="px-3 py-2 text-left w-44">Type</th>
+                <th className="px-3 py-2 text-left">Mô tả</th>
+                <th className="w-20" />
+              </tr>
+            </thead>
+            <tbody>
+              {isLoading && (
+                <tr><td colSpan={5} className="px-3 py-4 text-center text-gray-400">Đang tải…</td></tr>
+              )}
+              {!isLoading && filtered.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-3 py-6 text-center text-gray-400">
+                    Chưa có rule. Bấm "Mặc định" để import 14 rule chuẩn.
+                  </td>
+                </tr>
+              )}
+              {filtered.map((r) => {
+                const isEditing = editingId === r.id;
+                return (
+                  <tr key={r.id} className={cn("border-t", isEditing && "bg-blue-50", !r.active && "opacity-60")}>
+                    <td className="px-3 py-2">
+                      {isEditing ? (
+                        <input
+                          className="input text-sm py-1 w-16"
+                          type="number"
+                          value={editDraft?.priority ?? ""}
+                          onChange={(e) => setEditDraft((p) => p ? { ...p, priority: e.target.value } : p)}
+                        />
+                      ) : (
+                        <span className="text-xs text-gray-600">{r.priority}</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs">
+                      {isEditing ? (
+                        <input
+                          className="input text-sm py-1 font-mono w-full"
+                          value={editDraft?.pattern ?? ""}
+                          onChange={(e) => setEditDraft((p) => p ? { ...p, pattern: e.target.value } : p)}
+                        />
+                      ) : (
+                        <span className="break-all">{r.pattern}</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-xs">
+                      {isEditing ? (
+                        <select
+                          className="input text-sm py-1"
+                          value={editDraft?.output_type ?? "dates"}
+                          onChange={(e) => setEditDraft((p) => p ? { ...p, output_type: e.target.value as DateFormatOutputType } : p)}
+                        >
+                          {Object.entries(OUTPUT_TYPE_LABELS).map(([k, v]) => (
+                            <option key={k} value={k}>{v}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className={cn(
+                          "inline-block px-1.5 py-0.5 rounded text-[10px] font-medium",
+                          r.output_type === "dates" ? "bg-blue-100 text-blue-800"
+                            : r.output_type === "weekly" ? "bg-emerald-100 text-emerald-800"
+                            : r.output_type === "monthly_recurring" ? "bg-purple-100 text-purple-800"
+                            : "bg-gray-200 text-gray-700"
+                        )}>
+                          {OUTPUT_TYPE_LABELS[r.output_type] ?? r.output_type}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-gray-600">
+                      {isEditing ? (
+                        <input
+                          className="input text-sm py-1 w-full"
+                          value={editDraft?.description ?? ""}
+                          onChange={(e) => setEditDraft((p) => p ? { ...p, description: e.target.value } : p)}
+                        />
+                      ) : (
+                        r.description || <span className="text-gray-400">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      {isEditing ? (
+                        <span className="flex gap-1">
+                          <button type="button" className="text-green-600 p-1" onClick={saveEdit} title="Lưu">
+                            <Check size={14} />
+                          </button>
+                          <button type="button" className="text-gray-400 p-1" onClick={cancelEdit} title="Huỷ">
+                            <X size={14} />
+                          </button>
+                        </span>
+                      ) : (
+                        <span className="flex gap-1">
+                          <button
+                            type="button"
+                            className="text-gray-500 hover:text-primary-600 p-1"
+                            onClick={() => startEdit(r)}
+                            title="Sửa"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            className="text-red-500 p-1"
+                            onClick={() => {
+                              if (confirm(`Xóa rule "${r.pattern}"?`)) deleteMut.mutate(r.id);
+                            }}
+                            title="Xóa"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p className="text-xs text-gray-400 p-3">{filtered.length} rules</p>
+        </div>
+      </div>
+
+      {/* RIGHT: Test widget */}
+      <div className="card p-4 space-y-3 sticky top-4">
+        <div>
+          <p className="text-sm font-semibold text-gray-800">Test pattern</p>
+          <p className="text-[11px] text-gray-500 mt-0.5">
+            Nhập text mẫu từ <code className="bg-gray-100 px-1 rounded">lich_kh</code> để xem rule nào match + ngày parse ra.
+          </p>
+        </div>
+        <textarea
+          className="input text-sm font-mono w-full"
+          rows={4}
+          value={testText}
+          onChange={(e) => setTestText(e.target.value)}
+          placeholder="Tháng 6: 13, 20, 27"
+        />
+        <button
+          type="button"
+          className="btn-primary text-sm w-full"
+          disabled={!testText.trim()}
+          onClick={onTest}
+        >
+          Test
+        </button>
+        {testError && (
+          <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
+            {testError}
+          </p>
+        )}
+        {testResult && (
+          <div className="text-xs space-y-2 bg-gray-50 border border-gray-200 rounded p-2">
+            {testResult.matched_rule_id ? (
+              <>
+                <p>
+                  <span className="text-gray-500">Rule:</span>{" "}
+                  <span className="font-mono">#{testResult.matched_rule_id}</span>{" "}
+                  <span className={cn(
+                    "ml-1 inline-block px-1.5 py-0.5 rounded text-[10px] font-medium",
+                    testResult.output_type === "dates" ? "bg-blue-100 text-blue-800"
+                      : testResult.output_type === "weekly" ? "bg-emerald-100 text-emerald-800"
+                      : testResult.output_type === "monthly_recurring" ? "bg-purple-100 text-purple-800"
+                      : "bg-gray-200 text-gray-700"
+                  )}>
+                    {OUTPUT_TYPE_LABELS[(testResult.output_type ?? "dates") as DateFormatOutputType]}
+                  </span>
+                </p>
+                <p>
+                  <span className="text-gray-500">Số ngày:</span>{" "}
+                  <span className="font-bold">{testResult.count}</span>
+                </p>
+                {testResult.dates.length > 0 && (
+                  <div>
+                    <p className="text-gray-500 mb-1">Ngày parse:</p>
+                    <ul className="space-y-0.5 max-h-48 overflow-auto">
+                      {testResult.dates.slice(0, 30).map((d) => (
+                        <li key={d} className="font-mono text-[11px] bg-white rounded px-1.5 py-0.5">
+                          {d.slice(0, 10)}
+                        </li>
+                      ))}
+                      {testResult.dates.length > 30 && (
+                        <li className="text-gray-400 text-[10px]">… +{testResult.dates.length - 30} ngày</li>
+                      )}
+                    </ul>
+                  </div>
+                )}
+                {testResult.dates.length === 0 && (
+                  <p className="text-amber-700">Match nhưng không có ngày — output_type là "{testResult.output_type}" (bỏ qua tour).</p>
+                )}
+              </>
+            ) : (
+              <p className="text-gray-600">Không có rule nào match — bạn có thể thêm rule mới ở bên trái.</p>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 

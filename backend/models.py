@@ -176,6 +176,24 @@ class ScheduleAliasRule(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class DateFormatRule(Base):
+    """Pattern-based rule cho parse lich_kh — DSL với placeholder {dd}/{mm}/{yyyy}/{yy}/{weekday}.
+
+    Priority asc — rule có priority nhỏ thử trước. Output type quyết định cách convert
+    captured groups → list[datetime] (dates|weekly|monthly_recurring|skip|verbatim).
+    Xem backend/date_format_rules.py để biết DSL grammar + compiler.
+    """
+    __tablename__ = "date_format_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pattern: Mapped[str] = mapped_column(String(512), index=True)
+    output_type: Mapped[str] = mapped_column(String(32))  # dates|weekly|monthly_recurring|skip|verbatim
+    priority: Mapped[int] = mapped_column(Integer, default=100, index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    description: Mapped[str] = mapped_column(String(256), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class DailySnapshot(Base):
     """Snapshot KPI hàng ngày — trend & báo cáo."""
     __tablename__ = "daily_snapshots"
