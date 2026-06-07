@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 scrape_offline.py — Chạy scraper trực tiếp từ terminal, không qua API.
-Kết nối thẳng Supabase PostgreSQL — không tốn Egress REST.
+Kết nối thẳng PostgreSQL/CockroachDB — không tốn Egress REST.
 
 Yêu cầu: chạy từ thư mục gốc ota-platform/
     pip install requests psycopg2-binary sqlalchemy pandas gspread google-auth
@@ -37,11 +37,12 @@ import sys
 import time
 from datetime import datetime
 
-# ── Cấu hình ──────────────────────────────────────────────────────────────────
-DATABASE_URL = (
-    "postgresql://postgres.hjoqbknulolkxqqwjxno:Thuong%402603"
-    "@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres?sslmode=require"
-)
+# ── Cấu hình DB ────────────────────────────────────────────────────────────────
+# Production đã migrate sang CockroachDB Cloud (06/2026). KHÔNG hard-code URL ở đây.
+# Backend đọc DATABASE_URL qua pydantic Settings, nên script này chỉ cần:
+#   1) lấy URL từ --db-url / DATABASE_URL / DATABASE_POOLER_URL env
+#   2) set lại os.environ["DATABASE_URL"] TRƯỚC khi import backend
+#   3) cảnh báo nếu URL trỏ Supabase mà prod đã đổi sang CockroachDB
 
 # Đường dẫn backend (script đặt ở thư mục gốc, backend/ là sub-folder)
 _BACKEND = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend")
@@ -54,9 +55,42 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-# ── Inject DATABASE_URL vào env trước khi import backend ──────────────────────
-os.environ.setdefault("DATABASE_URL", DATABASE_URL)
+# SECRET_KEY chỉ dùng để pass validation của backend Settings — không dùng để ký token
 os.environ.setdefault("SECRET_KEY", "offline-run-secret-not-used")
+
+
+def _resolve_db_url(cli_url: str | None) -> str:
+    url = (
+        cli_url
+        or os.environ.get("DATABASE_URL")
+        or os.environ.get("DATABASE_POOLER_URL")
+        or ""
+    ).strip()
+    if not url:
+        sys.stderr.write(
+            "❌ Chưa có DB URL.\n"
+            "   Cách 1: set env var trước khi chạy\n"
+            "     Windows PowerShell:  $env:DATABASE_URL = 'postgresql://...cockroachlabs.cloud:26257/...'\n"
+            "     macOS/Linux:        export DATABASE_URL='postgresql://...cockroachlabs.cloud:26257/...'\n"
+            "   Cách 2: truyền qua CLI\n"
+            "     python scrape_offline.py --source vietravel --db-url 'postgresql://...'\n"
+            "\n"
+            "   Lấy URL từ: Render dashboard → service → Environment → DATABASE_URL\n"
+            "   hoặc CockroachDB Cloud → Cluster → Connect → 'sql' driver.\n"
+        )
+        sys.exit(2)
+    # Cảnh báo sớm nếu vẫn trỏ Supabase mà production đã chuyển sang CockroachDB
+    if "cockroachlabs.cloud" not in url and "supabase" in url.lower():
+        sys.stderr.write(
+            "⚠️  URL đang trỏ Supabase. App production hiện chạy CockroachDB Cloud — "
+            "ghi vào Supabase sẽ KHÔNG hiện trên UI Render.\n"
+            "    Bấm Ctrl+C để hủy, hoặc Enter để tiếp tục.\n"
+        )
+        try:
+            input()
+        except (EOFError, KeyboardInterrupt):
+            sys.exit(2)
+    return url
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -289,13 +323,16 @@ Ví dụ:
     )
     parser.add_argument(
         "--db-url",
-        default="",
-        help="Override DATABASE_URL",
+        default=None,
+        help="Override DATABASE_URL (mặc định lấy từ env var DATABASE_URL hoặc DATABASE_POOLER_URL)",
     )
     args = parser.parse_args()
 
-    if args.db_url:
-        os.environ["DATABASE_URL"] = args.db_url
+    # Resolve DB URL: --db-url > DATABASE_URL env > DATABASE_POOLER_URL env > error.
+    # Cảnh báo nếu URL trỏ Supabase (production đã sang CockroachDB).
+    # PHẢI set env TRƯỚC khi import backend modules (config.Settings đọc 1 lần lúc import).
+    db_url = _resolve_db_url(args.db_url)
+    os.environ["DATABASE_URL"] = db_url
 
     country_list: list[str] | None = None
     if args.countries.strip():

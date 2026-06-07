@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-apply_rules_offline.py — Áp dụng quy tắc phân loại tuyến tour trực tiếp vào Supabase
+apply_rules_offline.py — Áp dụng quy tắc phân loại tuyến tour trực tiếp vào DB
 mà không đi qua API backend (tránh tốn Egress).
 
 Chạy:
@@ -15,6 +15,7 @@ Yêu cầu: pip install psycopg2-binary
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 import time
@@ -36,12 +37,52 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CẤU HÌNH — đổi DATABASE_URL nếu cần
+# CẤU HÌNH DB
+# Production đã migrate sang CockroachDB Cloud (06/2026). KHÔNG hard-code URL trong file
+# (tránh lỡ commit secret + ghi nhầm Supabase đã chết). Lấy theo thứ tự ưu tiên:
+#   1) --db-url <URL> trên CLI (override mọi thứ)
+#   2) DATABASE_URL env var
+#   3) DATABASE_POOLER_URL env var (Render Supabase legacy, fallback)
+# Nếu không có nguồn nào → in hướng dẫn và exit để khỏi import lầm vào DB cũ.
 # ─────────────────────────────────────────────────────────────────────────────
-DATABASE_URL = (
-    "postgresql://postgres.hjoqbknulolkxqqwjxno:Thuong%402603"
-    "@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres?sslmode=require"
-)
+
+
+def _resolve_db_url(cli_url: str | None) -> str:
+    url = (
+        cli_url
+        or os.environ.get("DATABASE_URL")
+        or os.environ.get("DATABASE_POOLER_URL")
+        or ""
+    ).strip()
+    if not url:
+        sys.stderr.write(
+            "❌ Chưa có DB URL.\n"
+            "   Cách 1: set env var trước khi chạy\n"
+            "     Windows PowerShell:  $env:DATABASE_URL = 'postgresql://...cockroachlabs.cloud:26257/...'\n"
+            "     macOS/Linux:        export DATABASE_URL='postgresql://...cockroachlabs.cloud:26257/...'\n"
+            "   Cách 2: truyền qua CLI\n"
+            "     python apply_rules_offline.py --db-url 'postgresql://...'\n"
+            "\n"
+            "   Lấy URL từ: Render dashboard → service → Environment → DATABASE_URL\n"
+            "   hoặc CockroachDB Cloud → Cluster → Connect → 'sql' driver.\n"
+        )
+        sys.exit(2)
+    # Cảnh báo sớm nếu vẫn trỏ Supabase mà production đã chuyển sang CockroachDB
+    if "cockroachlabs.cloud" not in url and "supabase" in url.lower():
+        sys.stderr.write(
+            "⚠️  URL đang trỏ Supabase. App production hiện chạy CockroachDB Cloud — "
+            "ghi vào Supabase sẽ KHÔNG hiện trên UI Render.\n"
+            "    Bấm Ctrl+C để hủy, hoặc Enter để tiếp tục.\n"
+        )
+        try:
+            input()
+        except (EOFError, KeyboardInterrupt):
+            sys.exit(2)
+    return url
+
+
+# Lazy — chỉ tính khi parse args xong.
+DATABASE_URL: str = ""
 
 # Chỉ áp dụng cho tour có nguon trong danh sách này
 CANONICAL_NGUON = ("Main", "Vietravel")
@@ -339,12 +380,12 @@ def run(
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser(
-        description="Áp dụng quy tắc phân loại tuyến tour vào Supabase (offline, không qua API)"
+        description="Áp dụng quy tắc phân loại tuyến tour vào DB (offline, không qua API)"
     )
     parser.add_argument(
         "--db-url",
-        default=DATABASE_URL,
-        help="PostgreSQL connection URL (mặc định: dùng URL đã cấu hình trong script)",
+        default=None,
+        help="Override DATABASE_URL (mặc định lấy từ env var DATABASE_URL hoặc DATABASE_POOLER_URL)",
     )
     parser.add_argument(
         "--full-scan",
@@ -364,9 +405,13 @@ def main():
     )
     args = parser.parse_args()
 
+    # Resolve DB URL: --db-url > DATABASE_URL env > DATABASE_POOLER_URL env > error.
+    # Cảnh báo nếu URL trỏ Supabase (production đã sang CockroachDB).
+    db_url = _resolve_db_url(args.db_url)
+
     try:
         run(
-            db_url=args.db_url,
+            db_url=db_url,
             full_scan=args.full_scan,
             dry_run=args.dry_run,
             batch_size=args.batch,
