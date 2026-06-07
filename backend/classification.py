@@ -1199,10 +1199,26 @@ def _apply_rule_result_to_tour(
 
 
 def _commit_tour_batch(db, batch, *, sync_search: bool = True) -> list[int]:
+    from sqlalchemy.exc import IntegrityError
     from tour_search import sync_search_tsv_for_ids
 
     ids = [t.id for t in batch if t.id]
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as e:
+        # FK race: user xóa rule X giữa lúc apply đang chạy với matcher cache cũ
+        # (vẫn nghĩ rule X tồn tại). UPDATE thấy classification_rule_id=X → FK violation.
+        # Rollback + invalidate cache → vòng apply tiếp theo sẽ rebuild matcher.
+        # Log INFO không phải ERROR vì đây là race lành.
+        db.rollback()
+        if "tours_classification_rule_id_fkey" in str(e):
+            logger.info(
+                "FK race: rule bị xóa giữa lúc apply (%d tour trong batch bị bỏ). "
+                "Invalidate matcher để vòng sau dùng cache mới.", len(batch),
+            )
+            invalidate_classification_cache()
+            return []  # caller tiếp tục với batch sau
+        raise
     if sync_search and ids:
         sync_search_tsv_for_ids(ids)
     return ids

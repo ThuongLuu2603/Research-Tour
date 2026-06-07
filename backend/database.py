@@ -104,6 +104,7 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     _migrate_users_columns()
     from migrations import (
+        _migrate_classification_rule_fk_set_null,
         _migrate_scrape_jobs_columns,
         _migrate_tour_columns,
         _migrate_saved_views,
@@ -112,6 +113,7 @@ def init_db():
     _migrate_tour_columns()
     _migrate_saved_views()
     _migrate_scrape_jobs_columns()
+    _migrate_classification_rule_fk_set_null()
     run_search_migrations(create_indexes=False)
 
 

@@ -67,6 +67,53 @@ def _migrate_saved_views():
             logger.warning("saved_views migration skipped: %s", e)
 
 
+_FK_SET_NULL_FLAG = "fk_classification_rule_id_set_null_v1"
+
+
+def _migrate_classification_rule_fk_set_null():
+    """Đổi FK tours.classification_rule_id sang ON DELETE SET NULL.
+
+    Trước: xóa rule → tours đang reference bị FK violation, apply worker crash với
+    ForeignKeyViolation (Render log 2026-06-07 11:34). Sau migration: DB tự set NULL
+    khi rule bị xóa, không cần pre-clean trong API endpoint nữa.
+
+    Chỉ chạy trên PostgreSQL/CockroachDB. Gated bằng flag để không re-issue schema
+    change mỗi lần deploy."""
+    if not _is_postgres():
+        return
+    try:
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            done = conn.execute(
+                text("SELECT 1 FROM app_kv WHERE key = :k"), {"k": _FK_SET_NULL_FLAG}
+            ).first()
+        if done:
+            return
+    except Exception:  # noqa: BLE001
+        return
+
+    try:
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            # Drop old constraint, add new with ON DELETE SET NULL.
+            # CockroachDB cho phép trong cùng schema change job.
+            conn.execute(text("ALTER TABLE tours DROP CONSTRAINT IF EXISTS tours_classification_rule_id_fkey"))
+            conn.execute(text(
+                "ALTER TABLE tours ADD CONSTRAINT tours_classification_rule_id_fkey "
+                "FOREIGN KEY (classification_rule_id) REFERENCES route_keyword_rules(id) "
+                "ON DELETE SET NULL"
+            ))
+        logger.info("FK tours.classification_rule_id → ON DELETE SET NULL applied")
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO app_kv (key, value_json, updated_at) "
+                    "VALUES (:k, '\"done\"', NOW()) ON CONFLICT (key) DO NOTHING"
+                ),
+                {"k": _FK_SET_NULL_FLAG},
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("FK SET NULL migration skipped (sẽ thử lại lần deploy sau): %s", e)
+
+
 def _backfill_external_ids(batch_size: int = 500) -> None:
     from database import SessionLocal
     from models import Tour
