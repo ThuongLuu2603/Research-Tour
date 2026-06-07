@@ -340,14 +340,13 @@ def _collect_schedule_date_values(
                 if dt:
                     found.append(dt)
             found.extend(_dates_from_schedule_name(name, ref_year))
-            # API không trả month/year cho departureDates dạng ["18"], ["15"]. Website JS tự
-            # tính: với mỗi day DD, lấy tháng/năm gần nhất sao cho ngày DD chưa qua. Verified
-            # screenshot user gửi:
-            #   VN-590530 (DD=18, today=2026-06-07) → 2026-06-18  ✓
-            #   VN-004878 (DD=15, today=2026-06-07) → 2026-06-15  ✓
-            # Chỉ chạy fallback này khi đã hoàn toàn không parse được date nào ở trên.
+            # API không trả month/year cho departureDates dạng ["18"], ["15"]. Pattern thực:
+            # khởi hành ngày DD HÀNG THÁNG (recurring monthly). Website FE hiển thị ngày
+            # tiếp theo gần nhất nhưng dữ liệu nguồn là cả series. Sinh ngày DD cho 12 tháng
+            # kế tiếp (tương đồng cách RECURRING_WEEKDAYS expand qua 365 ngày).
             if len(found) == count_before and isinstance(day_list, list) and day_list:
                 today = now_vn().replace(tzinfo=None, hour=0, minute=0, second=0, microsecond=0)
+                import calendar as _cal
                 for d in day_list:
                     try:
                         day_num = int(str(d).strip())
@@ -355,15 +354,13 @@ def _collect_schedule_date_values(
                         continue
                     if not (1 <= day_num <= 31):
                         continue
-                    import calendar as _cal
                     cur_year, cur_month = today.year, today.month
-                    for _ in range(13):  # ≤12 tháng tìm slot, safety +1
+                    for _ in range(12):  # 12 tháng kế tiếp
                         last_day_of_month = _cal.monthrange(cur_year, cur_month)[1]
                         if day_num <= last_day_of_month:
                             candidate = datetime(cur_year, cur_month, day_num)
                             if candidate >= today:
                                 found.append(candidate)
-                                break
                         cur_month += 1
                         if cur_month > 12:
                             cur_month = 1
