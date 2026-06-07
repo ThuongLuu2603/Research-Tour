@@ -70,8 +70,9 @@ _PLACEHOLDER_TO_REGEX: dict[str, str] = {
     # {weekday}: digit (2-7), CN/chủ nhật, HOẶC từ tiếng Việt
     # (hai|ba|bốn|năm|sáu|bảy|tư) — vd "thứ năm" = thứ 5
     "weekday": r"(\d|cn|ch[ủu]\s*nh[ậa]t|hai|ba|b[ốo]n|n[ăa]m|s[áa]u|b[ảa]y|t[ưu])",
-    # {dd_list}: 1 hoặc nhiều DD ngăn cách bởi comma. Dùng cho "Tháng 6: 08, 09, 10, ..., 30"
-    "dd_list": r"((?:\d{1,2})(?:\s*[,/]\s*\d{1,2})*)",
+    # {dd_list}: 1 hoặc nhiều DD ngăn cách bởi comma, semicolon, slash, hoặc space.
+    # Dùng cho "Tháng 6: 08, 09, 10, ..., 30" hay "13; 20; 27"
+    "dd_list": r"((?:\d{1,2})(?:\s*[,;/]\s*\d{1,2})*)",
     # {...}: wildcard, có thể chứa | cho multi-section
     "...": r".*?",
 }
@@ -454,10 +455,11 @@ def match_text(
             continue
         return result, proxy.output_type.lower(), proxy.id
 
-    # Pass 2: nếu có separator `|`, split + match từng section, gộp dates.
-    if "|" not in text:
+    # Pass 2: nếu có separator (| ; newline), split + match từng section, gộp dates.
+    # Format thường gặp: "DD-MM-YYYY; DD-MM-YYYY; ..." hoặc "Tháng X: ... | Tháng Y: ..."
+    if not re.search(r"[|;\n]", text):
         return [], None, None
-    sections = [s.strip() for s in text.split("|") if s.strip()]
+    sections = [s.strip() for s in re.split(r"[|;\n]", text) if s.strip()]
     if len(sections) < 2:
         return [], None, None
     all_dates: list[datetime] = []
@@ -499,22 +501,25 @@ def match_text(
 
 DEFAULT_RULES: list[dict[str, Any]] = [
     # priority, pattern, output_type, description
-    (1, "{dd}/{mm}/{yyyy}", "dates", "DD/MM/YYYY chuẩn"),
-    (2, "Khởi hành ngày {dd}/{mm}", "dates", "Khởi hành ngày DD/MM (suy năm)"),
-    # Tháng X: {dd_list} — bao mọi liệt kê ngày trong 1 tháng. Multi-section "|"
+    (1, "{dd}/{mm}/{yyyy}", "dates", "DD/MM/YYYY chuẩn (slash)"),
+    (2, "{dd}-{mm}-{yyyy}", "dates", "DD-MM-YYYY (dash)"),
+    (3, "{dd}.{mm}.{yyyy}", "dates", "DD.MM.YYYY (dot)"),
+    (4, "Khởi hành ngày {dd}/{mm}", "dates", "Khởi hành ngày DD/MM (suy năm)"),
+    # Tháng X: {dd_list} — bao mọi liệt kê ngày trong 1 tháng. Multi-section "|" hoặc ";"
     # tự handle ở match_text pass 2.
-    (3, "Tháng {mm}: {dd_list}", "dates", "Tháng X: D1, D2, ..., Dn (1 hoặc nhiều ngày)"),
-    (4, "{dd}/{mm}", "dates", "DD/MM thuần (suy năm)"),
-    # {weekday} bây giờ match cả từ tiếng Việt "năm" → thứ 5, "hai" → thứ 2, ...
-    (5, "Tối thứ {weekday} hàng tuần", "weekly", "Recurring weekly tối"),
-    (6, "Sáng thứ {weekday} hàng tuần", "weekly", "Recurring weekly sáng"),
-    (7, "Chiều thứ {weekday} hàng tuần", "weekly", "Recurring weekly chiều"),
-    (8, "Thứ {weekday} hàng tuần", "weekly", "Recurring weekly (hỗ trợ 'thứ năm', 'thứ 5')"),
-    (9, "Thứ {weekday} và thứ {weekday} hàng tuần", "weekly", "2 weekdays"),
-    (10, "Theo yêu cầu", "skip", "Skip tour: theo yêu cầu"),
-    (11, "Liên hệ", "skip", "Skip tour: liên hệ"),
-    (12, "Hết hạn áp dụng", "skip", "Skip tour: hết hạn"),
-    (13, "Đang cập nhật", "skip", "Skip tour: đang cập nhật"),
+    (5, "Tháng {mm}: {dd_list}", "dates", "Tháng X: D1, D2, ..., Dn (1 hoặc nhiều ngày)"),
+    (6, "{dd}/{mm}", "dates", "DD/MM thuần (suy năm)"),
+    (7, "{dd}-{mm}", "dates", "DD-MM thuần (suy năm)"),
+    # {weekday} hỗ trợ cả từ tiếng Việt "năm" → thứ 5, "hai" → thứ 2, ...
+    (8, "Tối thứ {weekday} hàng tuần", "weekly", "Recurring weekly tối"),
+    (9, "Sáng thứ {weekday} hàng tuần", "weekly", "Recurring weekly sáng"),
+    (10, "Chiều thứ {weekday} hàng tuần", "weekly", "Recurring weekly chiều"),
+    (11, "Thứ {weekday} hàng tuần", "weekly", "Recurring weekly (hỗ trợ 'thứ năm', 'thứ 5')"),
+    (12, "Thứ {weekday} và thứ {weekday} hàng tuần", "weekly", "2 weekdays"),
+    (13, "Theo yêu cầu", "skip", "Skip tour: theo yêu cầu"),
+    (14, "Liên hệ", "skip", "Skip tour: liên hệ"),
+    (15, "Hết hạn áp dụng", "skip", "Skip tour: hết hạn"),
+    (16, "Đang cập nhật", "skip", "Skip tour: đang cập nhật"),
 ]
 # Chuyển tuple → dict cho dễ đọc
 DEFAULT_RULES = [
