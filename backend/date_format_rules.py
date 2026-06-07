@@ -52,21 +52,35 @@ def invalidate_date_format_cache() -> None:
 
 # ── DSL compile ──────────────────────────────────────────────────────────────
 
-# Token regex: tìm {dd}, {mm}, {yyyy}, {yy}, {weekday}, {...} HOẶC literal char
+# Token regex: tìm {dd}, {mm}, {yyyy}, {yy}, {weekday}, {dd_list}, {...} HOẶC literal char.
+# {dd_list} matchhes "08, 09, 10, ..., 30" (1+ days separated by comma).
+# {month_block} matches "Tháng 6: 13, 20, 27" — 1 mm + multiple days, dùng khi
+#   pattern lặp lại theo dạng "{month_block} | {month_block} | ..."
 _TOKEN_RE = re.compile(
-    r"\{(dd|mm|yyyy|yy|weekday|\.\.\.)\}",
+    r"\{(dd_list|month_block|dd|mm|yyyy|yy|weekday|\.\.\.)\}",
     re.IGNORECASE,
 )
 
-# Trong DSL, placeholder map sang nhóm regex tương ứng. Group name kèm số thứ tự
-# để hỗ trợ pattern có nhiều {dd} liên tiếp (vd "Tháng {mm}: {dd}, {dd}, {dd}").
+# Trong DSL, placeholder map sang nhóm regex tương ứng.
 _PLACEHOLDER_TO_REGEX: dict[str, str] = {
     "dd": r"(\d{1,2})",
     "mm": r"(\d{1,2})",
     "yyyy": r"(\d{4})",
     "yy": r"(\d{2})",
-    "weekday": r"(\d|cn|ch[ủu]\s*nh[ậa]t)",
+    # {weekday}: digit (2-7), CN/chủ nhật, HOẶC từ tiếng Việt
+    # (hai|ba|bốn|năm|sáu|bảy|tư) — vd "thứ năm" = thứ 5
+    "weekday": r"(\d|cn|ch[ủu]\s*nh[ậa]t|hai|ba|b[ốo]n|n[ăa]m|s[áa]u|b[ảa]y|t[ưu])",
+    # {dd_list}: 1 hoặc nhiều DD ngăn cách bởi comma. Dùng cho "Tháng 6: 08, 09, 10, ..., 30"
+    "dd_list": r"((?:\d{1,2})(?:\s*[,/]\s*\d{1,2})*)",
+    # {...}: wildcard, có thể chứa | cho multi-section
     "...": r".*?",
+}
+
+# Vietnamese ordinal words → weekday number (2-7 hoặc 6 cho CN)
+_VI_WEEKDAY_WORD: dict[str, int] = {
+    "hai": 2, "ba": 3, "bốn": 4, "bon": 4, "tư": 4, "tu": 4,
+    "năm": 5, "nam": 5, "sáu": 6, "sau": 6, "bảy": 7, "bay": 7,
+    "cn": 8, "chủ nhật": 8, "chu nhat": 8,  # 8 = sentinel for "Chủ nhật"
 }
 
 
@@ -158,8 +172,15 @@ def _resolve_common_year(dates_dm: list[tuple[int, int]], today: datetime) -> in
 
 
 def _weekday_index_from_token(token: str) -> int | None:
-    """2|3|4|5|6|7 → 0..5 (Monday..Saturday); CN/Chủ nhật → 6."""
-    t = (token or "").strip().lower()
+    """Convert weekday token → Python weekday index (0=Monday … 6=Sunday).
+
+    Hỗ trợ:
+      - Digit: 2|3|4|5|6|7 (thứ 2 → 0, thứ 7 → 5)
+      - CN, Chủ nhật → 6
+      - Vietnamese words: "hai"(2)→0, "ba"(3)→1, "bốn|tư"(4)→2, "năm"(5)→3,
+        "sáu"(6)→4, "bảy"(7)→5
+    """
+    t = re.sub(r"\s+", " ", (token or "").strip().lower())
     if not t:
         return None
     if t in {"cn"} or t.startswith("chủ") or t.startswith("chu"):
@@ -168,6 +189,13 @@ def _weekday_index_from_token(token: str) -> int | None:
         n = int(t)
         if 2 <= n <= 7:
             return n - 2
+    # Map Vietnamese ordinal words
+    word_to_num = _VI_WEEKDAY_WORD.get(t)
+    if word_to_num is not None:
+        if word_to_num == 8:  # sentinel CN
+            return 6
+        if 2 <= word_to_num <= 7:
+            return word_to_num - 2
     return None
 
 
@@ -267,10 +295,17 @@ def _extract_dates_from_captured(
     Logic: nếu có >=1 mm trước dd → dùng mm gần nhất TRƯỚC; nếu không (mm chỉ sau)
     → dùng mm đầu tiên SAU. Tương tự yyyy/yy.
     """
-    # Pass 1: build (idx, kind, value) list
+    # Pass 1: build (idx, kind, value) list. {dd_list} expand thành nhiều dd entries.
     items: list[tuple[int, str, int]] = []
     for idx, (name, val) in enumerate(captured):
         if not val or name == "weekday":
+            continue
+        # {dd_list}: parse all DD trong captured string "08, 09, 10, ..., 30"
+        if name == "dd_list":
+            for d_match in re.finditer(r"\b(\d{1,2})\b", val):
+                n = int(d_match.group(1))
+                if 1 <= n <= 31:
+                    items.append((idx, "dd", n))
             continue
         try:
             n = int(val)
@@ -400,18 +435,64 @@ def match_text(
     - (dates, "dates"|"weekly"|"monthly_recurring", id): rule match + có dates
     - ([], "skip"|"verbatim", id): rule match nhưng bỏ qua tour
     - ([], None, None): không có rule nào match
+
+    Multi-section: nếu text có dấu `|` (vd "Tháng 6: ... | Tháng 7: ..."), thử
+    match nguyên text trước; nếu fail → split theo `|` và match từng section,
+    gộp dates. Cho phép user chỉ định pattern đơn lẻ "Tháng {mm}: {dd_list}" mà
+    vẫn handle được chuỗi liệt kê nhiều tháng.
     """
     if not text or not text.strip():
         return [], None, None
     rules = _get_active_rules_cached(_cache_token)
     today = today or _today()
+
+    # Pass 1: thử match nguyên text
     for rd in rules:
         proxy = _RuleProxy(rd)
         result = apply_rule(proxy, text, today)
         if result is None:
             continue
         return result, proxy.output_type.lower(), proxy.id
-    return [], None, None
+
+    # Pass 2: nếu có separator `|`, split + match từng section, gộp dates.
+    if "|" not in text:
+        return [], None, None
+    sections = [s.strip() for s in text.split("|") if s.strip()]
+    if len(sections) < 2:
+        return [], None, None
+    all_dates: list[datetime] = []
+    matched_type: str | None = None
+    matched_id: int | None = None
+    any_matched = False
+    for section in sections:
+        for rd in rules:
+            proxy = _RuleProxy(rd)
+            result = apply_rule(proxy, section, today)
+            if result is None:
+                continue
+            # Sửa output_type là "dates" cho gộp; skip/verbatim sẽ bỏ qua section đó
+            ot = proxy.output_type.lower()
+            if ot in {"skip", "verbatim"}:
+                any_matched = True
+                if matched_type is None:
+                    matched_type, matched_id = ot, proxy.id
+                break
+            all_dates.extend(result)
+            any_matched = True
+            if matched_type is None or matched_type == "skip":
+                matched_type, matched_id = ot, proxy.id
+            break  # found rule cho section này, sang section kế
+    if not any_matched:
+        return [], None, None
+    # Dedupe
+    seen = set()
+    uniq = []
+    for d in sorted(all_dates):
+        key = (d.year, d.month, d.day)
+        if key not in seen:
+            seen.add(key)
+            uniq.append(d)
+    return uniq, matched_type or "dates", matched_id
 
 
 # ── Seed defaults ────────────────────────────────────────────────────────────
@@ -420,18 +501,20 @@ DEFAULT_RULES: list[dict[str, Any]] = [
     # priority, pattern, output_type, description
     (1, "{dd}/{mm}/{yyyy}", "dates", "DD/MM/YYYY chuẩn"),
     (2, "Khởi hành ngày {dd}/{mm}", "dates", "Khởi hành ngày DD/MM (suy năm)"),
-    (3, "Tháng {mm}: {dd}, {dd}, {dd}", "dates", "Liệt kê 3 ngày trong tháng"),
-    (4, "Tháng {mm}: {dd}", "dates", "1 ngày trong tháng"),
-    (5, "{dd}/{mm}", "dates", "DD/MM thuần (suy năm)"),
-    (6, "Tối thứ {weekday} hàng tuần", "weekly", "Recurring weekly tối"),
-    (7, "Sáng thứ {weekday} hàng tuần", "weekly", "Recurring weekly sáng"),
-    (8, "Chiều thứ {weekday} hàng tuần", "weekly", "Recurring weekly chiều"),
-    (9, "Thứ {weekday} hàng tuần", "weekly", "Recurring weekly"),
-    (10, "Thứ {weekday} và thứ {weekday} hàng tuần", "weekly", "2 weekdays"),
-    (11, "Theo yêu cầu", "skip", "Skip tour: theo yêu cầu"),
-    (12, "Liên hệ", "skip", "Skip tour: liên hệ"),
-    (13, "Hết hạn áp dụng", "skip", "Skip tour: hết hạn"),
-    (14, "Đang cập nhật", "skip", "Skip tour: đang cập nhật"),
+    # Tháng X: {dd_list} — bao mọi liệt kê ngày trong 1 tháng. Multi-section "|"
+    # tự handle ở match_text pass 2.
+    (3, "Tháng {mm}: {dd_list}", "dates", "Tháng X: D1, D2, ..., Dn (1 hoặc nhiều ngày)"),
+    (4, "{dd}/{mm}", "dates", "DD/MM thuần (suy năm)"),
+    # {weekday} bây giờ match cả từ tiếng Việt "năm" → thứ 5, "hai" → thứ 2, ...
+    (5, "Tối thứ {weekday} hàng tuần", "weekly", "Recurring weekly tối"),
+    (6, "Sáng thứ {weekday} hàng tuần", "weekly", "Recurring weekly sáng"),
+    (7, "Chiều thứ {weekday} hàng tuần", "weekly", "Recurring weekly chiều"),
+    (8, "Thứ {weekday} hàng tuần", "weekly", "Recurring weekly (hỗ trợ 'thứ năm', 'thứ 5')"),
+    (9, "Thứ {weekday} và thứ {weekday} hàng tuần", "weekly", "2 weekdays"),
+    (10, "Theo yêu cầu", "skip", "Skip tour: theo yêu cầu"),
+    (11, "Liên hệ", "skip", "Skip tour: liên hệ"),
+    (12, "Hết hạn áp dụng", "skip", "Skip tour: hết hạn"),
+    (13, "Đang cập nhật", "skip", "Skip tour: đang cập nhật"),
 ]
 # Chuyển tuple → dict cho dễ đọc
 DEFAULT_RULES = [
