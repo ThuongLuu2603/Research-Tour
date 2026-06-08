@@ -21,6 +21,11 @@ import {
   getDataQuality,
   RouteRule, CompanyRule, DepartureRule, DurationRule, UnmatchedItem,
   DateFormatRule, DateFormatOutputType, DateFormatTestResult,
+  // Festival mapping rules (tab Lễ hội)
+  listFestivalMappingRules, createFestivalMappingRule, updateFestivalMappingRule,
+  deleteFestivalMappingRule, applyFestivalMappingRules,
+  listFestivals,
+  FestivalMappingRule, Festival,
 } from "@/lib/api";
 import { COL } from "@/lib/glossary";
 import { InfoTip } from "@/components/InfoTip";
@@ -31,7 +36,7 @@ import { dropHandlers, dragAliasProps, keepInputKeys, keywordForRouteDrop, match
 import { ClassificationRulesTab } from "@/components/ClassificationRulesTab";
 import { Plus, Trash2, RefreshCw, Database, Search, Pencil, Check, X, GripVertical } from "lucide-react";
 
-type Tab = "classify" | "company" | "departure" | "duration" | "schedule";
+type Tab = "classify" | "company" | "departure" | "duration" | "schedule" | "festival";
 const matchSearch = matchRulesSearch;
 
 function RuleSearchBar({ value, onChange, total, filtered }: { value: string; onChange: (v: string) => void; total: number; filtered: number }) {
@@ -428,6 +433,7 @@ export default function RulesAdminPage() {
             ["departure", COL.diemKhoiHanh, unmatchedSummary?.departure],
             ["duration", COL.thoiGian, unmatchedSummary?.duration],
             ["schedule", "Định dạng Ngày KH", unmatchedSummary?.schedule],
+            ["festival", "Lễ hội", undefined as number | undefined],
           ] as const).map(([t, label, badgeCount]) => (
             <button key={t} onClick={() => { setTab(t); setSearch(""); cancelEdit(); }}
               className={cn("px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5", tab === t ? "bg-primary-600 text-white" : "bg-gray-100 hover:bg-gray-200")}>
@@ -649,6 +655,10 @@ export default function RulesAdminPage() {
           unmatchedLoading={unmatchedLoading}
           onMarkHandled={markGapsHandled}
         />
+      )}
+
+      {tab === "festival" && (
+        <FestivalMappingRulesTab search={search} onMessage={setSyncMsg} />
       )}
 
       {/* ─── Sticky Apply Bar (fixed bottom) ─────────────────────────────── */}
@@ -1550,6 +1560,248 @@ function DateFormatRulesTab({
             </button>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+
+// ── Tab Lễ hội: Manual mapping festival → tour (qua keyword TT/Tuyến) ────────
+function FestivalMappingRulesTab({ search, onMessage }: { search: string; onMessage: (msg: string) => void }) {
+  const qc = useQueryClient();
+  const { data: rules } = useQuery({ queryKey: ["festival-mapping-rules"], queryFn: listFestivalMappingRules });
+  const { data: festivals } = useQuery({
+    queryKey: ["festivals-all"],
+    queryFn: () => listFestivals({ limit: 2000 }),
+    staleTime: 6 * 60 * 60 * 1000,
+  });
+
+  // Form thêm
+  const [festSlug, setFestSlug] = useState("");
+  const [market, setMarket] = useState("");
+  const [route, setRoute] = useState("");
+  const [note, setNote] = useState("");
+
+  // Edit state
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<{ festival_slug: string; market_keyword: string; route_keyword: string; note: string; active: boolean } | null>(null);
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["festival-mapping-rules"] });
+
+  const showErr = (e: unknown) => {
+    const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      || (e as Error)?.message || String(e);
+    onMessage("Lỗi: " + msg);
+  };
+
+  const addMut = useMutation({
+    mutationFn: () => createFestivalMappingRule({
+      festival_slug: festSlug.trim(),
+      market_keyword: market.trim(),
+      route_keyword: route.trim(),
+      note: note.trim(),
+      active: true,
+    }),
+    onSuccess: () => {
+      setFestSlug(""); setMarket(""); setRoute(""); setNote("");
+      invalidate();
+      onMessage("Đã thêm rule");
+    },
+    onError: showErr,
+  });
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => deleteFestivalMappingRule(id),
+    onSuccess: () => { invalidate(); onMessage("Đã xóa rule"); },
+    onError: showErr,
+  });
+  const applyMut = useMutation({
+    mutationFn: applyFestivalMappingRules,
+    onSuccess: (r) => {
+      onMessage(r.message + " — chi tiết: " + r.details.map(d => `${d.festival_name || d.festival_slug}: +${d.tagged}`).join(", "));
+      qc.invalidateQueries({ queryKey: ["festivals"] });
+    },
+    onError: showErr,
+  });
+  const startEdit = (r: FestivalMappingRule) => {
+    setEditingId(r.id);
+    setEditDraft({
+      festival_slug: r.festival_slug,
+      market_keyword: r.market_keyword,
+      route_keyword: r.route_keyword,
+      note: r.note,
+      active: r.active,
+    });
+  };
+  const saveEdit = async () => {
+    if (!editingId || !editDraft) return;
+    try {
+      await updateFestivalMappingRule(editingId, editDraft);
+      setEditingId(null); setEditDraft(null);
+      invalidate();
+      onMessage("Đã lưu");
+    } catch (e) { showErr(e); }
+  };
+
+  const filtered = useMemo(() => {
+    if (!rules) return [];
+    if (!search.trim()) return rules;
+    const kw = search.toLowerCase();
+    const festNames: Record<string, string> = {};
+    (festivals ?? []).forEach((f) => { festNames[f.slug] = f.name_vi; });
+    return rules.filter((r) =>
+      r.festival_slug.toLowerCase().includes(kw)
+      || (festNames[r.festival_slug] || "").toLowerCase().includes(kw)
+      || r.market_keyword.toLowerCase().includes(kw)
+      || r.route_keyword.toLowerCase().includes(kw)
+      || r.note.toLowerCase().includes(kw)
+    );
+  }, [rules, festivals, search]);
+
+  const festivalNameBySlug = (slug: string): string => {
+    const f = (festivals ?? []).find(x => x.slug === slug);
+    return f?.name_vi || slug;
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md bg-primary-50/70 border border-primary-100 px-3 py-2 text-[11px] text-primary-800 space-y-1">
+        <p className="font-semibold">Map thủ công lễ hội với tour qua keyword Thị trường / Tuyến tour</p>
+        <p>
+          Rule: chọn 1 lễ hội + nhập keyword thị trường (vd "Đắk Lắk") hoặc tuyến tour (vd "Buôn Ma Thuột").
+          Bấm <strong>Áp dụng mapping</strong> → tag tất cả tour matching vào lễ. Tour đã có festival_slug
+          khác sẽ KHÔNG bị ghi đè.
+        </p>
+      </div>
+
+      {/* Form thêm */}
+      <div className="card p-4 grid grid-cols-12 gap-2 items-end">
+        <div className="col-span-12 lg:col-span-4">
+          <label className="text-xs text-gray-500">Lễ hội</label>
+          <select className="input text-sm" value={festSlug} onChange={(e) => setFestSlug(e.target.value)}>
+            <option value="">-- Chọn lễ hội --</option>
+            {(festivals ?? []).map((f) => (
+              <option key={f.id} value={f.slug}>
+                {f.name_vi} ({f.date_start.slice(0, 10)})
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="col-span-6 lg:col-span-3">
+          <label className="text-xs text-gray-500">Keyword Thị trường</label>
+          <input className="input text-sm" value={market} onChange={(e) => setMarket(e.target.value)}
+            placeholder="Vd: Đắk Lắk, Hàn Quốc..." onKeyDown={keepInputKeys} />
+        </div>
+        <div className="col-span-6 lg:col-span-3">
+          <label className="text-xs text-gray-500">Keyword Tuyến tour</label>
+          <input className="input text-sm" value={route} onChange={(e) => setRoute(e.target.value)}
+            placeholder="Optional. Vd: Buôn Ma Thuột" onKeyDown={keepInputKeys} />
+        </div>
+        <div className="col-span-12 lg:col-span-2 flex gap-1">
+          <button type="button" className="btn-primary text-sm w-full"
+            disabled={!festSlug.trim() || (!market.trim() && !route.trim()) || addMut.isPending}
+            onClick={() => addMut.mutate()}>
+            <Plus size={14} /> Thêm
+          </button>
+        </div>
+        <div className="col-span-12">
+          <label className="text-xs text-gray-500">Ghi chú (tùy chọn)</label>
+          <input className="input text-sm" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Mô tả..." onKeyDown={keepInputKeys} />
+        </div>
+      </div>
+
+      {/* Apply bar */}
+      <div className="card p-3 flex items-center justify-between bg-amber-50 border-amber-200">
+        <p className="text-xs text-amber-900">
+          Đã có <strong>{rules?.length ?? 0}</strong> rule. Bấm bên phải để chạy mapping cho TẤT CẢ tour matching.
+        </p>
+        <button type="button" className="btn-primary text-sm"
+          disabled={applyMut.isPending || !rules?.length}
+          onClick={() => applyMut.mutate()}>
+          {applyMut.isPending ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
+          Áp dụng mapping
+        </button>
+      </div>
+
+      {/* Table */}
+      <div className="card overflow-auto" style={{ maxHeight: "calc(100vh - 460px)" }}>
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 sticky top-0">
+            <tr>
+              <th className="px-3 py-2 text-left">Lễ hội</th>
+              <th className="px-3 py-2 text-left">Keyword TT</th>
+              <th className="px-3 py-2 text-left">Keyword Tuyến</th>
+              <th className="px-3 py-2 text-left">Ghi chú</th>
+              <th className="px-3 py-2 w-24">Active</th>
+              <th className="px-3 py-2 w-20" />
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 && (
+              <tr><td colSpan={6} className="px-3 py-6 text-center text-gray-400">
+                Chưa có rule mapping. Thêm rule ở form trên.
+              </td></tr>
+            )}
+            {filtered.map((r) => {
+              const isEditing = editingId === r.id;
+              return (
+                <tr key={r.id} className={cn("border-t", isEditing && "bg-blue-50", !r.active && "opacity-60")}>
+                  <td className="px-3 py-2">
+                    {isEditing ? (
+                      <select className="input text-sm py-1 w-full"
+                        value={editDraft?.festival_slug ?? ""}
+                        onChange={(e) => setEditDraft((p) => p ? { ...p, festival_slug: e.target.value } : p)}>
+                        {(festivals ?? []).map((f) => (
+                          <option key={f.id} value={f.slug}>{f.name_vi}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="text-gray-900 text-xs">{festivalNameBySlug(r.festival_slug)}</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-xs">
+                    {isEditing ? (
+                      <input className="input text-sm py-1 w-full" value={editDraft?.market_keyword ?? ""}
+                        onChange={(e) => setEditDraft((p) => p ? { ...p, market_keyword: e.target.value } : p)} />
+                    ) : (r.market_keyword || <span className="text-gray-400">—</span>)}
+                  </td>
+                  <td className="px-3 py-2 text-xs">
+                    {isEditing ? (
+                      <input className="input text-sm py-1 w-full" value={editDraft?.route_keyword ?? ""}
+                        onChange={(e) => setEditDraft((p) => p ? { ...p, route_keyword: e.target.value } : p)} />
+                    ) : (r.route_keyword || <span className="text-gray-400">—</span>)}
+                  </td>
+                  <td className="px-3 py-2 text-xs text-gray-600">
+                    {isEditing ? (
+                      <input className="input text-sm py-1 w-full" value={editDraft?.note ?? ""}
+                        onChange={(e) => setEditDraft((p) => p ? { ...p, note: e.target.value } : p)} />
+                    ) : (r.note || <span className="text-gray-400">—</span>)}
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    {isEditing ? (
+                      <input type="checkbox" checked={editDraft?.active ?? true}
+                        onChange={(e) => setEditDraft((p) => p ? { ...p, active: e.target.checked } : p)} />
+                    ) : (r.active ? <span className="text-green-600 text-xs">✓</span> : <span className="text-gray-400 text-xs">—</span>)}
+                  </td>
+                  <td className="px-3 py-2">
+                    {isEditing ? (
+                      <span className="flex gap-1">
+                        <button type="button" className="text-green-600 p-1" onClick={saveEdit} title="Lưu"><Check size={14} /></button>
+                        <button type="button" className="text-gray-400 p-1" onClick={() => { setEditingId(null); setEditDraft(null); }} title="Huỷ"><X size={14} /></button>
+                      </span>
+                    ) : (
+                      <span className="flex gap-1">
+                        <button type="button" className="text-blue-600 p-1" onClick={() => startEdit(r)} title="Sửa"><Pencil size={14} /></button>
+                        <button type="button" className="text-red-500 p-1"
+                          onClick={() => { if (confirm("Xóa rule này?")) deleteMut.mutate(r.id); }}
+                          title="Xóa"><Trash2 size={14} /></button>
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );

@@ -1479,3 +1479,54 @@ export const lunarSeed = async () => {
   const { data } = await api.post("/festivals/insights/lunar-seed");
   return data as { message: string; inserted: number; skipped: number };
 };
+
+// ── Festival Tour Mapping Rules (Quy tắc phân loại) ─────────────────────────
+
+export interface FestivalMappingRule {
+  id: string;
+  festival_slug: string;
+  market_keyword: string;
+  route_keyword: string;
+  date_window_days: number;
+  active: boolean;
+  note: string;
+}
+
+export interface FestivalMappingRuleInput {
+  festival_slug: string;
+  market_keyword?: string;
+  route_keyword?: string;
+  date_window_days?: number;
+  active?: boolean;
+  note?: string;
+}
+
+export const listFestivalMappingRules = async (): Promise<FestivalMappingRule[]> => {
+  const { data } = await api.get("/admin/rules/festival-mapping");
+  return data;
+};
+
+export const createFestivalMappingRule = async (body: FestivalMappingRuleInput): Promise<FestivalMappingRule> => {
+  const { data } = await api.post("/admin/rules/festival-mapping", body);
+  return data;
+};
+
+export const updateFestivalMappingRule = async (id: string, body: FestivalMappingRuleInput): Promise<FestivalMappingRule> => {
+  const { data } = await api.put(`/admin/rules/festival-mapping/${id}`, body);
+  return data;
+};
+
+export const deleteFestivalMappingRule = async (id: string) => {
+  const { data } = await api.delete(`/admin/rules/festival-mapping/${id}`);
+  return data;
+};
+
+export const applyFestivalMappingRules = async () => {
+  const { data } = await api.post("/admin/rules/festival-mapping/apply");
+  return data as {
+    message: string;
+    rules_applied: number;
+    tours_tagged: number;
+    details: { festival_slug: string; festival_name?: string; tagged: number; skip?: string }[];
+  };
+};

@@ -101,6 +101,14 @@ def _migrate_festivals_indexes():
         logger.warning("festivals date_range index migration skipped: %s", e)
 
 
+def _migrate_festival_tour_mapping_rules():
+    """Festival tour mapping rules — manual rule trong Quy tắc phân loại."""
+    insp = inspect(engine)
+    if "festival_tour_mapping_rules" in insp.get_table_names():
+        return  # đã có table (Base.metadata.create_all đã tạo)
+    # Bảng sẽ tự được create_all tạo; migration này chỉ check.
+
+
 def _migrate_tour_festival_columns():
     """T3 Phase 2: add festival_slug + festival_distance_days + province_code vào tours."""
     insp = inspect(engine)
