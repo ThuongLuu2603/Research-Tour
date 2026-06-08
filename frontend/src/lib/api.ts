@@ -778,12 +778,15 @@ export type DateFormatOutputType =
   | "weekly"
   | "monthly_recurring"
   | "skip"
-  | "verbatim";
+  | "verbatim"
+  | "explicit_dates";
 
 export interface DateFormatRule {
   id: string;
   pattern: string;
   output_type: DateFormatOutputType;
+  // Chỉ dùng khi output_type='explicit_dates' (vd "25/06/2026, 28/07/2026")
+  output_value?: string | null;
   priority: number;
   active: boolean;
   description: string;
@@ -792,6 +795,7 @@ export interface DateFormatRule {
 export interface DateFormatRuleInput {
   pattern: string;
   output_type: DateFormatOutputType;
+  output_value?: string | null;
   priority?: number;
   active?: boolean;
   description?: string;

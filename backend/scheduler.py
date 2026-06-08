@@ -62,9 +62,9 @@ def _job_plan(hour: int | None = None, minute: int | None = None) -> list[tuple[
     return [
         ("daily_vietravel", "1. Scrape Vietravel", h, m),
         ("daily_findtourgo", "2. Scrape FindTourGo → Sheet", None, None),
-        ("daily_main_sheet_sync", "3. Sync Main → DB", None, None),
-        ("daily_sheet_sync", "4. Sync All Sheets → DB", None, None),
-        ("daily_intel_snapshot", "5. Snapshot BGĐ", None, None),
+        # Gộp "Sync Main" + "Sync All" thành 1 (Sync All bao gồm Main)
+        ("daily_sheet_sync", "3. Sync All Sheets → DB", None, None),
+        ("daily_intel_snapshot", "4. Snapshot BGĐ", None, None),
     ]
 
 
@@ -201,26 +201,100 @@ def _queue_scrape(scraper_name: str, triggered_by: str = "scheduler") -> int | N
     return job_id
 
 
-def _run_main_sheet_sync() -> None:
+def _track_as_scrape_job(scraper_name: str, label: str, fn) -> None:
+    """Wrap sync/snapshot function với ScrapeJob entry để hiện trong Job History UI.
+
+    Trước đây _run_main_sheet_sync / _run_daily_sheet_sync / _run_daily_snapshot
+    chỉ log Python logger → user không thấy gì trên UI Job History. Pattern này tạo
+    1 ScrapeJob row đại diện cho task, update progress + finished_at khi xong."""
     from database import SessionLocal
-    from sheets_tour_sync import merge_sheet_source_to_db
     from db_retry import run_with_retry
+    from models import ScrapeJob
 
     db = SessionLocal()
+    job_id: int | None = None
     try:
-        result = run_with_retry(
-            lambda: merge_sheet_source_to_db(db, "Main", mirror_delete=True), db=db, label="sched-main"
-        )
-        logger.info(
-            "Main sheet sync: inserted=%s updated=%s unchanged=%s",
-            result.get("inserted"),
-            result.get("updated"),
-            result.get("unchanged"),
-        )
-    except Exception as e:
-        logger.exception("Main sheet sync failed: %s", e)
+        def _create():
+            db.rollback()
+            j = ScrapeJob(
+                scraper_name=scraper_name,
+                status="running",
+                progress_pct=0,
+                triggered_by="scheduler",
+                started_at=datetime.utcnow(),
+                heartbeat_at=datetime.utcnow(),
+            )
+            db.add(j)
+            db.commit()
+            db.refresh(j)
+            return j.id
+        job_id = run_with_retry(_create, db=db, label=f"{label}-job-create")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Không tạo được ScrapeJob entry cho %s: %s", label, e)
     finally:
         db.close()
+
+    success = False
+    message = ""
+    try:
+        result = fn()
+        success = True
+        if isinstance(result, dict):
+            # Tóm tắt kết quả cho user thấy trong cột Ghi chú
+            parts = []
+            for k in ("inserted", "updated", "unchanged", "deleted", "total_inserted", "total_updated"):
+                if result.get(k) is not None:
+                    parts.append(f"{k}={result[k]}")
+            message = "; ".join(parts)[:512]
+    except Exception as e:  # noqa: BLE001
+        logger.exception("%s failed: %s", label, e)
+        message = f"Lỗi: {e}"[:512]
+
+    # Update ScrapeJob entry với kết quả cuối
+    if job_id is not None:
+        db = SessionLocal()
+        try:
+            def _finish():
+                db.rollback()
+                j = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
+                if j:
+                    j.status = "success" if success else "failed"
+                    j.progress_pct = 100 if success else (j.progress_pct or 0)
+                    j.finished_at = datetime.utcnow()
+                    j.heartbeat_at = datetime.utcnow()
+                    if message:
+                        j.message = message
+                    db.commit()
+            run_with_retry(_finish, db=db, label=f"{label}-job-finish")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Không update được ScrapeJob #%s: %s", job_id, e)
+        finally:
+            db.close()
+
+
+def _run_main_sheet_sync() -> None:
+    from sheets_tour_sync import merge_sheet_source_to_db
+    from db_retry import run_with_retry
+    from database import SessionLocal
+
+    def _do() -> dict:
+        db = SessionLocal()
+        try:
+            result = run_with_retry(
+                lambda: merge_sheet_source_to_db(db, "Main", mirror_delete=True),
+                db=db, label="sched-main",
+            )
+            logger.info(
+                "Main sheet sync: inserted=%s updated=%s unchanged=%s",
+                result.get("inserted"),
+                result.get("updated"),
+                result.get("unchanged"),
+            )
+            return result
+        finally:
+            db.close()
+
+    _track_as_scrape_job("sync_main", "Main sheet sync", _do)
 
 
 def _run_daily_snapshot() -> None:
@@ -228,14 +302,16 @@ def _run_daily_snapshot() -> None:
     from snapshot_service import capture_daily_snapshot
     from db_retry import run_with_retry
 
-    db = SessionLocal()
-    try:
-        run_with_retry(lambda: capture_daily_snapshot(db), db=db, label="sched-daily-snapshot")
-        logger.info("Daily intelligence snapshot captured")
-    except Exception as e:
-        logger.exception("Daily snapshot failed: %s", e)
-    finally:
-        db.close()
+    def _do() -> dict:
+        db = SessionLocal()
+        try:
+            run_with_retry(lambda: capture_daily_snapshot(db), db=db, label="sched-daily-snapshot")
+            logger.info("Daily intelligence snapshot captured")
+            return {"status": "captured"}
+        finally:
+            db.close()
+
+    _track_as_scrape_job("daily_snapshot", "Daily snapshot", _do)
 
 
 def _run_daily_sheet_sync() -> None:
@@ -243,19 +319,21 @@ def _run_daily_sheet_sync() -> None:
     from sheets_tour_sync import merge_all_sheets_to_db
     from db_retry import run_with_retry
 
-    db = SessionLocal()
-    try:
-        result = run_with_retry(lambda: merge_all_sheets_to_db(db), db=db, label="sched-daily-sync")
-        logger.info(
-            "Daily sheet sync: updated=%s inserted=%s deleted=%s",
-            result.get("total_updated"),
-            result.get("total_inserted"),
-            result.get("total_deleted"),
-        )
-    except Exception as e:
-        logger.exception("Daily sheet sync failed: %s", e)
-    finally:
-        db.close()
+    def _do() -> dict:
+        db = SessionLocal()
+        try:
+            result = run_with_retry(lambda: merge_all_sheets_to_db(db), db=db, label="sched-daily-sync")
+            logger.info(
+                "Daily sheet sync: updated=%s inserted=%s deleted=%s",
+                result.get("total_updated"),
+                result.get("total_inserted"),
+                result.get("total_deleted"),
+            )
+            return result
+        finally:
+            db.close()
+
+    _track_as_scrape_job("sync_all_sheets", "All sheets sync", _do)
 
 
 def _mark_job(job_id: str) -> None:
@@ -377,49 +455,47 @@ def _wait_for_scraper_to_finish(scraper_name: str) -> bool:
 
 
 def _run_daily_chain():
-    """Chuỗi tự động: Vietravel → FindTourGo → Sync Main → Sync All Sheets → Snapshot.
+    """Chuỗi tự động: Vietravel → FindTourGo → Sync All Sheets → Snapshot.
 
     Mỗi bước chạy NGAY sau khi bước trước hoàn tất (thay vì chờ cron giờ cố định).
     Bước scrape là async (queue) nên dùng polling DB; bước sync/snapshot chạy inline.
-    Một bước fail không chặn các bước sau — log warning và tiếp tục."""
+    Một bước fail không chặn các bước sau — log warning và tiếp tục.
+
+    Lưu ý: trước đây có 5 bước (riêng "Sync Main → DB" và "Sync All Sheets → DB"),
+    nhưng "Sync All" đã bao gồm Main + Vietravel + FTG → bỏ bước trùng. Bước
+    "Sync All" giờ là bước 3 thay vì 4."""
     logger.info("[CHAIN] Bắt đầu chuỗi tự động hàng ngày")
 
     # 1. Scrape Vietravel
-    logger.info("[CHAIN 1/5] Scrape Vietravel")
+    logger.info("[CHAIN 1/4] Scrape Vietravel")
     try:
         _auto_scrape("vietravel")
         _wait_for_scraper_to_finish("vietravel")
     except Exception as e:  # noqa: BLE001
-        logger.exception("[CHAIN 1/5] Vietravel scrape lỗi: %s", e)
+        logger.exception("[CHAIN 1/4] Vietravel scrape lỗi: %s", e)
 
     # 2. Scrape FindTourGo → Sheet
-    logger.info("[CHAIN 2/5] Scrape FindTourGo")
+    logger.info("[CHAIN 2/4] Scrape FindTourGo")
     try:
         _auto_scrape("findtourgo")
         _wait_for_scraper_to_finish("findtourgo")
     except Exception as e:  # noqa: BLE001
-        logger.exception("[CHAIN 2/5] FindTourGo scrape lỗi: %s", e)
+        logger.exception("[CHAIN 2/4] FindTourGo scrape lỗi: %s", e)
 
-    # 3. Sync Main → DB (inline block)
-    logger.info("[CHAIN 3/5] Sync Main sheet → DB")
-    try:
-        _sync_main_sheet()
-    except Exception as e:  # noqa: BLE001
-        logger.exception("[CHAIN 3/5] Sync Main lỗi: %s", e)
-
-    # 4. Sync All Sheets → DB (Main + Vietravel + FindTourGo tab)
-    logger.info("[CHAIN 4/5] Sync tất cả sheet → DB")
+    # 3. Sync TẤT CẢ sheet → DB (Main + Vietravel + FindTourGo tab).
+    # Trước đây tách riêng "Sync Main" + "Sync All" — Sync All đã bao gồm Main nên gộp.
+    logger.info("[CHAIN 3/4] Sync tất cả sheet → DB")
     try:
         _daily_sheet_sync()
     except Exception as e:  # noqa: BLE001
-        logger.exception("[CHAIN 4/5] Sync all sheets lỗi: %s", e)
+        logger.exception("[CHAIN 3/4] Sync all sheets lỗi: %s", e)
 
-    # 5. Snapshot (cuối chuỗi để có data mới nhất)
-    logger.info("[CHAIN 5/5] Daily intelligence snapshot")
+    # 4. Snapshot (cuối chuỗi để có data mới nhất)
+    logger.info("[CHAIN 4/4] Daily intelligence snapshot")
     try:
         _daily_snapshot()
     except Exception as e:  # noqa: BLE001
-        logger.exception("[CHAIN 5/5] Snapshot lỗi: %s", e)
+        logger.exception("[CHAIN 4/4] Snapshot lỗi: %s", e)
 
     logger.info("[CHAIN] Hoàn tất chuỗi tự động")
 

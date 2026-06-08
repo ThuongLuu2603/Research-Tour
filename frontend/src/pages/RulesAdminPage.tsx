@@ -999,6 +999,7 @@ const OUTPUT_TYPE_LABELS: Record<DateFormatOutputType, string> = {
   monthly_recurring: "Hàng tháng (recurring)",
   skip: "Bỏ qua tour",
   verbatim: "Text cố định (bỏ qua)",
+  explicit_dates: "Gán chính xác ngày",
 };
 
 function DateFormatRulesTab({
@@ -1023,6 +1024,7 @@ function DateFormatRulesTab({
   // Form thêm rule
   const [pattern, setPattern] = useState("");
   const [outputType, setOutputType] = useState<DateFormatOutputType>("dates");
+  const [outputValue, setOutputValue] = useState<string>("");
   const [priority, setPriority] = useState<string>("100");
   const [description, setDescription] = useState("");
 
@@ -1031,6 +1033,7 @@ function DateFormatRulesTab({
   const [editDraft, setEditDraft] = useState<{
     pattern: string;
     output_type: DateFormatOutputType;
+    output_value: string;
     priority: string;
     description: string;
     active: boolean;
@@ -1065,6 +1068,7 @@ function DateFormatRulesTab({
       createDateFormatRule({
         pattern: pattern.trim(),
         output_type: outputType,
+        output_value: outputType === "explicit_dates" ? outputValue.trim() : null,
         priority: parseInt(priority, 10) || 100,
         description: description.trim(),
         active: true,
@@ -1072,6 +1076,7 @@ function DateFormatRulesTab({
     onSuccess: () => {
       setPattern("");
       setDescription("");
+      setOutputValue("");
       setPriority("100");
       invalidate();
       onMessage("Đã thêm rule mới");
@@ -1093,6 +1098,7 @@ function DateFormatRulesTab({
     setEditDraft({
       pattern: r.pattern,
       output_type: r.output_type,
+      output_value: r.output_value || "",
       priority: String(r.priority),
       description: r.description,
       active: r.active,
@@ -1108,6 +1114,8 @@ function DateFormatRulesTab({
       await updateDateFormatRule(editingId, {
         pattern: editDraft.pattern.trim(),
         output_type: editDraft.output_type,
+        output_value:
+          editDraft.output_type === "explicit_dates" ? editDraft.output_value.trim() : null,
         priority: parseInt(editDraft.priority, 10) || 100,
         description: editDraft.description.trim(),
         active: editDraft.active,
@@ -1202,6 +1210,24 @@ function DateFormatRulesTab({
               onChange={(e) => setPriority(e.target.value)}
             />
           </div>
+          {outputType === "explicit_dates" && (
+            <div className="col-span-12">
+              <label className="text-xs text-gray-500">
+                Giá trị gán (DD/MM/YYYY, ngăn cách bằng <code>,</code> hoặc <code>;</code>)
+              </label>
+              <input
+                className="input text-sm font-mono"
+                value={outputValue}
+                onChange={(e) => setOutputValue(e.target.value)}
+                placeholder="25/06/2026, 28/07/2026"
+                onKeyDown={keepInputKeys}
+              />
+              <p className="text-[10px] text-gray-500 mt-1">
+                Khi text gốc match pattern, hệ thống bỏ qua nội dung và gán list ngày này.
+                Vd: pattern <code>25/06; 28-07</code> → output <code>25/06/2026, 28/07/2026</code>.
+              </p>
+            </div>
+          )}
           <div className="col-span-12 sm:col-span-9">
             <label className="text-xs text-gray-500">Mô tả (tùy chọn)</label>
             <input
@@ -1216,7 +1242,11 @@ function DateFormatRulesTab({
             <button
               type="button"
               className="btn-primary text-sm"
-              disabled={!pattern.trim() || addMut.isPending}
+              disabled={
+                !pattern.trim()
+                || (outputType === "explicit_dates" && !outputValue.trim())
+                || addMut.isPending
+              }
               onClick={() => addMut.mutate()}
             >
               <Plus size={14} /> Thêm rule
@@ -1298,6 +1328,7 @@ function DateFormatRulesTab({
                           r.output_type === "dates" ? "bg-blue-100 text-blue-800"
                             : r.output_type === "weekly" ? "bg-emerald-100 text-emerald-800"
                             : r.output_type === "monthly_recurring" ? "bg-purple-100 text-purple-800"
+                            : r.output_type === "explicit_dates" ? "bg-amber-100 text-amber-800"
                             : "bg-gray-200 text-gray-700"
                         )}>
                           {OUTPUT_TYPE_LABELS[r.output_type] ?? r.output_type}
@@ -1306,13 +1337,31 @@ function DateFormatRulesTab({
                     </td>
                     <td className="px-3 py-2 text-xs text-gray-600">
                       {isEditing ? (
-                        <input
-                          className="input text-sm py-1 w-full"
-                          value={editDraft?.description ?? ""}
-                          onChange={(e) => setEditDraft((p) => p ? { ...p, description: e.target.value } : p)}
-                        />
+                        <div className="space-y-1">
+                          <input
+                            className="input text-sm py-1 w-full"
+                            value={editDraft?.description ?? ""}
+                            onChange={(e) => setEditDraft((p) => p ? { ...p, description: e.target.value } : p)}
+                            placeholder="Mô tả"
+                          />
+                          {editDraft?.output_type === "explicit_dates" && (
+                            <input
+                              className="input text-sm py-1 w-full font-mono"
+                              value={editDraft?.output_value ?? ""}
+                              onChange={(e) => setEditDraft((p) => p ? { ...p, output_value: e.target.value } : p)}
+                              placeholder="25/06/2026, 28/07/2026"
+                            />
+                          )}
+                        </div>
                       ) : (
-                        r.description || <span className="text-gray-400">—</span>
+                        <div>
+                          {r.description || <span className="text-gray-400">—</span>}
+                          {r.output_type === "explicit_dates" && r.output_value && (
+                            <div className="text-[10px] text-amber-700 font-mono mt-0.5">
+                              → {r.output_value}
+                            </div>
+                          )}
+                        </div>
                       )}
                     </td>
                     <td className="px-3 py-2">
@@ -1397,6 +1446,7 @@ function DateFormatRulesTab({
                     testResult.output_type === "dates" ? "bg-blue-100 text-blue-800"
                       : testResult.output_type === "weekly" ? "bg-emerald-100 text-emerald-800"
                       : testResult.output_type === "monthly_recurring" ? "bg-purple-100 text-purple-800"
+                      : testResult.output_type === "explicit_dates" ? "bg-amber-100 text-amber-800"
                       : "bg-gray-200 text-gray-700"
                   )}>
                     {OUTPUT_TYPE_LABELS[(testResult.output_type ?? "dates") as DateFormatOutputType]}

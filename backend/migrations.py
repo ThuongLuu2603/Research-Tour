@@ -67,6 +67,21 @@ def _migrate_saved_views():
             logger.warning("saved_views migration skipped: %s", e)
 
 
+def _migrate_date_format_rules_output_value():
+    """Add output_value column cho explicit_dates output_type."""
+    insp = inspect(engine)
+    if "date_format_rules" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("date_format_rules")}
+    if "output_value" in cols:
+        return
+    with engine.begin() as conn:
+        try:
+            conn.execute(text("ALTER TABLE date_format_rules ADD COLUMN output_value VARCHAR(512)"))
+        except Exception as e:
+            logger.warning("date_format_rules output_value migration skipped: %s", e)
+
+
 _FK_SET_NULL_FLAG = "fk_classification_rule_id_set_null_v1"
 
 

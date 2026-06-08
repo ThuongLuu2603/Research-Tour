@@ -15,6 +15,9 @@ Output types:
   weekly               → extract {weekday} → expand 12 tháng
   monthly_recurring    → extract {dd} → expand 12 tháng
   skip / verbatim      → trả [] (bỏ qua tour khỏi stats)
+  explicit_dates       → bỏ qua captured groups; parse rule.output_value làm list
+                         DD/MM/YYYY (vd "25/06/2026, 28/07/2026"). Dùng cho alias
+                         "user gán cứng" — text gốc match pattern thì trả luôn list này.
 
 API:
   compile_pattern(pattern) -> re.Pattern
@@ -228,6 +231,10 @@ def apply_rule(rule: Any, text: str, today: datetime | None = None) -> list[date
     if output_type in {"skip", "verbatim"}:
         return []
 
+    if output_type == "explicit_dates":
+        # Bỏ qua captured groups; user đã gán cứng list ngày trong output_value.
+        return _parse_explicit_dates_string(getattr(rule, "output_value", "") or "", today)
+
     groups = list(m.groups())
     # Map (placeholder name, captured value) theo thứ tự
     captured: list[tuple[str, str]] = list(zip(order, groups))
@@ -280,6 +287,59 @@ def apply_rule(rule: Any, text: str, today: datetime | None = None) -> list[date
 
     logger.warning("unknown output_type=%r (rule_id=%s)", output_type, getattr(rule, "id", None))
     return None
+
+
+_EXPLICIT_DATE_RE = re.compile(r"\b(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{2,4}))?\b")
+
+
+def _parse_explicit_dates_string(value: str, today: datetime) -> list[datetime]:
+    """Parse 'output_value' của explicit_dates rule.
+
+    Chấp nhận DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY ngăn cách bởi dấu phẩy / chấm phẩy /
+    space / xuống dòng. Cho phép thiếu year (auto-resolve theo ngày tương lai gần nhất).
+    """
+    if not value or not value.strip():
+        return []
+    found: list[datetime] = []
+    pending_dm: list[tuple[int, int]] = []
+    raw_entries: list[tuple[int, int, int]] = []  # (day, month, year_or_0)
+    for m in _EXPLICIT_DATE_RE.finditer(value):
+        try:
+            d = int(m.group(1))
+            mo = int(m.group(2))
+        except (TypeError, ValueError):
+            continue
+        if not (1 <= d <= 31 and 1 <= mo <= 12):
+            continue
+        yr_raw = m.group(3)
+        y = 0
+        if yr_raw:
+            try:
+                y = int(yr_raw)
+                if y < 100:
+                    y += 2000
+            except ValueError:
+                y = 0
+        raw_entries.append((d, mo, y))
+        if not y:
+            pending_dm.append((d, mo))
+    common_year = _resolve_common_year(pending_dm, today) if pending_dm else today.year
+    for d, mo, y in raw_entries:
+        if not y:
+            y = common_year if pending_dm else _resolve_year_for_dm(d, mo, today)
+        try:
+            found.append(datetime(y, mo, d))
+        except ValueError:
+            continue
+    # Sort + dedupe
+    seen = set()
+    uniq: list[datetime] = []
+    for dt in sorted(found):
+        key = (dt.year, dt.month, dt.day)
+        if key not in seen:
+            seen.add(key)
+            uniq.append(dt)
+    return uniq
 
 
 def _extract_dates_from_captured(
@@ -405,6 +465,7 @@ def _get_active_rules_cached(token: int) -> list[dict[str, Any]]:
                 "id": r.id,
                 "pattern": r.pattern,
                 "output_type": r.output_type,
+                "output_value": getattr(r, "output_value", None),
                 "priority": r.priority,
             }
             for r in rows
@@ -417,14 +478,15 @@ def _get_active_rules_cached(token: int) -> list[dict[str, Any]]:
 
 
 class _RuleProxy:
-    """Mimic DateFormatRule object cho apply_rule (chỉ cần .pattern, .output_type, .id)."""
+    """Mimic DateFormatRule object cho apply_rule (chỉ cần .pattern, .output_type, .id, .output_value)."""
 
-    __slots__ = ("id", "pattern", "output_type")
+    __slots__ = ("id", "pattern", "output_type", "output_value")
 
     def __init__(self, d: dict[str, Any]):
         self.id = d.get("id")
         self.pattern = d.get("pattern") or ""
         self.output_type = d.get("output_type") or ""
+        self.output_value = d.get("output_value") or ""
 
 
 def match_text(

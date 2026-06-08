@@ -1192,6 +1192,7 @@ class DateFormatRuleOut(_RuleIdAsStrMixin, BaseModel):
     id: int
     pattern: str
     output_type: str
+    output_value: str | None = None
     priority: int
     active: bool
     description: str
@@ -1201,14 +1202,17 @@ class DateFormatRuleOut(_RuleIdAsStrMixin, BaseModel):
 class DateFormatRuleIn(BaseModel):
     # Pattern DSL: {dd} {mm} {yyyy} {yy} {weekday} {...} + literal text
     pattern: str = Field(min_length=1, max_length=512)
-    # Loại output: dates | weekly | monthly_recurring | skip | verbatim
+    # Loại output: dates | weekly | monthly_recurring | skip | verbatim | explicit_dates
     output_type: str = Field(max_length=32)
+    # Chỉ dùng khi output_type='explicit_dates' — user nhập list ngày đầy đủ
+    # vd "25/06/2026, 28/07/2026". Bỏ qua khi output_type khác.
+    output_value: str | None = Field(default=None, max_length=512)
     priority: int = Field(default=100, ge=1, le=10_000)
     active: bool = True
     description: str = Field(default="", max_length=256)
 
 
-_VALID_OUTPUT_TYPES = {"dates", "weekly", "monthly_recurring", "skip", "verbatim"}
+_VALID_OUTPUT_TYPES = {"dates", "weekly", "monthly_recurring", "skip", "verbatim", "explicit_dates"}
 
 
 def _validate_date_format_rule(body: DateFormatRuleIn) -> None:
@@ -1217,6 +1221,16 @@ def _validate_date_format_rule(body: DateFormatRuleIn) -> None:
             400,
             f"output_type không hợp lệ ({body.output_type}); cho phép: {sorted(_VALID_OUTPUT_TYPES)}",
         )
+    # explicit_dates yêu cầu output_value phải parse ra ít nhất 1 ngày
+    if body.output_type == "explicit_dates":
+        from date_format_rules import _parse_explicit_dates_string, _today
+        parsed = _parse_explicit_dates_string(body.output_value or "", _today())
+        if not parsed:
+            raise HTTPException(
+                400,
+                "explicit_dates yêu cầu output_value chứa ít nhất 1 ngày DD/MM/YYYY "
+                "(vd '25/06/2026, 28/07/2026')",
+            )
     # Kiểm pattern compile được (chặn regex sai sớm)
     from date_format_rules import compile_pattern
     try:
