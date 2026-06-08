@@ -28,8 +28,9 @@ DETAIL_PATH_PREFIX = "/things-to-do/festival-event/"
 # Robots.txt cho /events OK. Detail URL pattern guess: /en/events/{slug}
 VV_BASE_URL = "https://visitvietnams.com"
 VV_EVENT_LIST_URL = f"{VV_BASE_URL}/en/events"
-VV_DETAIL_PATH_PREFIXES = ("/en/events/", "/en/event/", "/en/festival/")
-VV_MAX_PAGES = 10  # đủ cover 100-200 event nếu mỗi page 20
+# Confirmed pattern qua Jina probe: chỉ /en/events/{slug}, không có /en/event/ hay /en/festival/.
+VV_DETAIL_PATH_PREFIXES = ("/en/events/",)
+VV_MAX_PAGES = 15  # 15 page × 20 event = 300 event max
 
 # Render free tier outbound → vietnam.travel có thể bị throttle hoặc IP range
 # bị Cloudflare flag. Public CORS proxies như allorigins.win đôi khi cũng down
@@ -143,20 +144,33 @@ def _classify_category(name: str, description: str = "") -> str:
     return "other"
 
 
+def _resolve_year_for_md(month: int, day: int) -> int:
+    """Suy năm cho date không có year: nếu ngày đã qua trong năm hiện tại → năm sau."""
+    today = date.today()
+    try:
+        candidate = date(today.year, month, day)
+    except ValueError:
+        return today.year
+    return today.year if candidate >= today else today.year + 1
+
+
 def _parse_date_range(text: str) -> tuple[date | None, date | None]:
-    """Parse các format ngày phổ biến vietnam.travel:
-        "20 May 2026 - 10 Jun 2026"   ← FORMAT CHÍNH hiện tại
+    """Parse các format ngày:
+        "20 May 2026 - 10 Jun 2026"   ← vietnam.travel
         "01 Jun 2026 - 30 Jun 2026"
+        "6 Mar–9 Mar"                 ← visitvietnams.com (KHÔNG có năm) ⭐
+        "15 Apr–19 Apr"               ← visitvietnams.com
         "Jun 15, 2026"
         "2026-06-05 to 2026-06-07"    ← ISO fallback
         "5 - 7 Jun, 2026"             ← cũ
     Trả (start, end). Nếu chỉ 1 ngày → start == end.
+    Auto-resolve year nếu không có (chọn current year hoặc next nếu đã qua).
     """
     if not text:
         return None, None
     t = text.strip()
 
-    # Format CHÍNH: "DD MMM YYYY - DD MMM YYYY" (có month name ở cả 2)
+    # Format CHÍNH cho VT: "DD MMM YYYY - DD MMM YYYY" (có năm ở cả 2)
     m = re.search(
         r"(\d{1,2})\s+(\w+)\s+(\d{4})\s*[-–to]+\s*(\d{1,2})\s+(\w+)\s+(\d{4})",
         t, re.IGNORECASE,
@@ -169,6 +183,26 @@ def _parse_date_range(text: str) -> tuple[date | None, date | None]:
             mo2 = _month_to_num(mo2_str)
             if mo1 and mo2:
                 return date(yr1, mo1, d1), date(yr2, mo2, d2)
+        except ValueError:
+            pass
+
+    # Format CHÍNH cho VV: "DD MMM–DD MMM" (KHÔNG có năm) ⭐
+    # Vd "6 Mar–9 Mar", "15 Apr–19 Apr", "11 Feb–14 Feb"
+    m = re.search(
+        r"(\d{1,2})\s+(\w+)\s*[-–]\s*(\d{1,2})\s+(\w+)(?!\s*\d{4})",
+        t, re.IGNORECASE,
+    )
+    if m:
+        try:
+            d1 = int(m.group(1))
+            mo1 = _month_to_num(m.group(2))
+            d2 = int(m.group(3))
+            mo2 = _month_to_num(m.group(4))
+            if mo1 and mo2:
+                yr = _resolve_year_for_md(mo1, d1)
+                # Nếu month_end < month_start → cross-year (rare)
+                yr2 = yr if mo2 >= mo1 else yr + 1
+                return date(yr, mo1, d1), date(yr2, mo2, d2)
         except ValueError:
             pass
 
@@ -212,6 +246,23 @@ def _parse_date_range(text: str) -> tuple[date | None, date | None]:
                 return d, d
         except ValueError:
             pass
+
+    # Format đơn ngày KHÔNG năm: "15 Apr" hoặc "Apr 15"
+    m = re.search(r"(?:(\d{1,2})\s+(\w{3,9})|(\w{3,9})\s+(\d{1,2}))(?!\s*[,\s]+\d{4})", t)
+    if m:
+        try:
+            if m.group(1):
+                d1, mo_str = int(m.group(1)), m.group(2)
+            else:
+                d1, mo_str = int(m.group(4)), m.group(3)
+            mo = _month_to_num(mo_str)
+            if mo:
+                yr = _resolve_year_for_md(mo, d1)
+                d = date(yr, mo, d1)
+                return d, d
+        except ValueError:
+            pass
+
     return None, None
 
 
