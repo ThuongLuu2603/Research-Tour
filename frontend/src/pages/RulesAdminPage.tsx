@@ -1665,47 +1665,80 @@ function FestivalMappingRulesTab({ search, onMessage }: { search: string; onMess
   return (
     <div className="space-y-3">
       <div className="rounded-md bg-primary-50/70 border border-primary-100 px-3 py-2 text-[11px] text-primary-800 space-y-1">
-        <p className="font-semibold">Map thủ công lễ hội với tour qua keyword Thị trường / Tuyến tour</p>
+        <p className="font-semibold">
+          Map <span className="underline">điểm tổ chức lễ hội</span> ↔ <span className="underline">Thị trường / Tuyến tour</span>
+        </p>
         <p>
-          Rule: chọn 1 lễ hội + nhập keyword thị trường (vd "Đắk Lắk") hoặc tuyến tour (vd "Buôn Ma Thuột").
-          Bấm <strong>Áp dụng mapping</strong> → tag tất cả tour matching vào lễ. Tour đã có festival_slug
-          khác sẽ KHÔNG bị ghi đè.
+          Mỗi lễ có "điểm tổ chức" (vd lễ Sầu Riêng tổ chức tại Đắk Lắk). Rule match
+          các tour có <strong>Thị trường</strong> hoặc <strong>Tuyến tour</strong> chứa keyword
+          từ địa điểm này. Bấm <strong>Áp dụng mapping</strong> → tag tour matching vào lễ.
+          Tour đã có festival_slug khác sẽ KHÔNG bị ghi đè.
         </p>
       </div>
 
       {/* Form thêm */}
-      <div className="card p-4 grid grid-cols-12 gap-2 items-end">
-        <div className="col-span-12 lg:col-span-4">
-          <label className="text-xs text-gray-500">Lễ hội</label>
-          <select className="input text-sm" value={festSlug} onChange={(e) => setFestSlug(e.target.value)}>
-            <option value="">-- Chọn lễ hội --</option>
-            {(festivals ?? []).map((f) => (
-              <option key={f.id} value={f.slug}>
-                {f.name_vi} ({f.date_start.slice(0, 10)})
-              </option>
-            ))}
-          </select>
+      <div className="card p-4 space-y-3">
+        <div className="grid grid-cols-12 gap-2 items-end">
+          <div className="col-span-12 lg:col-span-6">
+            <label className="text-xs text-gray-500">Lễ hội (điểm tổ chức tự lấy từ data)</label>
+            <select className="input text-sm" value={festSlug} onChange={(e) => {
+              const slug = e.target.value;
+              setFestSlug(slug);
+              // Auto-fill keyword từ địa điểm tổ chức lễ
+              const f = (festivals ?? []).find(x => x.slug === slug);
+              if (f) {
+                // Parse "P. Tam Chúc, T. Ninh Bình" → ["P. Tam Chúc", "T. Ninh Bình"]
+                const parts = (f.location_text || "").split(",").map(s => s.trim()).filter(Boolean);
+                // Lấy part cuối (thường là tỉnh) làm keyword TT, strip prefix T./TP.
+                const lastPart = parts[parts.length - 1] || "";
+                const cleaned = lastPart.replace(/^(T\.|TP\.|P\.|X\.|H\.|Q\.)\s*/i, "").trim();
+                setMarket(cleaned);
+                // Keyword Tuyến: optional, để trống. User tự nhập nếu muốn cụ thể hơn.
+                setRoute("");
+              }
+            }}>
+              <option value="">-- Chọn lễ hội --</option>
+              {(festivals ?? []).map((f) => (
+                <option key={f.id} value={f.slug}>
+                  {f.name_vi} ({f.location_text || "?"} · {f.date_start.slice(0, 10)})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="col-span-12 lg:col-span-6">
+            {festSlug && (() => {
+              const f = (festivals ?? []).find(x => x.slug === festSlug);
+              return f ? (
+                <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] text-amber-900">
+                  <p><strong>Điểm tổ chức:</strong> {f.location_text || "(không có)"}</p>
+                  <p><strong>Ngày:</strong> {f.date_start.slice(0, 10)} → {f.date_end.slice(0, 10)} · <strong>Vùng:</strong> {f.region || "—"}</p>
+                </div>
+              ) : null;
+            })()}
+          </div>
         </div>
-        <div className="col-span-6 lg:col-span-3">
-          <label className="text-xs text-gray-500">Keyword Thị trường</label>
-          <input className="input text-sm" value={market} onChange={(e) => setMarket(e.target.value)}
-            placeholder="Vd: Đắk Lắk, Hàn Quốc..." onKeyDown={keepInputKeys} />
+        <div className="grid grid-cols-12 gap-2 items-end">
+          <div className="col-span-12 lg:col-span-5">
+            <label className="text-xs text-gray-500">Keyword Thị trường (auto từ điểm tổ chức)</label>
+            <input className="input text-sm" value={market} onChange={(e) => setMarket(e.target.value)}
+              placeholder="Tự fill khi chọn lễ. Vd: Đắk Lắk, Hàn Quốc..." onKeyDown={keepInputKeys} />
+          </div>
+          <div className="col-span-12 lg:col-span-5">
+            <label className="text-xs text-gray-500">Keyword Tuyến tour (tùy chọn, chính xác hơn)</label>
+            <input className="input text-sm" value={route} onChange={(e) => setRoute(e.target.value)}
+              placeholder="Optional. Vd: Buôn Ma Thuột" onKeyDown={keepInputKeys} />
+          </div>
+          <div className="col-span-12 lg:col-span-2 flex gap-1">
+            <button type="button" className="btn-primary text-sm w-full"
+              disabled={!festSlug.trim() || (!market.trim() && !route.trim()) || addMut.isPending}
+              onClick={() => addMut.mutate()}>
+              <Plus size={14} /> Thêm rule
+            </button>
+          </div>
         </div>
-        <div className="col-span-6 lg:col-span-3">
-          <label className="text-xs text-gray-500">Keyword Tuyến tour</label>
-          <input className="input text-sm" value={route} onChange={(e) => setRoute(e.target.value)}
-            placeholder="Optional. Vd: Buôn Ma Thuột" onKeyDown={keepInputKeys} />
-        </div>
-        <div className="col-span-12 lg:col-span-2 flex gap-1">
-          <button type="button" className="btn-primary text-sm w-full"
-            disabled={!festSlug.trim() || (!market.trim() && !route.trim()) || addMut.isPending}
-            onClick={() => addMut.mutate()}>
-            <Plus size={14} /> Thêm
-          </button>
-        </div>
-        <div className="col-span-12">
+        <div>
           <label className="text-xs text-gray-500">Ghi chú (tùy chọn)</label>
-          <input className="input text-sm" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Mô tả..." onKeyDown={keepInputKeys} />
+          <input className="input text-sm w-full" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Mô tả..." onKeyDown={keepInputKeys} />
         </div>
       </div>
 
