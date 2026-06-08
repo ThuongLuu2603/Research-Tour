@@ -1321,7 +1321,9 @@ def seed_date_format_defaults(_: User = Depends(require_admin), db: Session = De
 
 
 class DateFormatTestIn(BaseModel):
-    text: str = Field(min_length=1, max_length=2048)
+    # Bump 2048 → 32768 để hỗ trợ lich_kh dài (vd 200 dates DD/MM/YYYY = ~2400 char).
+    # Tour.lich_kh là Text (unlimited DB) — test endpoint không nên chặn use case thật.
+    text: str = Field(min_length=1, max_length=32768)
 
 
 @router.post("/date-format/test")

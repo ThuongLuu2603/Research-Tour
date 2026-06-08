@@ -115,7 +115,13 @@ def _compile_pattern_impl(pattern: str) -> tuple[re.Pattern, list[str]]:
 
     placeholder_order: danh sách tên placeholder theo thứ tự xuất hiện
     (vd ['mm', 'dd', 'dd', 'dd']). Dùng để map captured groups → ý nghĩa.
+
+    Flexible punctuation: literal `:`, `,`, `;`, `-`, `/`, `.` được wrap
+    `\\s*<char>\\s*` để chấp nhận space xung quanh. Vd DSL `Tháng {mm}: {dd_list}`
+    sẽ match cả `Tháng 4 : 19` (space trước `:`) và `Tháng 4: 19`.
     """
+    # Punctuation cho phép space xung quanh — common trong free text VN
+    _FLEX_PUNCT = set(":,;-/.")
     parts: list[str] = []
     placeholder_order: list[str] = []
     i = 0
@@ -134,6 +140,15 @@ def _compile_pattern_impl(pattern: str) -> tuple[re.Pattern, list[str]]:
                 # Một hoặc nhiều whitespace trong DSL → \s* trong regex (flex match).
                 # Skip mọi whitespace tiếp theo để không append nhiều \s*.
                 parts.append(r"\s*")
+                while i < len(pat) and pat[i].isspace():
+                    i += 1
+                continue
+            elif ch in _FLEX_PUNCT:
+                # Wrap punctuation với \s*…\s* để chấp nhận space xung quanh.
+                # Nếu phía trước/sau đã có \s*, regex engine vẫn match đúng (idempotent).
+                parts.append(r"\s*" + re.escape(ch) + r"\s*")
+                i += 1
+                # Skip whitespace sau punct trong DSL (tránh dùm \s*\s*)
                 while i < len(pat) and pat[i].isspace():
                     i += 1
                 continue
@@ -231,7 +246,11 @@ def _weekday_index_from_token(token: str) -> int | None:
 
 
 def apply_rule(rule: Any, text: str, today: datetime | None = None) -> list[datetime] | None:
-    """Try match rule trên text → trả list[datetime] hoặc None nếu không match.
+    """Try match TOÀN BỘ text với rule → trả list[datetime] hoặc None nếu không match.
+
+    DÙNG fullmatch (sau strip whitespace). Lý do: text "08/06/2026, 09/06/2026, ..."
+    có rule "{dd}/{mm}/{yyyy}" sẽ match prefix → return 1 date, sai ý đồ. Fullmatch
+    fail → caller fall qua pass 1b (finditer aggregation) → bắt mọi date.
 
     Trả [] (list rỗng) nếu output_type=skip/verbatim → caller hiểu là "match
     nhưng bỏ qua tour". None = không match → caller thử rule khác.
@@ -246,7 +265,7 @@ def apply_rule(rule: Any, text: str, today: datetime | None = None) -> list[date
         logger.warning("compile pattern failed (rule_id=%s): %s", getattr(rule, "id", None), e)
         return None
 
-    m = regex.match(text)
+    m = regex.fullmatch(text.strip())
     if not m:
         return None
 
@@ -781,22 +800,25 @@ DEFAULT_RULES: list[dict[str, Any]] = [
     (1, "{dd}/{mm}/{yyyy}", "dates", "DD/MM/YYYY chuẩn (slash)"),
     (2, "{dd}-{mm}-{yyyy}", "dates", "DD-MM-YYYY (dash)"),
     (3, "{dd}.{mm}.{yyyy}", "dates", "DD.MM.YYYY (dot)"),
-    (4, "Khởi hành ngày {dd}/{mm}", "dates", "Khởi hành ngày DD/MM (suy năm)"),
+    # ISO format YYYY-MM-DD / YYYY/MM/DD — database / API hay dùng
+    (4, "{yyyy}-{mm}-{dd}", "dates", "YYYY-MM-DD (ISO dash)"),
+    (5, "{yyyy}/{mm}/{dd}", "dates", "YYYY/MM/DD (ISO slash)"),
+    (6, "Khởi hành ngày {dd}/{mm}", "dates", "Khởi hành ngày DD/MM (suy năm)"),
     # Tháng X: {dd_list} — bao mọi liệt kê ngày trong 1 tháng. Multi-section "|" hoặc ";"
-    # tự handle ở match_text pass 2.
-    (5, "Tháng {mm}: {dd_list}", "dates", "Tháng X: D1, D2, ..., Dn (1 hoặc nhiều ngày)"),
-    (6, "{dd}/{mm}", "dates", "DD/MM thuần (suy năm)"),
-    (7, "{dd}-{mm}", "dates", "DD-MM thuần (suy năm)"),
+    # tự handle ở match_text pass 2. DSL flex punctuation → match cả "Tháng 4 : 19".
+    (7, "Tháng {mm}: {dd_list}", "dates", "Tháng X: D1, D2, ..., Dn (1 hoặc nhiều ngày)"),
+    (8, "{dd}/{mm}", "dates", "DD/MM thuần (suy năm)"),
+    (9, "{dd}-{mm}", "dates", "DD-MM thuần (suy năm)"),
     # {weekday} hỗ trợ cả từ tiếng Việt "năm" → thứ 5, "hai" → thứ 2, ...
-    (8, "Tối thứ {weekday} hàng tuần", "weekly", "Recurring weekly tối"),
-    (9, "Sáng thứ {weekday} hàng tuần", "weekly", "Recurring weekly sáng"),
-    (10, "Chiều thứ {weekday} hàng tuần", "weekly", "Recurring weekly chiều"),
-    (11, "Thứ {weekday} hàng tuần", "weekly", "Recurring weekly (hỗ trợ 'thứ năm', 'thứ 5')"),
-    (12, "Thứ {weekday} và thứ {weekday} hàng tuần", "weekly", "2 weekdays"),
-    (13, "Theo yêu cầu", "skip", "Skip tour: theo yêu cầu"),
-    (14, "Liên hệ", "skip", "Skip tour: liên hệ"),
-    (15, "Hết hạn áp dụng", "skip", "Skip tour: hết hạn"),
-    (16, "Đang cập nhật", "skip", "Skip tour: đang cập nhật"),
+    (10, "Tối thứ {weekday} hàng tuần", "weekly", "Recurring weekly tối"),
+    (11, "Sáng thứ {weekday} hàng tuần", "weekly", "Recurring weekly sáng"),
+    (12, "Chiều thứ {weekday} hàng tuần", "weekly", "Recurring weekly chiều"),
+    (13, "Thứ {weekday} hàng tuần", "weekly", "Recurring weekly (hỗ trợ 'thứ năm', 'thứ 5')"),
+    (14, "Thứ {weekday} và thứ {weekday} hàng tuần", "weekly", "2 weekdays"),
+    (15, "Theo yêu cầu", "skip", "Skip tour: theo yêu cầu"),
+    (16, "Liên hệ", "skip", "Skip tour: liên hệ"),
+    (17, "Hết hạn áp dụng", "skip", "Skip tour: hết hạn"),
+    (18, "Đang cập nhật", "skip", "Skip tour: đang cập nhật"),
 ]
 # Chuyển tuple → dict cho dễ đọc
 DEFAULT_RULES = [
