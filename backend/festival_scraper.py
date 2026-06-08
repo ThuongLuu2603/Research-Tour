@@ -209,26 +209,39 @@ _CATEGORY_KEYWORDS: dict[str, list[str]] = {
 
 
 def _classify_category_from_item(item: dict) -> str:
-    """Classify từ tags_grouped (nếu có) hoặc title+summary."""
+    """Classify từ tags_grouped (nếu có) hoặc title+summary.
+
+    Defensive: tags_grouped có thể là dict hoặc list, item có thể là dict
+    với name=None, hoặc string. Mọi nhánh đều check None trước khi .lower().
+    """
     # API trả tags_grouped có category section
     tags_grouped = item.get("tags_grouped") or {}
-    category_tags = tags_grouped.get("category") or []
-    if category_tags:
+    if isinstance(tags_grouped, dict):
+        category_tags = tags_grouped.get("category") or []
+    else:
+        category_tags = []
+    if category_tags and isinstance(category_tags, list):
         # Lấy tag đầu tiên làm category
         first = category_tags[0]
-        tag_name = (first.get("name") if isinstance(first, dict) else str(first)).lower()
-        if "lễ hội" in tag_name or "truyền thống" in tag_name:
-            return "cultural"
-        if "ẩm thực" in tag_name or "food" in tag_name:
-            return "food"
-        if "tâm linh" in tag_name or "tôn giáo" in tag_name:
-            return "religious"
-        if "âm nhạc" in tag_name or "music" in tag_name:
-            return "music"
-        if "thể thao" in tag_name or "sport" in tag_name:
-            return "sport"
+        raw_name = ""
+        if isinstance(first, dict):
+            raw_name = first.get("name") or ""
+        elif isinstance(first, str):
+            raw_name = first
+        tag_name = (raw_name or "").lower()
+        if tag_name:
+            if "lễ hội" in tag_name or "truyền thống" in tag_name:
+                return "cultural"
+            if "ẩm thực" in tag_name or "food" in tag_name:
+                return "food"
+            if "tâm linh" in tag_name or "tôn giáo" in tag_name:
+                return "religious"
+            if "âm nhạc" in tag_name or "music" in tag_name:
+                return "music"
+            if "thể thao" in tag_name or "sport" in tag_name:
+                return "sport"
     # Fallback heuristic từ title + summary
-    text = (item.get("title", "") + " " + item.get("summary_short", "")).lower()
+    text = ((item.get("title") or "") + " " + (item.get("summary_short") or "")).lower()
     for cat, keywords in _CATEGORY_KEYWORDS.items():
         for kw in keywords:
             if kw in text:
