@@ -101,6 +101,29 @@ def _migrate_festivals_indexes():
         logger.warning("festivals date_range index migration skipped: %s", e)
 
 
+def _migrate_tour_festival_columns():
+    """T3 Phase 2: add festival_slug + festival_distance_days + province_code vào tours."""
+    insp = inspect(engine)
+    if "tours" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("tours")}
+    alters = []
+    if "festival_slug" not in cols:
+        alters.append("ADD COLUMN festival_slug VARCHAR(256)")
+    if "festival_distance_days" not in cols:
+        alters.append("ADD COLUMN festival_distance_days INTEGER")
+    if "province_code" not in cols:
+        alters.append("ADD COLUMN province_code VARCHAR(16) DEFAULT ''")
+    if not alters:
+        return
+    with engine.begin() as conn:
+        for stmt in alters:
+            try:
+                conn.execute(text(f"ALTER TABLE tours {stmt}"))
+            except Exception as e:
+                logger.warning("tour festival migration skipped (%s): %s", stmt, e)
+
+
 _FK_SET_NULL_FLAG = "fk_classification_rule_id_set_null_v1"
 
 

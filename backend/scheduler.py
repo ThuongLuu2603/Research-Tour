@@ -62,13 +62,9 @@ def _job_plan(hour: int | None = None, minute: int | None = None) -> list[tuple[
     return [
         ("daily_vietravel", "1. Scrape Vietravel", h, m),
         ("daily_findtourgo", "2. Scrape FindTourGo → Sheet", None, None),
-        # Auto chain CHỈ sync Main → DB (FTG đã merge vào Main bằng code Sheet).
-        # KHÔNG sync Vietravel sheet → DB ở auto chain vì:
-        #   - Vietravel scrape ở bước 1 đã ghi DB trước (rồi mới export Sheet).
-        #   - Sync Vietravel sheet → DB chỉ là round-trip vô nghĩa, tốn RU.
-        # User vẫn có nút manual "Sync Vietravel từ Sheet" trên ScraperHub khi cần.
         ("daily_main_sheet_sync", "3. Sync Main → DB", None, None),
-        ("daily_intel_snapshot", "4. Snapshot BGĐ", None, None),
+        ("daily_festival_tagging", "4. Tag tour theo lễ hội", None, None),
+        ("daily_intel_snapshot", "5. Snapshot BGĐ", None, None),
     ]
 
 
@@ -318,6 +314,47 @@ def _run_daily_snapshot() -> None:
     _track_as_scrape_job("daily_snapshot", "Daily snapshot", _do)
 
 
+def _run_festival_tagging() -> None:
+    """T3 Phase 2: tag tour theo festival sau khi sync xong.
+
+    Idempotent — re-run an toàn. Chỉ chạy nếu festivals table có data.
+    """
+    from database import SessionLocal
+    from festival_tagging import tag_tours_with_festivals
+    from db_retry import run_with_retry
+
+    def _do() -> dict:
+        db = SessionLocal()
+        try:
+            return run_with_retry(
+                lambda: tag_tours_with_festivals(db, only_untagged=False),
+                db=db, label="sched-festival-tagging",
+            )
+        finally:
+            db.close()
+
+    _track_as_scrape_job("festival_tagging", "Festival tour tagging", _do)
+
+
+def _run_festival_scrape() -> None:
+    """T3 Phase 2: scrape vietnam.travel/event weekly."""
+    from database import SessionLocal
+    from festival_scraper import run_festival_scrape
+    from db_retry import run_with_retry
+
+    def _do() -> dict:
+        db = SessionLocal()
+        try:
+            return run_with_retry(
+                lambda: run_festival_scrape(db),
+                db=db, label="sched-festival-scrape",
+            )
+        finally:
+            db.close()
+
+    _track_as_scrape_job("festival_scrape", "Festival scrape vietnam.travel", _do)
+
+
 def _run_daily_sheet_sync() -> None:
     from database import SessionLocal
     from sheets_tour_sync import merge_all_sheets_to_db
@@ -362,6 +399,10 @@ def _execute_job(job_id: str, triggered_by: str) -> None:
         threading.Thread(target=_run_daily_snapshot, daemon=True, name=job_id).start()
     elif job_id == "daily_sheet_sync":
         threading.Thread(target=_run_daily_sheet_sync, daemon=True, name=job_id).start()
+    elif job_id == "daily_festival_tagging":
+        threading.Thread(target=_run_festival_tagging, daemon=True, name=job_id).start()
+    elif job_id == "weekly_festival_scrape":
+        threading.Thread(target=_run_festival_scrape, daemon=True, name=job_id).start()
 
 
 def run_due_scheduled_jobs(*, triggered_by: str = "cron") -> dict:
@@ -494,12 +535,19 @@ def _run_daily_chain():
     except Exception as e:  # noqa: BLE001
         logger.exception("[CHAIN 3/4] Sync Main lỗi: %s", e)
 
-    # 4. Snapshot (cuối chuỗi để có data mới nhất)
-    logger.info("[CHAIN 4/4] Daily intelligence snapshot")
+    # 4. Festival tour tagging (T3 Phase 2) — gắn tour với lễ sau khi data mới.
+    logger.info("[CHAIN 4/5] Festival tour tagging")
+    try:
+        _run_festival_tagging()
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[CHAIN 4/5] Festival tagging lỗi: %s", e)
+
+    # 5. Snapshot (cuối chuỗi để có data mới nhất bao gồm festival_slug)
+    logger.info("[CHAIN 5/5] Daily intelligence snapshot")
     try:
         _daily_snapshot()
     except Exception as e:  # noqa: BLE001
-        logger.exception("[CHAIN 4/4] Snapshot lỗi: %s", e)
+        logger.exception("[CHAIN 5/5] Snapshot lỗi: %s", e)
 
     logger.info("[CHAIN] Hoàn tất chuỗi tự động")
 

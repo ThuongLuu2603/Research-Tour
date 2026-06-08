@@ -88,6 +88,16 @@ class Tour(Base):
     analyst_note: Mapped[str] = mapped_column(Text, default="")
     flagged: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # T3 Phase 2 — Festival cross-ref
+    # festival_slug: slug của lễ hội PRIMARY (gần date nhất / overlap nhiều nhất).
+    # Multi-festival hiếm gặp → giữ 1 slug đơn giản. NULL = không gắn lễ.
+    festival_slug: Mapped[str | None] = mapped_column(String(256), nullable=True, index=True)
+    # festival_distance_days: số ngày từ tour.lich_kh tới festival.date_start gần nhất.
+    # 0 = trùng ngày, âm = lễ đã qua, dương = lễ chưa diễn ra. Dùng cho UI label.
+    festival_distance_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # province_code: derived từ diem_kh khi tagging. Cache để filter/join nhanh.
+    province_code: Mapped[str] = mapped_column(String(16), default="", index=True)
+
     # Stable identity & sheet sync metadata
     external_id: Mapped[str] = mapped_column(String(128), default="", index=True)
     sheet_source: Mapped[str] = mapped_column(String(64), default="")

@@ -1310,3 +1310,170 @@ export const refreshFestivals = async () => {
   const { data } = await api.post("/festivals/refresh");
   return data as { message: string; inserted: number; updated: number; unchanged: number };
 };
+
+// Phase 2: cross-ref tour
+export interface FestivalTourLite {
+  id: string;
+  cong_ty: string;
+  thi_truong: string;
+  tuyen_tour: string;
+  ten_tour: string;
+  diem_kh: string;
+  province_code: string;
+  gia: number | null;
+  so_ngay: number | null;
+  nguon: string;
+  festival_distance_days: number | null;
+}
+
+export const listFestivalTours = async (slug: string, company?: string): Promise<FestivalTourLite[]> => {
+  const params = new URLSearchParams();
+  if (company) params.set("company", company);
+  const { data } = await api.get(`/festivals/${encodeURIComponent(slug)}/tours?${params}`);
+  return data;
+};
+
+export interface FestivalSummary {
+  slug: string;
+  name: string;
+  total_tours: number;
+  by_company: Record<string, number>;
+  avg_price: number | null;
+  vtr_tours: number;
+  competitor_tours: number;
+}
+
+export const getFestivalSummary = async (slug: string): Promise<FestivalSummary> => {
+  const { data } = await api.get(`/festivals/${encodeURIComponent(slug)}/summary`);
+  return data;
+};
+
+export interface CoverageGapItem {
+  slug: string;
+  name: string;
+  date_start: string;
+  date_end: string;
+  region: string;
+  vtr_tours: number;
+  competitor_tours: number;
+  top_competitors: Record<string, number>;
+  gap_score: number;
+}
+
+export const getCoverageGap = async (limit = 30): Promise<CoverageGapItem[]> => {
+  const { data } = await api.get(`/festivals/insights/coverage-gap?limit=${limit}`);
+  return data;
+};
+
+export const retagFestivals = async (onlyUntagged = false) => {
+  const { data } = await api.post(`/festivals/insights/retag?only_untagged=${onlyUntagged}`);
+  return data as { message: string; tours_scanned: number; tours_tagged: number; tours_cleared: number };
+};
+
+// Phase 3: insights
+export interface PremiumRoute {
+  thi_truong: string;
+  tuyen_tour: string;
+  n_with_festival: number;
+  n_without_festival: number;
+  avg_price_with_festival: number;
+  avg_price_without_festival: number;
+  premium_pct: number;
+  premium_vnd: number;
+}
+
+export interface PricingPremiumResult {
+  summary: {
+    routes_analyzed: number;
+    avg_premium_pct: number;
+    tours_with_festival: number;
+    tours_without_festival: number;
+  };
+  top_premium_routes: PremiumRoute[];
+  top_discount_routes: PremiumRoute[];
+}
+
+export const getPricingPremium = async (topN = 20): Promise<PricingPremiumResult> => {
+  const { data } = await api.get(`/festivals/insights/pricing-premium?top_n=${topN}`);
+  return data;
+};
+
+export interface DemandForecastMonth {
+  year: number;
+  month: number;
+  month_label: string;
+  festival_count: number;
+  top_region: string;
+  by_region: Record<string, number>;
+  tour_count: number;
+  vtr_tour_count: number;
+  competitor_tour_count: number;
+  inventory_recommendation: "high" | "medium" | "low";
+  inventory_label: string;
+  top_festivals: { slug: string; name: string; date_start: string }[];
+}
+
+export const getDemandForecast = async (monthsAhead = 6): Promise<{ forecast: DemandForecastMonth[] }> => {
+  const { data } = await api.get(`/festivals/insights/demand-forecast?months_ahead=${monthsAhead}`);
+  return data;
+};
+
+export interface MarketingCalendarItem {
+  slug: string;
+  name: string;
+  date_start: string;
+  date_end: string;
+  region: string;
+  category: string;
+  is_lunar: boolean;
+  suggested_tours: {
+    id: string;
+    ten_tour: string;
+    gia: number | null;
+    so_ngay: number | null;
+    link_url: string;
+  }[];
+  campaign_hint: string;
+}
+
+export const getMarketingCalendar = async (monthsAhead = 12): Promise<MarketingCalendarItem[]> => {
+  const { data } = await api.get(`/festivals/insights/marketing-calendar?months_ahead=${monthsAhead}`);
+  return data;
+};
+
+export interface HeatmapRegion {
+  region: string;
+  region_label: string;
+  festival_count: number;
+  tour_count: number;
+  tour_with_festival: number;
+  festival_coverage_ratio: number;
+  is_under_served: boolean;
+}
+
+export const getRegionHeatmap = async (): Promise<{ regions: HeatmapRegion[]; total_festivals: number }> => {
+  const { data } = await api.get("/festivals/insights/heatmap");
+  return data;
+};
+
+export interface LunarEvent {
+  slug: string;
+  name: string;
+  date_start: string;
+  date_end: string;
+  lunar_month: number;
+  lunar_day: number;
+  category: string;
+  region: string;
+  year: number;
+}
+
+export const getLunarPlanner = async (yearsAhead = 3): Promise<{ events: LunarEvent[] }> => {
+  const { data } = await api.get(`/festivals/insights/lunar-planner?years_ahead=${yearsAhead}`);
+  return data;
+};
+
+export const lunarSeed = async () => {
+  const { data } = await api.post("/festivals/insights/lunar-seed");
+  return data as { message: string; inserted: number; skipped: number };
+};

@@ -109,6 +109,7 @@ def init_db():
         _migrate_festivals_indexes,
         _migrate_scrape_jobs_columns,
         _migrate_tour_columns,
+        _migrate_tour_festival_columns,
         _migrate_saved_views,
         run_search_migrations,
     )
@@ -118,6 +119,7 @@ def init_db():
     _migrate_classification_rule_fk_set_null()
     _migrate_date_format_rules_output_value()
     _migrate_festivals_indexes()
+    _migrate_tour_festival_columns()
     run_search_migrations(create_indexes=False)
 
 

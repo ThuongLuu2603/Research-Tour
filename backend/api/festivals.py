@@ -174,3 +174,197 @@ def refresh_festivals(
     except Exception as e:
         logger.exception("Festival scrape lỗi: %s", e)
         raise HTTPException(502, f"Scrape thất bại: {e}") from e
+
+
+# ── Phase 2: Cross-ref tour ─────────────────────────────────────────────────
+
+
+class TourLite(BaseModel):
+    id: str
+    cong_ty: str
+    thi_truong: str
+    tuyen_tour: str
+    ten_tour: str
+    diem_kh: str
+    province_code: str
+    gia: float | None
+    so_ngay: float | None
+    nguon: str
+    festival_distance_days: int | None
+
+
+@router.get("/{slug}/tours", response_model=list[TourLite])
+def festival_tours(
+    slug: str,
+    company: str | None = Query(None, description="Filter theo cong_ty"),
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List tour gắn lễ này (tour.festival_slug = slug)."""
+    from models import Festival, Tour
+
+    f = db.query(Festival).filter(Festival.slug == slug).first()
+    if not f:
+        raise HTTPException(404, "Festival không tồn tại")
+    q = db.query(Tour).filter(Tour.festival_slug == slug)
+    if company:
+        q = q.filter(Tour.cong_ty.ilike(f"%{company}%"))
+    rows = q.order_by(Tour.cong_ty.asc(), Tour.gia.asc().nullslast()).limit(500).all()
+    return [
+        TourLite(
+            id=str(t.id),
+            cong_ty=t.cong_ty or "",
+            thi_truong=t.thi_truong or "",
+            tuyen_tour=t.tuyen_tour or "",
+            ten_tour=t.ten_tour or "",
+            diem_kh=t.diem_kh or "",
+            province_code=t.province_code or "",
+            gia=t.gia,
+            so_ngay=t.so_ngay,
+            nguon=t.nguon or "",
+            festival_distance_days=t.festival_distance_days,
+        )
+        for t in rows
+    ]
+
+
+class FestivalSummary(BaseModel):
+    slug: str
+    name: str
+    total_tours: int
+    by_company: dict[str, int]
+    avg_price: float | None
+    vtr_tours: int
+    competitor_tours: int
+
+
+@router.get("/{slug}/summary", response_model=FestivalSummary)
+def festival_summary(
+    slug: str,
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Stats cho 1 festival: tour gắn theo công ty, VTR vs competitor."""
+    from festival_tagging import get_festival_tours_summary
+
+    result = get_festival_tours_summary(db, slug)
+    if "error" in result:
+        raise HTTPException(404, result["error"])
+    return FestivalSummary(**result)
+
+
+class CoverageGapItem(BaseModel):
+    slug: str
+    name: str
+    date_start: str
+    date_end: str
+    region: str
+    vtr_tours: int
+    competitor_tours: int
+    top_competitors: dict[str, int]
+    gap_score: float
+
+
+@router.get("/insights/coverage-gap", response_model=list[CoverageGapItem])
+def coverage_gap(
+    limit: int = Query(30, ge=1, le=100),
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Coverage gap: festival mà competitor cover nhưng VTR chưa.
+
+    Sort theo gap_score desc — festival VTR đang thiếu nhất ở đầu.
+    """
+    from festival_tagging import get_coverage_gap
+
+    return get_coverage_gap(db, limit=limit)
+
+
+@router.post("/insights/retag")
+def retag_festivals(
+    only_untagged: bool = Query(False),
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Trigger tagging engine manual. Cron tự chạy daily sau sync chain."""
+    from festival_tagging import tag_tours_with_festivals
+
+    stats = tag_tours_with_festivals(db, only_untagged=only_untagged)
+    return {"message": "Tagging hoàn tất", **stats}
+
+
+# ── Phase 3: Insight engine ────────────────────────────────────────────────
+
+
+@router.get("/insights/pricing-premium")
+def pricing_premium(
+    top_n: int = Query(20, ge=5, le=100),
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """UC#2 — Premium % của tour gắn lễ vs không gắn lễ theo (TT, Tuyến)."""
+    from festival_insights import get_pricing_premium
+
+    return get_pricing_premium(db, top_n=top_n)
+
+
+@router.get("/insights/demand-forecast")
+def demand_forecast(
+    months_ahead: int = Query(6, ge=1, le=12),
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """UC#3 — Forecast tháng peak lễ + suggest inventory."""
+    from festival_insights import get_demand_forecast
+
+    return get_demand_forecast(db, months_ahead=months_ahead)
+
+
+@router.get("/insights/marketing-calendar")
+def marketing_calendar(
+    months_ahead: int = Query(12, ge=1, le=24),
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """UC#5 — Marketing calendar 12 tháng + suggested tour VTR push."""
+    from festival_insights import get_marketing_calendar
+
+    return get_marketing_calendar(db, months_ahead=months_ahead)
+
+
+@router.get("/insights/heatmap")
+def region_heatmap(
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """UC#6 — Heatmap mật độ lễ × tour theo vùng (bac/trung/nam)."""
+    from festival_insights import get_region_heatmap
+
+    return get_region_heatmap(db)
+
+
+@router.get("/insights/lunar-planner")
+def lunar_planner(
+    years_ahead: int = Query(3, ge=1, le=5),
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """UC#7 — Long-range planner: lễ âm lịch 3-5 năm tới (Tết, Trung Thu, ...).
+
+    Note: Cần chạy POST /insights/lunar-seed 1 lần để upsert lễ âm vào DB.
+    """
+    from lunar_festivals import get_lunar_planner
+
+    return {"events": get_lunar_planner(db, years_ahead=years_ahead)}
+
+
+@router.post("/insights/lunar-seed")
+def lunar_seed(
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Seed 12 lễ âm lịch × 6 năm (2025-2030) vào festivals table."""
+    from lunar_festivals import seed_lunar_festivals
+
+    stats = seed_lunar_festivals(db)
+    return {"message": "Seed lễ âm hoàn tất", **stats}
