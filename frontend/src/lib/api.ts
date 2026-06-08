@@ -1243,3 +1243,70 @@ export const fetchReportHtml = async (): Promise<string> => {
   const { data } = await api.get("/intelligence/report/html", { responseType: "text" });
   return data;
 };
+
+// ── Festivals (T3 Phase 1) ────────────────────────────────────────────────────
+
+export type FestivalRegion = "bac" | "trung" | "nam" | "";
+export type FestivalCategory = "cultural" | "religious" | "music" | "food" | "sport" | "other";
+
+export interface Festival {
+  id: string;
+  slug: string;
+  name_vi: string;
+  name_en: string;
+  date_start: string;  // ISO date
+  date_end: string;
+  is_lunar: boolean;
+  location_text: string;
+  province_code: string;
+  region: FestivalRegion;
+  category: FestivalCategory;
+  description: string;
+  image_url: string;
+  source_url: string;
+}
+
+export interface FestivalFilters {
+  from?: string;
+  to?: string;
+  region?: FestivalRegion;
+  category?: FestivalCategory;
+  province?: string;
+  limit?: number;
+}
+
+export interface FestivalStats {
+  total: number;
+  by_region: Record<string, number>;
+  by_category: Record<string, number>;
+  by_month: Record<string, number>;
+  upcoming_30d: number;
+  upcoming_90d: number;
+}
+
+export const listFestivals = async (filters: FestivalFilters = {}): Promise<Festival[]> => {
+  const params = new URLSearchParams();
+  if (filters.from) params.set("from", filters.from);
+  if (filters.to) params.set("to", filters.to);
+  if (filters.region) params.set("region", filters.region);
+  if (filters.category) params.set("category", filters.category);
+  if (filters.province) params.set("province", filters.province);
+  if (filters.limit) params.set("limit", String(filters.limit));
+  const { data } = await api.get(`/festivals?${params}`);
+  return data;
+};
+
+export const getFestival = async (slug: string): Promise<Festival> => {
+  const { data } = await api.get(`/festivals/${encodeURIComponent(slug)}`);
+  return data;
+};
+
+export const getFestivalStats = async (): Promise<FestivalStats> => {
+  const { data } = await api.get("/festivals/stats/summary");
+  return data;
+};
+
+export const refreshFestivals = async () => {
+  const { data } = await api.post("/festivals/refresh");
+  return data as { message: string; inserted: number; updated: number; unchanged: number };
+};

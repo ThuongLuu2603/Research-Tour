@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import {
-  Home, Table2, Scale, FileText, Radio, LogOut, User, Settings, Tags, Microscope,
+  Home, Table2, Scale, FileText, Radio, LogOut, User, Settings, Tags, Microscope, CalendarHeart,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ChunkErrorBoundary from "@/components/ChunkErrorBoundary";
@@ -55,6 +55,7 @@ const NAV = [
   { to: "/compare", icon: Scale, label: "So sánh VTR" },
   { to: "/market-lab", icon: Microscope, label: "Market Lab" },
   { to: "/data", icon: Table2, label: "Sản phẩm & Data" },
+  { to: "/festivals", icon: CalendarHeart, label: "Sự kiện & Lễ hội" },
   { to: "/reports", icon: FileText, label: "Báo cáo BGĐ" },
 ];
 

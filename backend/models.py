@@ -197,6 +197,43 @@ class DateFormatRule(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class Festival(Base):
+    """Sự kiện & Lễ hội VN — scrape từ vietnam.travel/event hàng tuần.
+
+    Phase 1: display-only timeline + calendar.
+    Phase 2: cross-ref với tours.lich_kh để tag tour gắn lễ.
+    Phase 3: insight (pricing premium, demand forecast, lunar planner).
+    """
+    __tablename__ = "festivals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slug: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    name_vi: Mapped[str] = mapped_column(String(512))
+    name_en: Mapped[str] = mapped_column(String(512), default="")
+    date_start: Mapped[date] = mapped_column(Date, index=True)
+    date_end: Mapped[date] = mapped_column(Date, index=True)
+    is_lunar: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Cho lễ âm lịch — month/day theo âm. lunar_month=1,lunar_day=1 = Tết Nguyên Đán.
+    lunar_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    lunar_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    location_text: Mapped[str] = mapped_column(String(256), default="")
+    # Mã tỉnh chuẩn (vd "HN", "HCM", "DN", "HUE"...) — Phase 2 normalize từ
+    # location_text để join với tours.diem_kh.
+    province_code: Mapped[str] = mapped_column(String(32), default="", index=True)
+    # Vùng miền: "bac" | "trung" | "nam" (derived từ province_code)
+    region: Mapped[str] = mapped_column(String(16), default="", index=True)
+    # Loại lễ: "cultural" | "religious" | "music" | "food" | "sport" | "other"
+    category: Mapped[str] = mapped_column(String(32), default="other", index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    image_url: Mapped[str] = mapped_column(String(1024), default="")
+    source_url: Mapped[str] = mapped_column(String(1024), default="")
+    # Hash content để detect change (avoid no-op writes mỗi tuần)
+    content_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
+    scraped_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class DailySnapshot(Base):
     """Snapshot KPI hàng ngày — trend & báo cáo."""
     __tablename__ = "daily_snapshots"

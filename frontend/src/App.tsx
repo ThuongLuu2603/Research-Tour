@@ -17,6 +17,7 @@ const ScraperHub = lazy(() => import("@/pages/ScraperHub"));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
 const RulesAdminPage = lazy(() => import("@/pages/RulesAdminPage"));
 const MarketLab = lazy(() => import("@/pages/MarketLab"));
+const FestivalsPage = lazy(() => import("@/pages/FestivalsPage"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -71,6 +72,7 @@ export default function App() {
               <Route path="ops" element={<ScraperHub />} />
               <Route path="scraper" element={<Navigate to="/ops" replace />} />
               <Route path="rules" element={<RulesAdminPage />} />
+              <Route path="festivals" element={<FestivalsPage />} />
               <Route path="settings" element={<SettingsPage />} />
               {/* Legacy redirects */}
               <Route path="price" element={<Navigate to="/compare?tab=price" replace />} />

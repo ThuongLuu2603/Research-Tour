@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 
-from api import auth, tours, analytics, scraper as scraper_api, admin, compare, rules as rules_api, intelligence as intelligence_api, workspaces, market_lab as market_lab_api, cron as cron_api
+from api import auth, tours, analytics, scraper as scraper_api, admin, compare, rules as rules_api, intelligence as intelligence_api, workspaces, market_lab as market_lab_api, cron as cron_api, festivals as festivals_api
 from api.scraper import set_event_loop
 from database import init_db, run_deferred_db_maintenance
 from scheduler import start_scheduler, stop_scheduler
@@ -184,6 +184,7 @@ app.include_router(intelligence_api.router)
 app.include_router(workspaces.router)
 app.include_router(market_lab_api.router)
 app.include_router(cron_api.router)
+app.include_router(festivals_api.router)
 
 
 @app.api_route("/health", methods=["GET", "HEAD"], include_in_schema=False)

@@ -82,6 +82,25 @@ def _migrate_date_format_rules_output_value():
             logger.warning("date_format_rules output_value migration skipped: %s", e)
 
 
+def _migrate_festivals_indexes():
+    """Festivals table được tạo bởi Base.metadata.create_all. Migration này thêm
+    composite index (date_start, date_end) cho query range."""
+    insp = inspect(engine)
+    if "festivals" not in insp.get_table_names():
+        return
+    existing_idx = {ix.get("name", "") for ix in insp.get_indexes("festivals")}
+    if "ix_festivals_date_range" in existing_idx:
+        return
+    try:
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_festivals_date_range "
+                "ON festivals (date_start, date_end)"
+            ))
+    except Exception as e:
+        logger.warning("festivals date_range index migration skipped: %s", e)
+
+
 _FK_SET_NULL_FLAG = "fk_classification_rule_id_set_null_v1"
 
 
