@@ -153,12 +153,14 @@ def apply_rules(
         if not f:
             rule_stats.append({"festival_slug": r.festival_slug, "tagged": 0, "skip": "festival not found"})
             continue
-        # Build query tour matching
+        # Build query tour matching — EXACT match vì user chọn từ dropdown DB
         q = db.query(Tour).filter(market_filter_clause(Tour))
-        if r.market_keyword.strip():
-            q = q.filter(func.lower(Tour.thi_truong).like(f"%{r.market_keyword.strip().lower()}%"))
-        if r.route_keyword.strip():
-            q = q.filter(func.lower(Tour.tuyen_tour).like(f"%{r.route_keyword.strip().lower()}%"))
+        mk = r.market_keyword.strip()
+        rk = r.route_keyword.strip()
+        if mk:
+            q = q.filter(Tour.thi_truong == mk)
+        if rk:
+            q = q.filter(Tour.tuyen_tour == rk)
         # Chỉ tag tour CHƯA có festival_slug (không ghi đè auto-tag trước)
         q = q.filter(Tour.festival_slug.is_(None))
         tours = q.all()

@@ -140,7 +140,17 @@ export const getTours = async (filters: TourFilters = {}): Promise<PaginatedTour
   return data;
 };
 
-export const getFilterOptions = async () => {
+export interface TourFilterOptions {
+  thi_truong: string[];
+  tuyen_tour: string[];
+  routes_by_market: Record<string, string[]>;
+  cong_ty: string[];
+  diem_kh: string[];
+  nguon: string[];
+  phan_khuc: string[];
+}
+
+export const getFilterOptions = async (): Promise<TourFilterOptions> => {
   const { data } = await api.get("/tours/filter-options");
   return data;
 };

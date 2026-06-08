@@ -24,7 +24,7 @@ import {
   // Festival mapping rules (tab Lễ hội)
   listFestivalMappingRules, createFestivalMappingRule, updateFestivalMappingRule,
   deleteFestivalMappingRule, applyFestivalMappingRules,
-  listFestivals,
+  listFestivals, getFilterOptions,
   FestivalMappingRule, Festival,
 } from "@/lib/api";
 import { COL } from "@/lib/glossary";
@@ -1575,6 +1575,12 @@ function FestivalMappingRulesTab({ search, onMessage }: { search: string; onMess
     queryFn: () => listFestivals({ limit: 2000 }),
     staleTime: 6 * 60 * 60 * 1000,
   });
+  // Filter options: list thi_truong + tuyen_tour có sẵn trong DB tour
+  const { data: filterOpts } = useQuery({
+    queryKey: ["tour-filter-options"],
+    queryFn: getFilterOptions,
+    staleTime: 5 * 60 * 1000,
+  });
 
   // Form thêm
   const [festSlug, setFestSlug] = useState("");
@@ -1669,10 +1675,11 @@ function FestivalMappingRulesTab({ search, onMessage }: { search: string; onMess
           Map <span className="underline">điểm tổ chức lễ hội</span> ↔ <span className="underline">Thị trường / Tuyến tour</span>
         </p>
         <p>
-          Mỗi lễ có "điểm tổ chức" (vd lễ Sầu Riêng tổ chức tại Đắk Lắk). Rule match
-          các tour có <strong>Thị trường</strong> hoặc <strong>Tuyến tour</strong> chứa keyword
-          từ địa điểm này. Bấm <strong>Áp dụng mapping</strong> → tag tour matching vào lễ.
-          Tour đã có festival_slug khác sẽ KHÔNG bị ghi đè.
+          1. Chọn lễ hội → hệ thống hiện điểm tổ chức. <br />
+          2. Chọn <strong>Thị trường</strong> (vd "Việt Nam") và/hoặc <strong>Tuyến tour</strong>
+             (vd "Đắk Lắk") từ dropdown có sẵn trong DB tour. <br />
+          3. Bấm <strong>Áp dụng mapping</strong> → mọi tour có TT/Tuyến khớp sẽ được tag vào lễ.
+             Tour đã có festival_slug khác sẽ KHÔNG bị ghi đè.
         </p>
       </div>
 
@@ -1684,16 +1691,27 @@ function FestivalMappingRulesTab({ search, onMessage }: { search: string; onMess
             <select className="input text-sm" value={festSlug} onChange={(e) => {
               const slug = e.target.value;
               setFestSlug(slug);
-              // Auto-fill keyword từ địa điểm tổ chức lễ
+              // Auto-suggest thị trường từ địa điểm tổ chức (match với option có sẵn)
               const f = (festivals ?? []).find(x => x.slug === slug);
-              if (f) {
-                // Parse "P. Tam Chúc, T. Ninh Bình" → ["P. Tam Chúc", "T. Ninh Bình"]
+              if (f && filterOpts) {
                 const parts = (f.location_text || "").split(",").map(s => s.trim()).filter(Boolean);
-                // Lấy part cuối (thường là tỉnh) làm keyword TT, strip prefix T./TP.
                 const lastPart = parts[parts.length - 1] || "";
                 const cleaned = lastPart.replace(/^(T\.|TP\.|P\.|X\.|H\.|Q\.)\s*/i, "").trim();
-                setMarket(cleaned);
-                // Keyword Tuyến: optional, để trống. User tự nhập nếu muốn cụ thể hơn.
+                // Tìm option thị trường khớp (case-insensitive substring)
+                const ttList = filterOpts.thi_truong;
+                const lowerClean = cleaned.toLowerCase();
+                let bestMatch = "";
+                if (lowerClean) {
+                  // Exact match trước
+                  bestMatch = ttList.find(t => t.toLowerCase() === lowerClean) || "";
+                  if (!bestMatch) {
+                    // Substring match (location chứa thị trường hoặc thị trường chứa location)
+                    bestMatch = ttList.find(t =>
+                      t.toLowerCase().includes(lowerClean) || lowerClean.includes(t.toLowerCase())
+                    ) || "";
+                  }
+                }
+                setMarket(bestMatch);
                 setRoute("");
               }
             }}>
@@ -1719,14 +1737,29 @@ function FestivalMappingRulesTab({ search, onMessage }: { search: string; onMess
         </div>
         <div className="grid grid-cols-12 gap-2 items-end">
           <div className="col-span-12 lg:col-span-5">
-            <label className="text-xs text-gray-500">Keyword Thị trường (auto từ điểm tổ chức)</label>
-            <input className="input text-sm" value={market} onChange={(e) => setMarket(e.target.value)}
-              placeholder="Tự fill khi chọn lễ. Vd: Đắk Lắk, Hàn Quốc..." onKeyDown={keepInputKeys} />
+            <label className="text-xs text-gray-500">Thị trường</label>
+            <select className="input text-sm" value={market}
+              onChange={(e) => { setMarket(e.target.value); setRoute(""); }}>
+              <option value="">-- Tất cả thị trường --</option>
+              {(filterOpts?.thi_truong ?? []).map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
           </div>
           <div className="col-span-12 lg:col-span-5">
-            <label className="text-xs text-gray-500">Keyword Tuyến tour (tùy chọn, chính xác hơn)</label>
-            <input className="input text-sm" value={route} onChange={(e) => setRoute(e.target.value)}
-              placeholder="Optional. Vd: Buôn Ma Thuột" onKeyDown={keepInputKeys} />
+            <label className="text-xs text-gray-500">
+              Tuyến tour {market ? "(theo thị trường đã chọn)" : "(chọn thị trường trước hoặc tự nhập)"}
+            </label>
+            <select className="input text-sm" value={route}
+              onChange={(e) => setRoute(e.target.value)}>
+              <option value="">-- Tùy chọn / để trống --</option>
+              {(market
+                ? (filterOpts?.routes_by_market?.[market] ?? [])
+                : (filterOpts?.tuyen_tour ?? [])
+              ).map((r) => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
           </div>
           <div className="col-span-12 lg:col-span-2 flex gap-1">
             <button type="button" className="btn-primary text-sm w-full"
@@ -1793,14 +1826,29 @@ function FestivalMappingRulesTab({ search, onMessage }: { search: string; onMess
                   </td>
                   <td className="px-3 py-2 text-xs">
                     {isEditing ? (
-                      <input className="input text-sm py-1 w-full" value={editDraft?.market_keyword ?? ""}
-                        onChange={(e) => setEditDraft((p) => p ? { ...p, market_keyword: e.target.value } : p)} />
+                      <select className="input text-sm py-1 w-full"
+                        value={editDraft?.market_keyword ?? ""}
+                        onChange={(e) => setEditDraft((p) => p ? { ...p, market_keyword: e.target.value, route_keyword: "" } : p)}>
+                        <option value="">— Tất cả —</option>
+                        {(filterOpts?.thi_truong ?? []).map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
                     ) : (r.market_keyword || <span className="text-gray-400">—</span>)}
                   </td>
                   <td className="px-3 py-2 text-xs">
                     {isEditing ? (
-                      <input className="input text-sm py-1 w-full" value={editDraft?.route_keyword ?? ""}
-                        onChange={(e) => setEditDraft((p) => p ? { ...p, route_keyword: e.target.value } : p)} />
+                      <select className="input text-sm py-1 w-full"
+                        value={editDraft?.route_keyword ?? ""}
+                        onChange={(e) => setEditDraft((p) => p ? { ...p, route_keyword: e.target.value } : p)}>
+                        <option value="">— Tùy chọn —</option>
+                        {(editDraft?.market_keyword
+                          ? (filterOpts?.routes_by_market?.[editDraft.market_keyword] ?? [])
+                          : (filterOpts?.tuyen_tour ?? [])
+                        ).map((r2) => (
+                          <option key={r2} value={r2}>{r2}</option>
+                        ))}
+                      </select>
                     ) : (r.route_keyword || <span className="text-gray-400">—</span>)}
                   </td>
                   <td className="px-3 py-2 text-xs text-gray-600">
