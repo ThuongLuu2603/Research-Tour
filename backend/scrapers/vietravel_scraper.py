@@ -249,19 +249,58 @@ def _extract_destination(chunk: str, max_len: int = 8000) -> str:
 
 def _extract_departure(block: str) -> str:
     """Điểm khởi hành — VTR đặt departureName='$undefined' trong listDepartureDate
-    (re.search() match nhầm cái này → trả rỗng cho ~100% card). Fix 2 lớp:
-      1) findall + filter $undefined → lấy giá trị valid đầu tiên (thường là card-level)
-      2) Fallback: departureId → city map (verify bằng tmp_vtr_verify.py 2026-06-07,
-         79/80 card hồi phục được điểm KH trên cả 2 trang)."""
+    (re.search() match nhầm cái này → trả rỗng cho ~100% card).
+
+    4 lớp fallback (preserve raw value tốt nhất có thể):
+      1) findall departureName + filter $undefined → giá trị valid đầu tiên
+      2) departureId → city map (5 ID mapped: HCM, HN, ĐN, CT, NT)
+      3) Parse từ pageTitle: format "Tour TP.HỒ CHÍ MINH ✈ LỆ GIANG 5N4Đ" →
+         extract "TP.HỒ CHÍ MINH"
+      4) Trả raw value của departureName dù là chuỗi lạ (vd "ĐÀ LẠT") để user
+         có thể thấy + map alias sau. KHÔNG trả "" trừ khi thật sự không có
+         dữ liệu nào.
+    """
+    # Layer 1: departureName valid
     candidates = [
         _decode_json_str(v) for v in _DEPARTURE_NAME_RE.findall(block)
         if v and v.lower() != "$undefined"
     ]
     if candidates:
         return candidates[0].strip()
+
+    # Layer 2: departureId → city map
     m = _DEPARTURE_ID_RE.search(block)
     if m:
-        return _DEPARTURE_ID_TO_NAME.get(int(m.group(1)), "")
+        mapped = _DEPARTURE_ID_TO_NAME.get(int(m.group(1)), "")
+        if mapped:
+            return mapped
+
+    # Layer 3: parse từ pageTitle pattern "Tour {DEPARTURE} ✈ {DEST}" hoặc
+    # "Tour {DEPARTURE} - {DEST}". VTR title format thường gặp.
+    title_m = _PAGETITLE_RE.search(block)
+    if title_m:
+        title = _decode_json_str(title_m.group(1))
+        # Bỏ prefix "Tour " (case-insensitive)
+        title_clean = re.sub(r"^\s*tour\s+", "", title, flags=re.IGNORECASE)
+        # Split theo các ký tự phổ biến cho departure → destination
+        # ✈ (airplane), → (arrow), - / – / — (dashes)
+        parts = re.split(r"[✈→\-–—]", title_clean, maxsplit=1)
+        if parts and parts[0].strip():
+            dep = parts[0].strip()
+            # Bỏ tail như "5N4Đ", "(VN airlines)" nếu có
+            dep = re.sub(r"\s+\d+[Nn]\d+[ĐđDd]?$", "", dep).strip()
+            dep = re.sub(r"\s*\([^)]*\)$", "", dep).strip()
+            if dep and len(dep) >= 3 and len(dep) <= 120:
+                return dep
+
+    # Layer 4: raw fallback — trả candidate đầu (kể cả $undefined) thì có
+    # thông tin gì cho user thấy còn hơn rỗng. Trả "" nếu thật sự không có
+    # bất kỳ departureName nào trong block.
+    raw_candidates = [_decode_json_str(v) for v in _DEPARTURE_NAME_RE.findall(block) if v]
+    if raw_candidates:
+        for c in raw_candidates:
+            if c and c.lower() != "$undefined":
+                return c.strip()
     return ""
 
 
