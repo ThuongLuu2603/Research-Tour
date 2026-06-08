@@ -335,18 +335,131 @@ def _fetch(url: str, client) -> str | None:
     return None
 
 
-def _parse_list_page(html: str) -> list[dict[str, Any]]:
-    """Parse trang danh sách event → list dict.
+def _is_markdown(content: str) -> bool:
+    """Detect Jina Reader markdown output vs raw HTML."""
+    if not content:
+        return False
+    head = content[:500].lstrip().lower()
+    # Markdown markers: bullet, link syntax, heading, không có <html> hay <body>
+    if "<html" in head or "<body" in head or "<!doctype" in head:
+        return False
+    return ("](" in content[:2000]) or content.lstrip().startswith(("# ", "* ", "- ", "**"))
 
-    STRATEGY MỚI (Phase 1.1): link-based extraction.
-      1. Tìm mọi anchor có href chứa "/things-to-do/festival-event/{slug}".
-      2. Mỗi anchor → traverse parent để tìm card chứa nó.
-      3. Trong card: lấy title (text anchor), image (img gần nhất), date_text + location
-         (text node có pattern ngày hoặc tên tỉnh VN).
 
-    Lý do: vietnam.travel KHÔNG dùng class CSS thuần (vd .event-card hay article.node),
-    HTML generic divs. Anchor-based extraction robust hơn nhiều khi theme update.
+def _parse_markdown_for_events(content: str, detail_prefix: str, base_url: str) -> list[dict[str, Any]]:
+    """Parse Jina Reader markdown output cho event detail URLs.
+
+    Strategy block-based (tránh leak data giữa các event):
+      1. Find all detail links — record (position, name, url).
+      2. Mỗi link i → block = content TỪ link[i-1].end (hoặc 0) ĐẾN link[i+1].start (hoặc end).
+         - Phần TRƯỚC link[i] = image cho event này (layout vietnam.travel: ![img] trước [name])
+         - Phần SAU link[i] = date + location
+      3. Image preference: image gần TRƯỚC link[i] nhất (cùng card).
     """
+    events: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    # Step 1: collect all detail link positions
+    link_pattern = re.compile(
+        r"\[([^\]\n]+?)\]\((" + re.escape(detail_prefix) + r"[^\s)]+?)\)",
+    )
+    matches = list(link_pattern.finditer(content))
+    if not matches:
+        return events
+
+    # Step 2: cho mỗi link, define block boundary
+    for i, m in enumerate(matches):
+        name = m.group(1).strip()
+        url_path = m.group(2).strip()
+        path_clean = url_path.split("?", 1)[0]
+        slug = path_clean.split(detail_prefix, 1)[1].split("/")[0].strip()
+        if not slug or slug in seen:
+            continue
+        if not name or len(name) < 3:
+            continue
+        seen.add(slug)
+
+        # Block bound: từ end của link trước (hoặc 0) đến start của link kế (hoặc end)
+        block_start = matches[i - 1].end() if i > 0 else 0
+        block_end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+        block = content[block_start:block_end]
+
+        # Image: ![alt](url) trong block, ưu tiên cái gần TRƯỚC link[i] (trên cùng card).
+        # Đa số layout: image → name → date → location.
+        # Lấy image cuối cùng XẢY RA TRƯỚC link[i] trong block.
+        image_url = ""
+        before_link_in_block = content[block_start:m.start()]
+        img_matches = re.findall(r"!\[[^\]]*?\]\((https?://[^\s)]+?)\)", before_link_in_block)
+        if img_matches:
+            image_url = img_matches[-1]
+        else:
+            # Fallback: image đầu tiên SAU link (layout name → image)
+            after_link_in_block = content[m.end():block_end]
+            img_matches = re.findall(r"!\[[^\]]*?\]\((https?://[^\s)]+?)\)", after_link_in_block)
+            if img_matches:
+                image_url = img_matches[0]
+
+        # Date text: scan trong block (ưu tiên SAU link)
+        date_text = ""
+        after_link_in_block = content[m.end():block_end]
+        date_match = re.search(
+            r"\d{1,2}\s+\w{3,9}(?:\s+\d{4})?\s*[-–to]+\s*\d{1,2}\s+\w{3,9}(?:\s+\d{4})?",
+            after_link_in_block, re.IGNORECASE,
+        )
+        if not date_match:
+            date_match = re.search(
+                r"\d{1,2}\s+\w{3,9}(?:\s+\d{4})?\s*[-–to]+\s*\d{1,2}\s+\w{3,9}(?:\s+\d{4})?",
+                block, re.IGNORECASE,
+            )
+        if date_match:
+            date_text = date_match.group(0).strip()
+        else:
+            single = re.search(r"\d{1,2}\s+\w{3,9}(?:\s+\d{4})?", after_link_in_block, re.IGNORECASE)
+            if not single:
+                single = re.search(r"\d{1,2}\s+\w{3,9}(?:\s+\d{4})?", block, re.IGNORECASE)
+            if single:
+                date_text = single.group(0).strip()
+
+        # Location: trong block (sau link ưu tiên)
+        location_text = ""
+        for area in (after_link_in_block, block):
+            area_low = area.lower()
+            best_idx = -1
+            best_kw = ""
+            for kw in _VN_PROVINCE_KEYWORDS:
+                idx = area_low.find(kw)
+                if idx >= 0 and (best_idx < 0 or idx < best_idx):
+                    best_idx = idx
+                    best_kw = area[idx:idx + len(kw)]
+            if best_kw:
+                location_text = best_kw.title()
+                break
+
+        url = urljoin(base_url, url_path)
+        events.append({
+            "slug": slug,
+            "name": name,
+            "date_text": date_text,
+            "location": location_text,
+            "image_url": image_url,
+            "source_url": url,
+        })
+
+    return events
+
+
+def _parse_list_page(html: str) -> list[dict[str, Any]]:
+    """Parse listing page — auto-detect HTML vs markdown (Jina Reader output).
+
+    Pipeline:
+      1. Markdown? → _parse_markdown_for_events
+      2. HTML → selectolax với link-based extraction
+    """
+    if _is_markdown(html):
+        events = _parse_markdown_for_events(html, DETAIL_PATH_PREFIX, BASE_URL)
+        logger.info("Parsed (markdown mode): %d event", len(events))
+        return events
+
     from selectolax.parser import HTMLParser
 
     tree = HTMLParser(html)
@@ -355,7 +468,7 @@ def _parse_list_page(html: str) -> list[dict[str, Any]]:
 
     # Tìm mọi link tới festival detail page
     detail_links = tree.css(f'a[href*="{DETAIL_PATH_PREFIX}"]')
-    logger.info("Tìm thấy %d detail link trên trang", len(detail_links))
+    logger.info("Parsed (html mode): %d detail link trên trang", len(detail_links))
 
     for link in detail_links:
         try:
@@ -630,10 +743,16 @@ def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
 
 
 def _scrape_visitvietnams(client, seen_slugs: set[str], out: list[dict[str, Any]], default_year: int) -> int:
-    """Scrape visitvietnams.com /en/events. Trả số event mới thêm vào out."""
+    """Scrape visitvietnams.com /en/events. Trả số event mới thêm vào out.
+
+    VV thường là SPA — direct fetch trả skeleton HTML không có content. Force
+    qua Jina Reader để get server-side rendered content (markdown).
+    """
     added = 0
     for page in range(1, VV_MAX_PAGES + 1):
-        url = f"{VV_EVENT_LIST_URL}?page={page}&keyword="
+        target = f"{VV_EVENT_LIST_URL}?page={page}&keyword="
+        # Force qua Jina Reader (skip direct cho VV vì SPA)
+        url = f"https://r.jina.ai/{target}"
         html = _fetch(url, client)
         if not html:
             logger.info("[VV] page %d: fetch fail, dừng pagination", page)
@@ -662,12 +781,15 @@ def _scrape_visitvietnams(client, seen_slugs: set[str], out: list[dict[str, Any]
 
 
 def _parse_visitvietnams_list(html: str) -> list[dict[str, Any]]:
-    """Parse visitvietnams.com listing page.
+    """Parse VV listing — auto-detect markdown (Jina) vs HTML."""
+    if _is_markdown(html):
+        events = _parse_markdown_for_events(html, VV_DETAIL_PATH_PREFIXES[0], VV_BASE_URL)
+        # Slug prefix "vv-" để không đụng VT
+        for ev in events:
+            ev["slug"] = f"vv-{ev['slug']}"
+        logger.info("[VV] Parsed (markdown mode): %d event", len(events))
+        return events
 
-    Vì không probe được structure trực tiếp (block ClaudeBot), dùng link-based
-    pattern tương tự vietnam.travel: tìm anchors có href chứa /en/events/{slug}
-    hoặc /en/event/{slug}. Parse name/date/image quanh anchor.
-    """
     from selectolax.parser import HTMLParser
 
     tree = HTMLParser(html)
