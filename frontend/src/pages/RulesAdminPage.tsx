@@ -1583,14 +1583,35 @@ function FestivalMappingRulesTab({ search, onMessage }: { search: string; onMess
   });
 
   // Form thêm
-  const [festSlug, setFestSlug] = useState("");
+  const [location, setLocation] = useState("");
   const [market, setMarket] = useState("");
   const [route, setRoute] = useState("");
   const [note, setNote] = useState("");
 
   // Edit state
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState<{ festival_slug: string; market_keyword: string; route_keyword: string; note: string; active: boolean } | null>(null);
+  const [editDraft, setEditDraft] = useState<{ location_keyword: string; market_keyword: string; route_keyword: string; note: string; active: boolean } | null>(null);
+
+  // Distinct festival locations (parse từ location_text, lấy part cuối = tỉnh/nước)
+  const locationOptions = useMemo(() => {
+    const set = new Set<string>();
+    (festivals ?? []).forEach((f) => {
+      const text = f.location_text || "";
+      if (!text) return;
+      const parts = text.split(",").map(s => s.trim()).filter(Boolean);
+      const last = parts[parts.length - 1] || "";
+      const cleaned = last.replace(/^(T\.|TP\.|P\.|X\.|H\.|Q\.)\s*/i, "").trim();
+      if (cleaned.length >= 2) set.add(cleaned);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "vi"));
+  }, [festivals]);
+
+  // Festival matching the current location (preview)
+  const matchedFestivals = useMemo(() => {
+    if (!location || !festivals) return [];
+    const lk = location.toLowerCase();
+    return festivals.filter(f => (f.location_text || "").toLowerCase().includes(lk));
+  }, [festivals, location]);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["festival-mapping-rules"] });
 
@@ -1602,14 +1623,14 @@ function FestivalMappingRulesTab({ search, onMessage }: { search: string; onMess
 
   const addMut = useMutation({
     mutationFn: () => createFestivalMappingRule({
-      festival_slug: festSlug.trim(),
+      location_keyword: location.trim(),
       market_keyword: market.trim(),
       route_keyword: route.trim(),
       note: note.trim(),
       active: true,
     }),
     onSuccess: () => {
-      setFestSlug(""); setMarket(""); setRoute(""); setNote("");
+      setLocation(""); setMarket(""); setRoute(""); setNote("");
       invalidate();
       onMessage("Đã thêm rule");
     },
@@ -1631,7 +1652,7 @@ function FestivalMappingRulesTab({ search, onMessage }: { search: string; onMess
   const startEdit = (r: FestivalMappingRule) => {
     setEditingId(r.id);
     setEditDraft({
-      festival_slug: r.festival_slug,
+      location_keyword: r.location_keyword,
       market_keyword: r.market_keyword,
       route_keyword: r.route_keyword,
       note: r.note,
@@ -1652,33 +1673,24 @@ function FestivalMappingRulesTab({ search, onMessage }: { search: string; onMess
     if (!rules) return [];
     if (!search.trim()) return rules;
     const kw = search.toLowerCase();
-    const festNames: Record<string, string> = {};
-    (festivals ?? []).forEach((f) => { festNames[f.slug] = f.name_vi; });
     return rules.filter((r) =>
-      r.festival_slug.toLowerCase().includes(kw)
-      || (festNames[r.festival_slug] || "").toLowerCase().includes(kw)
+      r.location_keyword.toLowerCase().includes(kw)
       || r.market_keyword.toLowerCase().includes(kw)
       || r.route_keyword.toLowerCase().includes(kw)
       || r.note.toLowerCase().includes(kw)
     );
-  }, [rules, festivals, search]);
-
-  const festivalNameBySlug = (slug: string): string => {
-    const f = (festivals ?? []).find(x => x.slug === slug);
-    return f?.name_vi || slug;
-  };
+  }, [rules, search]);
 
   return (
     <div className="space-y-3">
       <div className="rounded-md bg-primary-50/70 border border-primary-100 px-3 py-2 text-[11px] text-primary-800 space-y-1">
         <p className="font-semibold">
-          Map <span className="underline">điểm tổ chức lễ hội</span> ↔ <span className="underline">Thị trường / Tuyến tour</span>
+          Map <span className="underline">địa điểm tổ chức lễ</span> ↔ <span className="underline">Thị trường / Tuyến tour</span>
         </p>
         <p>
-          1. Chọn lễ hội → hệ thống hiện điểm tổ chức. <br />
-          2. Chọn <strong>Thị trường</strong> (vd "Việt Nam") và/hoặc <strong>Tuyến tour</strong>
-             (vd "Đắk Lắk") từ dropdown có sẵn trong DB tour. <br />
-          3. Bấm <strong>Áp dụng mapping</strong> → mọi tour có TT/Tuyến khớp sẽ được tag vào lễ.
+          1. Chọn <strong>Địa điểm tổ chức</strong> (vd "Đắk Lắk") — rule sẽ áp dụng cho TẤT CẢ lễ hội tổ chức ở đó. <br />
+          2. Chọn <strong>Thị trường</strong> và/hoặc <strong>Tuyến tour</strong> từ dropdown DB tour. <br />
+          3. Bấm <strong>Áp dụng mapping</strong> → mỗi tour TT/Tuyến khớp được tag vào lễ GẦN NHẤT ở location đó.
              Tour đã có festival_slug khác sẽ KHÔNG bị ghi đè.
         </p>
       </div>
@@ -1687,52 +1699,39 @@ function FestivalMappingRulesTab({ search, onMessage }: { search: string; onMess
       <div className="card p-4 space-y-3">
         <div className="grid grid-cols-12 gap-2 items-end">
           <div className="col-span-12 lg:col-span-6">
-            <label className="text-xs text-gray-500">Lễ hội (điểm tổ chức tự lấy từ data)</label>
-            <select className="input text-sm" value={festSlug} onChange={(e) => {
-              const slug = e.target.value;
-              setFestSlug(slug);
-              // Auto-suggest thị trường từ địa điểm tổ chức (match với option có sẵn)
-              const f = (festivals ?? []).find(x => x.slug === slug);
-              if (f && filterOpts) {
-                const parts = (f.location_text || "").split(",").map(s => s.trim()).filter(Boolean);
-                const lastPart = parts[parts.length - 1] || "";
-                const cleaned = lastPart.replace(/^(T\.|TP\.|P\.|X\.|H\.|Q\.)\s*/i, "").trim();
-                // Tìm option thị trường khớp (case-insensitive substring)
-                const ttList = filterOpts.thi_truong;
-                const lowerClean = cleaned.toLowerCase();
-                let bestMatch = "";
-                if (lowerClean) {
-                  // Exact match trước
-                  bestMatch = ttList.find(t => t.toLowerCase() === lowerClean) || "";
-                  if (!bestMatch) {
-                    // Substring match (location chứa thị trường hoặc thị trường chứa location)
-                    bestMatch = ttList.find(t =>
-                      t.toLowerCase().includes(lowerClean) || lowerClean.includes(t.toLowerCase())
-                    ) || "";
-                  }
+            <label className="text-xs text-gray-500">Địa điểm tổ chức lễ hội</label>
+            <select className="input text-sm" value={location}
+              onChange={(e) => {
+                const loc = e.target.value;
+                setLocation(loc);
+                // Auto-suggest TT từ location keyword
+                if (loc && filterOpts) {
+                  const lowerLoc = loc.toLowerCase();
+                  const tt = filterOpts.thi_truong.find(t => t.toLowerCase() === lowerLoc)
+                    || filterOpts.thi_truong.find(t => t.toLowerCase().includes(lowerLoc) || lowerLoc.includes(t.toLowerCase()))
+                    || "";
+                  setMarket(tt);
+                  setRoute("");
                 }
-                setMarket(bestMatch);
-                setRoute("");
-              }
-            }}>
-              <option value="">-- Chọn lễ hội --</option>
-              {(festivals ?? []).map((f) => (
-                <option key={f.id} value={f.slug}>
-                  {f.name_vi} ({f.location_text || "?"} · {f.date_start.slice(0, 10)})
-                </option>
+              }}>
+              <option value="">-- Chọn địa điểm --</option>
+              {locationOptions.map((loc) => (
+                <option key={loc} value={loc}>{loc}</option>
               ))}
             </select>
           </div>
           <div className="col-span-12 lg:col-span-6">
-            {festSlug && (() => {
-              const f = (festivals ?? []).find(x => x.slug === festSlug);
-              return f ? (
-                <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] text-amber-900">
-                  <p><strong>Điểm tổ chức:</strong> {f.location_text || "(không có)"}</p>
-                  <p><strong>Ngày:</strong> {f.date_start.slice(0, 10)} → {f.date_end.slice(0, 10)} · <strong>Vùng:</strong> {f.region || "—"}</p>
-                </div>
-              ) : null;
-            })()}
+            {location && (
+              <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] text-amber-900">
+                <p><strong>{matchedFestivals.length}</strong> lễ hội ở "{location}":
+                  {matchedFestivals.length > 0 ? (
+                    <span className="ml-1">{matchedFestivals.slice(0, 3).map(f => f.name_vi).join(", ")}
+                      {matchedFestivals.length > 3 ? ` +${matchedFestivals.length - 3} khác` : ""}
+                    </span>
+                  ) : <span className="ml-1 text-amber-700">(chưa có lễ nào — rule sẽ chạy khi crawl thêm)</span>}
+                </p>
+              </div>
+            )}
           </div>
         </div>
         <div className="grid grid-cols-12 gap-2 items-end">
@@ -1763,7 +1762,7 @@ function FestivalMappingRulesTab({ search, onMessage }: { search: string; onMess
           </div>
           <div className="col-span-12 lg:col-span-2 flex gap-1">
             <button type="button" className="btn-primary text-sm w-full"
-              disabled={!festSlug.trim() || (!market.trim() && !route.trim()) || addMut.isPending}
+              disabled={!location.trim() || (!market.trim() && !route.trim()) || addMut.isPending}
               onClick={() => addMut.mutate()}>
               <Plus size={14} /> Thêm rule
             </button>
@@ -1793,9 +1792,9 @@ function FestivalMappingRulesTab({ search, onMessage }: { search: string; onMess
         <table className="w-full text-sm">
           <thead className="bg-gray-50 sticky top-0">
             <tr>
-              <th className="px-3 py-2 text-left">Lễ hội</th>
-              <th className="px-3 py-2 text-left">Keyword TT</th>
-              <th className="px-3 py-2 text-left">Keyword Tuyến</th>
+              <th className="px-3 py-2 text-left">Địa điểm tổ chức</th>
+              <th className="px-3 py-2 text-left">Thị trường</th>
+              <th className="px-3 py-2 text-left">Tuyến tour</th>
               <th className="px-3 py-2 text-left">Ghi chú</th>
               <th className="px-3 py-2 w-24">Active</th>
               <th className="px-3 py-2 w-20" />
@@ -1814,14 +1813,14 @@ function FestivalMappingRulesTab({ search, onMessage }: { search: string; onMess
                   <td className="px-3 py-2">
                     {isEditing ? (
                       <select className="input text-sm py-1 w-full"
-                        value={editDraft?.festival_slug ?? ""}
-                        onChange={(e) => setEditDraft((p) => p ? { ...p, festival_slug: e.target.value } : p)}>
-                        {(festivals ?? []).map((f) => (
-                          <option key={f.id} value={f.slug}>{f.name_vi}</option>
+                        value={editDraft?.location_keyword ?? ""}
+                        onChange={(e) => setEditDraft((p) => p ? { ...p, location_keyword: e.target.value } : p)}>
+                        {locationOptions.map((loc) => (
+                          <option key={loc} value={loc}>{loc}</option>
                         ))}
                       </select>
                     ) : (
-                      <span className="text-gray-900 text-xs">{festivalNameBySlug(r.festival_slug)}</span>
+                      <span className="text-gray-900 text-xs">{r.location_keyword}</span>
                     )}
                   </td>
                   <td className="px-3 py-2 text-xs">

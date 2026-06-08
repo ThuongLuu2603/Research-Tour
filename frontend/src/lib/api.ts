@@ -1494,7 +1494,7 @@ export const lunarSeed = async () => {
 
 export interface FestivalMappingRule {
   id: string;
-  festival_slug: string;
+  location_keyword: string;
   market_keyword: string;
   route_keyword: string;
   date_window_days: number;
@@ -1503,7 +1503,7 @@ export interface FestivalMappingRule {
 }
 
 export interface FestivalMappingRuleInput {
-  festival_slug: string;
+  location_keyword: string;
   market_keyword?: string;
   route_keyword?: string;
   date_window_days?: number;

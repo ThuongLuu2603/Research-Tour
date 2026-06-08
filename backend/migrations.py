@@ -102,11 +102,32 @@ def _migrate_festivals_indexes():
 
 
 def _migrate_festival_tour_mapping_rules():
-    """Festival tour mapping rules — manual rule trong Quy tắc phân loại."""
+    """Festival tour mapping rules — manual rule trong Quy tắc phân loại.
+
+    Migrate festival_slug → location_keyword nếu cột cũ còn (data chưa dùng
+    trên prod nên drop rồi add column mới = an toàn).
+    """
     insp = inspect(engine)
-    if "festival_tour_mapping_rules" in insp.get_table_names():
-        return  # đã có table (Base.metadata.create_all đã tạo)
-    # Bảng sẽ tự được create_all tạo; migration này chỉ check.
+    if "festival_tour_mapping_rules" not in insp.get_table_names():
+        return  # table chưa có, Base.metadata.create_all tạo mới với schema mới
+    cols = {c["name"] for c in insp.get_columns("festival_tour_mapping_rules")}
+    if "location_keyword" in cols:
+        return  # đã migrate
+    with engine.begin() as conn:
+        try:
+            if "festival_slug" in cols:
+                # Rename column nếu CRDB support (PostgreSQL syntax)
+                conn.execute(text(
+                    "ALTER TABLE festival_tour_mapping_rules "
+                    "RENAME COLUMN festival_slug TO location_keyword"
+                ))
+            else:
+                conn.execute(text(
+                    "ALTER TABLE festival_tour_mapping_rules "
+                    "ADD COLUMN location_keyword VARCHAR(256) DEFAULT ''"
+                ))
+        except Exception as e:
+            logger.warning("festival_tour_mapping rename migration skipped: %s", e)
 
 
 def _migrate_tour_festival_columns():

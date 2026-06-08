@@ -208,25 +208,26 @@ class DateFormatRule(Base):
 
 
 class FestivalTourMappingRule(Base):
-    """Quy tắc manual map tour vào festival theo (thị trường, tuyến tour).
+    """Rule map ĐỊA ĐIỂM TỔ CHỨC lễ ↔ Thị trường/Tuyến tour.
 
-    User tự định nghĩa rule trong Quy tắc phân loại → tab Lễ hội. Tagging
-    engine áp dụng rule này bên cạnh auto-match qua date + location.
+    User chọn 1 ĐỊA ĐIỂM (vd "Đắk Lắk", "Hàn Quốc") thay vì 1 lễ cụ thể.
+    Rule sẽ apply cho TẤT CẢ lễ tổ chức ở địa điểm đó (current + future).
 
     Vd:
-      festival_slug="lhv-287-le-hoi-sau-rieng-dak-lak"
-      market_keyword="Đắk Lắk"  → tour có thi_truong chứa "Đắk Lắk"
-      route_keyword=""          → bỏ qua filter tuyến
-      → tag mọi tour Đắk Lắk vào lễ Sầu Riêng.
+      location_keyword="Đắk Lắk"  → match mọi festival.location_text chứa
+                                     "Đắk Lắk" (Lễ Sầu Riêng, Lễ Cà Phê, ...)
+      market_keyword="Việt Nam"   → tour có thi_truong = "Việt Nam"
+      route_keyword="Đắk Lắk"     → AND tour có tuyen_tour = "Đắk Lắk"
+      → mọi tour matching được tag vào festival GẦN NHẤT (theo date)
+        ở location đó.
     """
     __tablename__ = "festival_tour_mapping_rules"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    festival_slug: Mapped[str] = mapped_column(String(256), index=True)
+    # Địa điểm tổ chức (match substring với Festival.location_text)
+    location_keyword: Mapped[str] = mapped_column(String(256), index=True)
     market_keyword: Mapped[str] = mapped_column(String(256), default="")
     route_keyword: Mapped[str] = mapped_column(String(256), default="")
-    # Optional: thêm date filter override (nếu rule muốn tag tour có lich_kh
-    # rơi vào range khác với festival.date_range; rỗng = dùng festival range).
     date_window_days: Mapped[int] = mapped_column(Integer, default=7)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     note: Mapped[str] = mapped_column(String(512), default="")

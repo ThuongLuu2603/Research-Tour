@@ -27,7 +27,7 @@ class _IdAsStrMixin:
 
 class FestivalMappingOut(BaseModel):
     id: str
-    festival_slug: str
+    location_keyword: str
     market_keyword: str
     route_keyword: str
     date_window_days: int
@@ -40,7 +40,7 @@ class FestivalMappingOut(BaseModel):
     def from_model(cls, r: FestivalTourMappingRule) -> "FestivalMappingOut":
         return cls(
             id=str(r.id),
-            festival_slug=r.festival_slug,
+            location_keyword=r.location_keyword or "",
             market_keyword=r.market_keyword or "",
             route_keyword=r.route_keyword or "",
             date_window_days=r.date_window_days or 7,
@@ -50,7 +50,7 @@ class FestivalMappingOut(BaseModel):
 
 
 class FestivalMappingIn(BaseModel):
-    festival_slug: str = Field(min_length=1, max_length=256)
+    location_keyword: str = Field(min_length=1, max_length=256)
     market_keyword: str = Field(default="", max_length=256)
     route_keyword: str = Field(default="", max_length=256)
     date_window_days: int = Field(default=7, ge=0, le=365)
@@ -74,6 +74,8 @@ def create_rule(
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    if not body.location_keyword.strip():
+        raise HTTPException(400, "Phải nhập location_keyword")
     if not body.market_keyword.strip() and not body.route_keyword.strip():
         raise HTTPException(400, "Phải có ít nhất 1 trong market_keyword hoặc route_keyword")
     rule = FestivalTourMappingRule(**body.model_dump())
@@ -127,13 +129,16 @@ def apply_rules(
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """Apply mọi active mapping rules → tag tour matching vào festival_slug.
+    """Apply mọi active mapping rules.
 
-    Logic: với mỗi rule active, tìm tất cả tour matching (market+route filters)
-    và set festival_slug = rule.festival_slug. Tour đã có festival_slug khác
-    KHÔNG ghi đè (giữ priority của auto-tagging trước).
+    Logic: mỗi rule có (location_keyword, market_keyword, route_keyword).
+      1. Tìm TẤT CẢ festivals có location_text chứa location_keyword (ilike).
+      2. Tìm TẤT CẢ tour matching market_keyword + route_keyword EXACT.
+      3. Tour chưa có festival_slug → tag vào festival GẦN NHẤT (theo date_start)
+         trong nhóm festivals đã match ở (1).
+      4. Tour đã có festival_slug khác → bỏ qua (không ghi đè).
     """
-    from sqlalchemy import func, and_
+    from sqlalchemy import func
     from models import Festival, Tour
     from tour_filters import market_filter_clause
 
@@ -147,36 +152,63 @@ def apply_rules(
 
     total_tagged = 0
     rule_stats: list[dict[str, Any]] = []
+    today = date.today() if False else __import__("datetime").date.today()
+
     for r in rules:
-        # Verify festival tồn tại
-        f = db.query(Festival).filter(Festival.slug == r.festival_slug).first()
-        if not f:
-            rule_stats.append({"festival_slug": r.festival_slug, "tagged": 0, "skip": "festival not found"})
+        loc_kw = r.location_keyword.strip()
+        if not loc_kw:
             continue
-        # Build query tour matching — EXACT match vì user chọn từ dropdown DB
-        q = db.query(Tour).filter(market_filter_clause(Tour))
+        # Step 1: tìm festivals matching location
+        festivals = (
+            db.query(Festival)
+            .filter(func.lower(Festival.location_text).like(f"%{loc_kw.lower()}%"))
+            .order_by(Festival.date_start.asc())
+            .all()
+        )
+        if not festivals:
+            rule_stats.append({
+                "location_keyword": loc_kw,
+                "tagged": 0,
+                "skip": "không có festival nào match location",
+            })
+            continue
+        # Step 2: build query tour matching market+route
+        q = db.query(Tour).filter(market_filter_clause(Tour), Tour.festival_slug.is_(None))
         mk = r.market_keyword.strip()
         rk = r.route_keyword.strip()
         if mk:
             q = q.filter(Tour.thi_truong == mk)
         if rk:
             q = q.filter(Tour.tuyen_tour == rk)
-        # Chỉ tag tour CHƯA có festival_slug (không ghi đè auto-tag trước)
-        q = q.filter(Tour.festival_slug.is_(None))
         tours = q.all()
+        if not tours:
+            rule_stats.append({
+                "location_keyword": loc_kw,
+                "festivals_matched": len(festivals),
+                "tagged": 0,
+                "skip": "không có tour matching market/route",
+            })
+            continue
+        # Step 3: chọn festival GẦN NHẤT (chưa kết thúc, sắp tới)
+        # Ưu tiên festival có date_end >= today; nếu không, lấy cái cuối (gần nhất quá khứ)
+        upcoming = [f for f in festivals if f.date_end >= today]
+        target_festival = upcoming[0] if upcoming else festivals[-1]
+
         for t in tours:
-            t.festival_slug = r.festival_slug
-            t.festival_distance_days = 0  # manual tag = trùng (cao priority)
-        if tours:
-            try:
-                db.commit()
-            except Exception as e:
-                logger.exception("Apply rule %d commit fail: %s", r.id, e)
-                db.rollback()
-                continue
+            t.festival_slug = target_festival.slug
+            t.festival_distance_days = 0  # manual rule = trùng
+
+        try:
+            db.commit()
+        except Exception as e:
+            logger.exception("Apply rule %d commit fail: %s", r.id, e)
+            db.rollback()
+            continue
+
         rule_stats.append({
-            "festival_slug": r.festival_slug,
-            "festival_name": f.name_vi,
+            "location_keyword": loc_kw,
+            "festivals_matched": len(festivals),
+            "target_festival_name": target_festival.name_vi,
             "tagged": len(tours),
         })
         total_tagged += len(tours)
