@@ -1,13 +1,26 @@
-"""Scrape vietnam.travel/event — Sự kiện & Lễ hội VN.
+"""Scrape vietnam.travel/event + visitvietnams.com — Sự kiện & Lễ hội VN.
 
-Stack: httpx (sync) + selectolax (CSS parser ~5x BeautifulSoup).
-KHÔNG cần Playwright — vietnam.travel render server-side (Drupal CMS).
+3 chế độ fetch (ưu tiên theo thứ tự):
 
-Tần suất: weekly cron (lễ hội ít đổi). Crawl 2 năm × 12 tháng = 24 list page.
-Detail page chỉ fetch khi slug mới hoặc hash thay đổi.
+  1. GOOGLE APPS SCRIPT PROXY (recommend — luôn work)
+     User deploy file _workspace/google_apps_script_festival_proxy.gs làm
+     Web App. Set env var FESTIVAL_PROXY_URL=https://script.google.com/macros/s/.../exec
+     Backend fetch JSON từ URL này → instant data, không cần parse HTML.
 
-Rate limit: 1 req/giây + User-Agent rõ ràng (tôn trọng nguồn).
+  2. JINA READER PROXY (fallback)
+     Free 1M token/tháng. r.jina.ai/{url} trả markdown của trang.
+     Backend parse markdown để extract events.
+
+  3. PUBLIC CORS PROXY chain (last resort)
+     allorigins.win, codetabs.com, ... — bất ổn (520, 403).
+
+Lý do cần proxy: Render outbound → vietnam.travel/visitvietnams bị
+Cloudflare/WAF block → ConnectTimeout. Google Apps Script chạy trên
+Google IP whitelist nên fetch OK.
+
+Tần suất: weekly cron. Crawl: 24 list page VT + 15 page VV qua proxy.
 """
+import os
 from __future__ import annotations
 
 import hashlib
@@ -638,6 +651,85 @@ def _parse_detail_page(html: str) -> dict[str, str]:
     return {"description": description[:4000]}
 
 
+def _fetch_from_gas_proxy(proxy_url: str, years: list[int]) -> list[dict[str, Any]]:
+    """Fetch events từ Google Apps Script Web App proxy.
+
+    Apps Script trả JSON:
+      {
+        "fetched_at": "...",
+        "source": "all",
+        "years": [2026, 2027],
+        "total": 123,
+        "events": [
+          {
+            "source": "vietnam-travel" | "visitvietnams",
+            "slug": "ninh-binh-tourism-week-2026",
+            "name": "Ninh Binh Tourism Week 2026",
+            "date_text": "20 May 2026 - 10 Jun 2026",
+            "location": "Ninh Binh",
+            "description": "...",
+            "image_url": "https://...",
+            "source_url": "https://..."
+          }, ...
+        ],
+        "errors": [...]
+      }
+    """
+    import httpx
+
+    years_str = ",".join(str(y) for y in years)
+    url = f"{proxy_url}?source=all&years={years_str}"
+    logger.info("GAS proxy fetch: %s", url)
+
+    # Apps Script có thể redirect → follow
+    # Timeout dài vì script có thể chạy 30-60s
+    with httpx.Client(follow_redirects=True, timeout=180.0) as client:
+        r = client.get(url)
+        if r.status_code != 200:
+            logger.warning("GAS proxy HTTP %d: %s", r.status_code, r.text[:200])
+            return []
+        import json
+        try:
+            data = json.loads(r.text)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("GAS proxy JSON parse fail: %s", e)
+            return []
+        raw_events = data.get("events", [])
+        errors = data.get("errors", [])
+        if errors:
+            logger.info("GAS proxy reported errors: %s", errors)
+
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for ev in raw_events:
+            slug = ev.get("slug", "")
+            if not slug or slug in seen:
+                continue
+            seen.add(slug)
+            # Parse date_text → date_start/end
+            today = datetime.now()
+            d_start, d_end = _parse_date_range(ev.get("date_text", ""))
+            if not d_start:
+                # Fallback: ngày đầu năm hiện tại
+                d_start = date(today.year, 1, 1)
+                d_end = d_start
+            enriched = {
+                "slug": slug,
+                "name": ev.get("name", "")[:512],
+                "date_text": ev.get("date_text", ""),
+                "date_start": d_start,
+                "date_end": d_end or d_start,
+                "location": ev.get("location", "")[:256],
+                "description": ev.get("description", "")[:4000],
+                "image_url": ev.get("image_url", "")[:1024],
+                "source_url": ev.get("source_url", "")[:1024],
+                "region": _classify_region(ev.get("location", "")),
+                "category": _classify_category(ev.get("name", ""), ev.get("description", "")),
+            }
+            out.append(enriched)
+        return out
+
+
 def _build_http_client(httpx_):
     """Build httpx Client với headers + per-call timeout (override mỗi GET)."""
     headers = {
@@ -686,15 +778,11 @@ def _enrich_event(ev: dict[str, Any], fallback_year: int, fallback_month: int, c
 
 
 def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
-    """Crawl 2 nguồn song song: vietnam.travel + visitvietnams.com.
+    """Crawl 2 nguồn vietnam.travel + visitvietnams.com.
 
-    Mỗi nguồn qua proxy chain riêng nếu direct fail. Dedup theo slug
-    (cùng event có thể xuất hiện ở cả 2). Strategy:
-      1. Vietnam.travel: 24 list page (12 tháng × 2 năm) + detail.
-      2. Visitvietnams.com: 10 page pagination + detail.
-      3. Gộp, dedup slug, trả tất cả.
-
-    Nếu cả 2 source đều fail toàn bộ → trả list rỗng + log warning.
+    Priority 1: FESTIVAL_PROXY_URL env var (Google Apps Script Web App).
+       Nếu set, fetch JSON từ URL này → instant data, không cần parse HTML.
+    Priority 2: Direct + proxy chain (Jina, allorigins, ...).
     """
     import httpx
 
@@ -702,6 +790,20 @@ def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
     if years is None:
         years = [today.year, today.year + 1]
 
+    # ── Priority 1: Google Apps Script Proxy ────────────────────────────
+    proxy_url = (os.environ.get("FESTIVAL_PROXY_URL") or "").strip()
+    if proxy_url:
+        logger.info("FESTIVAL_PROXY_URL set → dùng Google Apps Script proxy")
+        try:
+            events = _fetch_from_gas_proxy(proxy_url, years)
+            if events:
+                logger.info("[GAS Proxy] xong: %d event", len(events))
+                return events
+            logger.warning("[GAS Proxy] trả 0 event — fallback HTML scrape")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[GAS Proxy] lỗi: %s — fallback HTML scrape", e)
+
+    # ── Priority 2: HTML scrape qua proxy chain ─────────────────────────
     seen_slugs: set[str] = set()
     out: list[dict[str, Any]] = []
 
