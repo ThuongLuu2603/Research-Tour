@@ -25,20 +25,26 @@ BASE_URL = "https://vietnam.travel"
 # Trang /event là listing, link tới detail vẫn là /things-to-do/festival-event/{slug}.
 EVENT_LIST_URL = f"{BASE_URL}/event"
 DETAIL_PATH_PREFIX = "/things-to-do/festival-event/"
-# User-Agent: dùng Chrome-like để tránh WAF chặn bot. Trước đây dùng string
-# "VietravelOTA-FestivalBot/1.0" rõ ràng nhưng vietnam.travel có thể block ở edge
-# (Cloudflare/WAF) khiến SSL handshake timeout. Thử Chrome UA để bypass.
+
+# Render free tier outbound → vietnam.travel (VN) bị ConnectTimeout do throttle
+# hoặc Cloudflare flag IP range. Fallback qua public CORS proxy allorigins.win
+# (free, no auth, cloudflare edge global → trung gian relay request).
+#
+# Strategy: try direct first (nếu network OK, nhanh hơn). Fail → fallback proxy.
+# Hai mode đều dùng cùng UA + headers.
+PROXY_URL = "https://api.allorigins.win/raw"  # ?url=<encoded vietnam.travel URL>
+# Backup proxies nếu allorigins.win down (rate-limit hoặc 500)
+BACKUP_PROXIES = [
+    "https://corsproxy.io/?",        # corsproxy.io — prefix style
+    "https://api.codetabs.com/v1/proxy?quest=",  # codetabs — rate ~5 req/s
+]
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
-# Rate limit: vẫn polite (1.5s ≈ 40 req/min). Mỗi lần scrape ~24 list page +
-# 30-60 detail page = ~100-130 request × 1.5s = 2.5-3 phút tổng.
 RATE_LIMIT_SEC = 1.5
-# Timeout: Render free tier → vietnam.travel (server VN) qua quốc tế có thể chậm.
-# SSL handshake riêng có thể tốn 3-10s. Tăng từ 30s → 60s.
 REQUEST_TIMEOUT_SEC = 60.0
-# Retry: connect/SSL errors → thử lại 1 lần với backoff 3s.
 MAX_RETRIES = 2
 
 # Tháng tiếng Anh → số (vietnam.travel dùng query ?month=jun&year=2026)
@@ -199,35 +205,61 @@ def _month_to_num(s: str) -> int | None:
     return None
 
 
-def _fetch(url: str, client) -> str | None:
-    """GET URL với rate limit + retry. Trả HTML hoặc None nếu fail sau retry.
+def _build_proxy_urls(target_url: str) -> list[str]:
+    """Build list các URL proxy để thử lần lượt khi direct fail."""
+    from urllib.parse import quote
+    encoded = quote(target_url, safe="")
+    out = [f"{PROXY_URL}?url={encoded}"]
+    for prox in BACKUP_PROXIES:
+        if prox.endswith("?"):  # corsproxy.io style: prefix raw URL (kèm encode)
+            out.append(prox + encoded)
+        else:
+            out.append(prox + encoded)
+    return out
 
-    Retry trên SSL/connect timeout phổ biến từ Render → server VN (qua quốc tế
-    có thể chậm SSL handshake). Backoff 3s giữa các lần thử.
+
+def _try_get(url: str, client) -> tuple[str | None, str | None]:
+    """1 lần GET. Trả (html, error_type) — error_type None nếu thành công."""
+    try:
+        r = client.get(url, timeout=REQUEST_TIMEOUT_SEC)
+        if r.status_code == 200:
+            return r.text, None
+        return None, f"HTTP {r.status_code}"
+    except Exception as e:  # noqa: BLE001
+        return None, f"{type(e).__name__}: {str(e)[:120]}"
+
+
+def _fetch(url: str, client) -> str | None:
+    """GET URL — thử direct trước, fail thì fallback qua public proxies.
+
+    Hành trình:
+      1. Direct vietnam.travel — Render có thể fail ConnectTimeout.
+      2. allorigins.win — Cloudflare edge global, thường reach VN OK.
+      3. corsproxy.io — backup.
+      4. codetabs proxy — backup nữa.
+
+    Mỗi attempt timeout 60s, không retry nội bộ (1 fail = next provider).
+    Sleep RATE_LIMIT_SEC sau mỗi attempt thành công, không sleep sau fail
+    (đỡ chậm khi cả chain proxy down).
     """
-    last_err: Exception | None = None
-    for attempt in range(MAX_RETRIES + 1):
-        try:
-            r = client.get(url, timeout=REQUEST_TIMEOUT_SEC)
+    # Pass 1: direct
+    html, err = _try_get(url, client)
+    if html:
+        time.sleep(RATE_LIMIT_SEC)
+        return html
+    logger.info("Festival direct fail: %s — fallback proxy", err)
+
+    # Pass 2: thử các proxy lần lượt
+    proxy_urls = _build_proxy_urls(url)
+    for i, proxy_url in enumerate(proxy_urls, start=1):
+        html, err = _try_get(proxy_url, client)
+        if html:
+            logger.info("Festival proxy #%d thành công", i)
             time.sleep(RATE_LIMIT_SEC)
-            if r.status_code != 200:
-                logger.warning("Festival fetch %s -> HTTP %d", url, r.status_code)
-                return None
-            return r.text
-        except Exception as e:  # noqa: BLE001
-            last_err = e
-            if attempt < MAX_RETRIES:
-                logger.info(
-                    "Festival fetch %s thử %d/%d lỗi: %s — retry sau 3s",
-                    url, attempt + 1, MAX_RETRIES + 1, type(e).__name__,
-                )
-                time.sleep(3.0)
-            else:
-                logger.warning(
-                    "Festival fetch %s thất bại sau %d lần: %s",
-                    url, MAX_RETRIES + 1, e,
-                )
-                time.sleep(RATE_LIMIT_SEC)
+            return html
+        logger.info("Festival proxy #%d fail: %s", i, err)
+
+    logger.warning("Festival fetch %s: direct + %d proxy đều fail", url, len(proxy_urls))
     return None
 
 
