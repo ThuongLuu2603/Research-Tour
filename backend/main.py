@@ -63,11 +63,19 @@ def _run_startup_maintenance() -> None:
     time.sleep(5)
     try:
         from database import SessionLocal
-        from scrape_job_utils import reconcile_stale_scrape_jobs
+        from scrape_job_utils import reconcile_running_at_startup, reconcile_stale_scrape_jobs
 
         db = SessionLocal()
         try:
-            fixed = reconcile_stale_scrape_jobs(db)
+            # Mọi job 'running' tại boot = thread cũ chết do restart → mark failed ngay.
+            startup_fixed = reconcile_running_at_startup(db)
+            if startup_fixed:
+                logger.info(
+                    "Startup reconcile: marked %d stale running job(s) as failed: %s",
+                    len(startup_fixed), startup_fixed,
+                )
+            # Fallback: catch các job cũ với heartbeat ranh giới
+            fixed = reconcile_stale_scrape_jobs(db, force=True)
             if fixed:
                 logger.info("Reconciled %s stale scrape job(s): %s", len(fixed), fixed)
         finally:

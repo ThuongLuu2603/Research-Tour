@@ -31,8 +31,9 @@ _DEFAULT_STALE_HOURS = 2.0
 # 0% progress lâu = thread không chạy / chết ngay sau khi tạo job
 _ZERO_PROGRESS_STALE_MIN = 45
 # % > 5 (kể cả 100% — đang ở bước hậu-commit) nhưng heartbeat đứng im = thread chết.
-# An toàn ở mức thấp vì mọi bước nặng (tsvector/phân khúc) giờ đều đập heartbeat liên tục.
-_STUCK_PROGRESS_MIN = 10
+# Giảm từ 10 → 3 vì sync_main đập heartbeat mỗi 100 row (~1-2 giây). Heartbeat
+# im > 3 phút = chắc chắn thread chết hoặc network drop.
+_STUCK_PROGRESS_MIN = 3
 
 
 def _mark_stale(job: ScrapeJob, now: datetime, *, reason: str) -> None:
@@ -79,6 +80,51 @@ def _is_stale_job(job: ScrapeJob, now: datetime) -> str | None:
         return "Job treo — server restart hoặc scraper dừng giữa chừng"
 
     return None
+
+
+def reconcile_running_at_startup(db: Session) -> list[int]:
+    """Đánh dấu MỌI job đang running tại lúc service boot = failed.
+
+    Lý do: Render restart → mọi thread Python bị kill. Job DB vẫn status='running'
+    nhưng thread đã chết → UI poll thấy stuck progress vĩnh viễn.
+    Reconciler thường đợi 3-10 phút heartbeat. Lúc boot, chắc chắn thread cũ
+    đã chết → mark luôn (kể cả heartbeat mới = restart đến giữa batch).
+
+    Exception: job heartbeat < 30 giây có thể là job thật vừa khởi động bởi
+    request mới đến — không nên kill.
+    """
+    now = datetime.utcnow()
+    fixed: list[int] = []
+    rows = (
+        db.query(ScrapeJob)
+        .filter(ScrapeJob.status.in_(("pending", "running")))
+        .all()
+    )
+    for job in rows:
+        hb = job.heartbeat_at or job.started_at
+        if hb and (now - hb) < timedelta(seconds=30):
+            continue  # job vừa được tạo bởi request mới, skip
+        was = job.status
+        _mark_stale(job, now, reason="Service restart — thread chết")
+        fixed.append(job.id)
+        logger.warning(
+            "Startup reconcile: job id=%s scraper=%s was=%s heartbeat=%s",
+            job.id, job.scraper_name, was, hb,
+        )
+    if fixed:
+        try:
+            db.commit()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Startup reconcile commit fail: %s", e)
+            db.rollback()
+    # Release write lock nếu sync_main/vietravel bị reap
+    if any(j.scraper_name in ("sync_main", "vietravel") for j in rows if j.id in fixed):
+        try:
+            from db_job_lock import force_release
+            force_release()
+        except Exception:  # noqa: BLE001
+            pass
+    return fixed
 
 
 def reconcile_stale_scrape_jobs(
