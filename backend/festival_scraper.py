@@ -34,10 +34,11 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://lehoivietnam.com.vn"
 API_URL = f"{BASE_URL}/api/events"
-# Tăng từ 30 → 75 pages = 1,500 events. Bao phủ cả domestic + intl events.
-# Intl events nằm interleaved trong dataset, classify qua loc2.name (không
-# có prefix "T."/"TP." → intl). Full dataset = 148 pages = 2,953 events.
-DEFAULT_MAX_PAGES = 75
+# Default scrape "events đang/sắp diễn ra" thay vì toàn bộ history.
+# Filter ?from=YYYY-MM-DD&sort=start_date_asc trả ~100-200 events relevant
+# (event chưa kết thúc hoặc chưa bắt đầu) → đủ cho timeline UI.
+# Tổng 148 pages = 2,953 events history, nhưng đa số past → không hiện trên UI.
+DEFAULT_MAX_PAGES = 15  # ~300 events upcoming, đủ cho 6-12 tháng tới
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -378,10 +379,13 @@ def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
     intl_count = 0
     domestic_count = 0
 
+    # Filter "upcoming + ongoing" — events có end_date >= today.
+    today_iso = date.today().isoformat()
+
     with httpx.Client(headers=headers, follow_redirects=True, timeout=REQUEST_TIMEOUT_SEC) as client:
         total_pages = None
         for page in range(1, max_pages + 1):
-            url = f"{API_URL}?page={page}"
+            url = f"{API_URL}?from={today_iso}&sort=start_date_asc&page={page}"
             data = _fetch_json_page(url, client)
             if not data:
                 logger.warning("Page %d: fetch fail", page)

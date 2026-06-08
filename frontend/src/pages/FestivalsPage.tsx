@@ -111,7 +111,7 @@ export default function FestivalsPage() {
           <h1 className="text-2xl font-bold text-gray-900">Sự kiện & Lễ hội Việt Nam</h1>
           <p className="text-sm text-gray-500 mt-1">
             Lịch lễ hội + insight cross-ref tour. Data từ{" "}
-            <a className="text-primary-600 hover:underline" href="https://vietnam.travel/event" target="_blank" rel="noreferrer">vietnam.travel/event</a> + lễ âm lịch.
+            <a className="text-primary-600 hover:underline" href="https://lehoivietnam.com.vn/vi/kham-pha" target="_blank" rel="noreferrer">lehoivietnam.com.vn</a> + lễ âm lịch.
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
