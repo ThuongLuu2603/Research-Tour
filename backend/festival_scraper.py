@@ -21,10 +21,15 @@ from urllib.parse import urljoin
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://vietnam.travel"
-# URL chính là /event (số ít), KHÔNG phải /things-to-do/festival-event (đã thử 404).
-# Trang /event là listing, link tới detail vẫn là /things-to-do/festival-event/{slug}.
 EVENT_LIST_URL = f"{BASE_URL}/event"
 DETAIL_PATH_PREFIX = "/things-to-do/festival-event/"
+
+# Secondary source: visitvietnams.com — pagination ?page=N
+# Robots.txt cho /events OK. Detail URL pattern guess: /en/events/{slug}
+VV_BASE_URL = "https://visitvietnams.com"
+VV_EVENT_LIST_URL = f"{VV_BASE_URL}/en/events"
+VV_DETAIL_PATH_PREFIXES = ("/en/events/", "/en/event/", "/en/festival/")
+VV_MAX_PAGES = 10  # đủ cover 100-200 event nếu mỗi page 20
 
 # Render free tier outbound → vietnam.travel (VN) bị ConnectTimeout do throttle
 # hoặc Cloudflare flag IP range. Fallback qua public CORS proxy allorigins.win
@@ -453,22 +458,8 @@ def _parse_detail_page(html: str) -> dict[str, str]:
     return {"description": description[:4000]}
 
 
-def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
-    """Crawl vietnam.travel/event cho mỗi (year, month) trong years × 12.
-
-    Args:
-        years: list năm cần crawl. Default = [current_year, current_year+1].
-
-    Returns:
-        List dict event đầy đủ fields (chưa save DB).
-    """
-    import httpx
-
-    today = datetime.now()
-    if years is None:
-        years = [today.year, today.year + 1]
-
-    # Headers chuẩn browser để tránh WAF
+def _build_http_client(httpx_):
+    """Build httpx Client với headers + timeout breakdown."""
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -477,66 +468,221 @@ def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
         "Connection": "keep-alive",
         "Upgrade-Insecure-Requests": "1",
     }
-    seen_slugs: set[str] = set()
-    out: list[dict[str, Any]] = []
-
-    # Timeout breakdown: connect=20s + read=60s. Render → VN qua quốc tế có thể
-    # chậm phase TCP connect lẫn TLS handshake; pool_connect riêng tránh kẹt cứng.
-    timeout_config = httpx.Timeout(connect=20.0, read=REQUEST_TIMEOUT_SEC, write=10.0, pool=10.0)
-    with httpx.Client(
+    timeout_config = httpx_.Timeout(connect=20.0, read=REQUEST_TIMEOUT_SEC, write=10.0, pool=10.0)
+    return httpx_.Client(
         headers=headers,
         follow_redirects=True,
         timeout=timeout_config,
-        # http2=False (default) — tránh negotiation phụ vì site có thể chỉ HTTP/1.1
-    ) as client:
+    )
+
+
+def _enrich_event(ev: dict[str, Any], fallback_year: int, fallback_month: int, client) -> dict[str, Any] | None:
+    """Parse date_text → date_start/end, classify region+category, fetch detail.
+    Trả None nếu không suy được date.
+    """
+    d_start, d_end = _parse_date_range(ev.get("date_text", ""))
+    if not d_start:
+        try:
+            d_start = date(fallback_year, fallback_month, 1)
+            d_end = d_start
+        except ValueError:
+            return None
+    ev["date_start"] = d_start
+    ev["date_end"] = d_end or d_start
+    ev["region"] = _classify_region(ev.get("location", ""))
+    ev["category"] = _classify_category(ev.get("name", ""))
+
+    # Detail page (best effort, không block nếu fail)
+    detail_html = _fetch(ev["source_url"], client)
+    if detail_html:
+        try:
+            detail = _parse_detail_page(detail_html)
+            ev["description"] = detail.get("description", "")
+        except Exception:  # noqa: BLE001
+            ev["description"] = ""
+    else:
+        ev["description"] = ""
+    return ev
+
+
+def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
+    """Crawl 2 nguồn song song: vietnam.travel + visitvietnams.com.
+
+    Mỗi nguồn qua proxy chain riêng nếu direct fail. Dedup theo slug
+    (cùng event có thể xuất hiện ở cả 2). Strategy:
+      1. Vietnam.travel: 24 list page (12 tháng × 2 năm) + detail.
+      2. Visitvietnams.com: 10 page pagination + detail.
+      3. Gộp, dedup slug, trả tất cả.
+
+    Nếu cả 2 source đều fail toàn bộ → trả list rỗng + log warning.
+    """
+    import httpx
+
+    today = datetime.now()
+    if years is None:
+        years = [today.year, today.year + 1]
+
+    seen_slugs: set[str] = set()
+    out: list[dict[str, Any]] = []
+
+    with _build_http_client(httpx) as client:
+        # ── Source 1: vietnam.travel ────────────────────────────────────
+        vt_ok = 0
+        vt_fail = 0
         for year in years:
             for month_idx, month_slug in enumerate(_MONTH_SLUG, start=1):
                 url = f"{EVENT_LIST_URL}?month={month_slug}&year={year}"
                 html = _fetch(url, client)
                 if not html:
-                    logger.warning("Crawl %s/%s: fetch fail", month_slug, year)
+                    vt_fail += 1
                     continue
                 events = _parse_list_page(html)
                 logger.info(
-                    "Crawl %s/%s: %d event (HTML %d bytes)",
+                    "[VT] %s/%s: %d event (HTML %d bytes)",
                     month_slug, year, len(events), len(html),
                 )
+                vt_ok += 1
                 for ev in events:
                     if ev["slug"] in seen_slugs:
                         continue
                     seen_slugs.add(ev["slug"])
+                    enriched = _enrich_event(ev, year, month_idx, client)
+                    if enriched:
+                        out.append(enriched)
+        logger.info("[VT] xong: %d list page OK, %d fail, %d event mới", vt_ok, vt_fail, len(out))
 
-                    # Parse date range
-                    d_start, d_end = _parse_date_range(ev["date_text"])
-                    # Fallback: chấp nhận năm + tháng đang crawl
-                    if not d_start:
-                        try:
-                            d_start = date(year, month_idx, 1)
-                            d_end = d_start
-                        except ValueError:
-                            continue
+        # ── Source 2: visitvietnams.com ─────────────────────────────────
+        # Chỉ chạy nếu VT có ≥80% fail (network bị block) — đỡ scrape thừa
+        # khi VT hoạt động bình thường.
+        total_vt = vt_ok + vt_fail
+        if total_vt == 0 or (vt_fail / total_vt) >= 0.8:
+            logger.info("[VV] Kích hoạt secondary source visitvietnams.com (VT fail %d/%d)", vt_fail, total_vt)
+            vv_count = _scrape_visitvietnams(client, seen_slugs, out, years[0])
+            logger.info("[VV] xong: thêm %d event", vv_count)
+        else:
+            logger.info("[VV] Skip — vietnam.travel OK đủ (%d/%d list page)", vt_ok, total_vt)
 
-                    ev["date_start"] = d_start
-                    ev["date_end"] = d_end or d_start
-                    ev["region"] = _classify_region(ev["location"])
-                    ev["category"] = _classify_category(ev["name"])
-
-                    # Fetch detail page cho description (best effort)
-                    detail_html = _fetch(ev["source_url"], client)
-                    if detail_html:
-                        try:
-                            detail = _parse_detail_page(detail_html)
-                            ev["description"] = detail.get("description", "")
-                        except Exception as e:  # noqa: BLE001
-                            logger.debug("Detail parse lỗi %s: %s", ev["source_url"], e)
-                            ev["description"] = ""
-                    else:
-                        ev["description"] = ""
-
-                    out.append(ev)
-
-    logger.info("Festival scrape xong: %d event (qua %d năm)", len(out), len(years))
+    logger.info("Festival scrape xong: %d event tổng", len(out))
     return out
+
+
+def _scrape_visitvietnams(client, seen_slugs: set[str], out: list[dict[str, Any]], default_year: int) -> int:
+    """Scrape visitvietnams.com /en/events. Trả số event mới thêm vào out."""
+    added = 0
+    for page in range(1, VV_MAX_PAGES + 1):
+        url = f"{VV_EVENT_LIST_URL}?page={page}&keyword="
+        html = _fetch(url, client)
+        if not html:
+            logger.info("[VV] page %d: fetch fail, dừng pagination", page)
+            break
+        events = _parse_visitvietnams_list(html)
+        logger.info("[VV] page %d: %d event (HTML %d bytes)", page, len(events), len(html))
+        if not events:
+            # Empty page = hết, dừng
+            break
+        page_added = 0
+        for ev in events:
+            slug = ev.get("slug")
+            if not slug or slug in seen_slugs:
+                continue
+            seen_slugs.add(slug)
+            # Default fallback: tháng hiện tại của default_year
+            enriched = _enrich_event(ev, default_year, datetime.now().month, client)
+            if enriched:
+                out.append(enriched)
+                added += 1
+                page_added += 1
+        if page_added == 0:
+            # Page không thêm event mới (toàn dup) → có thể đến cuối, dừng
+            break
+    return added
+
+
+def _parse_visitvietnams_list(html: str) -> list[dict[str, Any]]:
+    """Parse visitvietnams.com listing page.
+
+    Vì không probe được structure trực tiếp (block ClaudeBot), dùng link-based
+    pattern tương tự vietnam.travel: tìm anchors có href chứa /en/events/{slug}
+    hoặc /en/event/{slug}. Parse name/date/image quanh anchor.
+    """
+    from selectolax.parser import HTMLParser
+
+    tree = HTMLParser(html)
+    events: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    # Tìm mọi link tới detail (thử nhiều prefix vì không chắc structure)
+    detail_links = []
+    for prefix in VV_DETAIL_PATH_PREFIXES:
+        detail_links.extend(tree.css(f'a[href*="{prefix}"]'))
+
+    for link in detail_links:
+        try:
+            href = link.attributes.get("href", "")
+            if not href:
+                continue
+            # Skip nếu href là chính path prefix (listing page link, không phải detail)
+            is_detail = False
+            slug = ""
+            for prefix in VV_DETAIL_PATH_PREFIXES:
+                if prefix in href:
+                    path = href.split(prefix, 1)[1]
+                    candidate = path.split("?")[0].split("/")[0].strip()
+                    if candidate:
+                        is_detail = True
+                        slug = candidate
+                        break
+            if not is_detail or not slug or slug in seen:
+                continue
+
+            name = (link.text(strip=True) or "").strip()
+            if not name:
+                img_inside = link.css_first("img")
+                if img_inside:
+                    name = (img_inside.attributes.get("alt") or "").strip()
+            if not name or len(name) < 3:
+                continue
+
+            url = urljoin(VV_BASE_URL, href)
+
+            # Traverse parent để tìm date + image
+            parent = link.parent
+            depth = 0
+            container = parent
+            while parent is not None and depth < 5:
+                container = parent
+                parent = parent.parent
+                depth += 1
+
+            date_text = _extract_date_text_near(container, name)
+            location_text = _extract_location_near(container, name, date_text)
+
+            image_url = ""
+            img_node = link.css_first("img") or (container.css_first("img") if container else None)
+            if img_node:
+                src = img_node.attributes.get("src") or img_node.attributes.get("data-src", "")
+                if src:
+                    if src.startswith("//"):
+                        image_url = "https:" + src
+                    elif src.startswith("/"):
+                        image_url = urljoin(VV_BASE_URL, src)
+                    else:
+                        image_url = src
+
+            seen.add(slug)
+            events.append({
+                "slug": f"vv-{slug}",  # prefix để tránh đụng vietnam.travel slug
+                "name": name,
+                "date_text": date_text,
+                "location": location_text,
+                "image_url": image_url,
+                "source_url": url,
+            })
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[VV] parse 1 link lỗi: %s", e)
+            continue
+
+    return events
 
 
 def save_festivals_to_db(db, events: list[dict[str, Any]]) -> dict[str, int]:
