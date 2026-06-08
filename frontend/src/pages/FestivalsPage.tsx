@@ -170,9 +170,17 @@ export default function FestivalsPage() {
 
 // ── Tab 1: Timeline ──────────────────────────────────────────────────────
 
+function _isoDateAdd(days: number): string {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 function TimelineTab({ onPickFestival }: { onPickFestival: (slug: string) => void }) {
   const [view, setView] = useState<"timeline" | "calendar">("timeline");
   const [filters, setFilters] = useState<FestivalFilters>({});
+  const [search, setSearch] = useState("");
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => {
     const d = new Date(); d.setDate(1); return d;
   });
@@ -188,13 +196,42 @@ function TimelineTab({ onPickFestival }: { onPickFestival: (slug: string) => voi
     staleTime: 6 * 60 * 60 * 1000,
   });
 
+  // Filter client-side bằng search keyword (tránh re-fetch API mỗi keystroke)
+  const filteredFestivals = useMemo(() => {
+    if (!festivals) return [];
+    if (!search.trim()) return festivals;
+    const kw = search.toLowerCase().trim();
+    return festivals.filter((f) =>
+      (f.name_vi || "").toLowerCase().includes(kw)
+      || (f.location_text || "").toLowerCase().includes(kw)
+      || (f.description || "").toLowerCase().includes(kw)
+    );
+  }, [festivals, search]);
+
+  // Helpers cho stat card click
+  const setRangeUpcoming = (days: number) => {
+    setFilters((f) => ({ ...f, from: _isoDateAdd(0), to: _isoDateAdd(days) }));
+  };
+  const resetRange = () => {
+    setFilters((f) => ({ ...f, from: undefined, to: undefined }));
+  };
+
   return (
     <div className="space-y-4">
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <StatCard label="Tổng số sự kiện" value={stats.total} />
-          <StatCard label="Sắp diễn ra (30 ngày)" value={stats.upcoming_30d} accent="primary" />
-          <StatCard label="Sắp diễn ra (90 ngày)" value={stats.upcoming_90d} />
+          <StatCard label="Tổng số sự kiện" value={stats.total}
+            onClick={resetRange}
+            active={!filters.from && !filters.to}
+          />
+          <StatCard label="Sắp diễn ra (30 ngày)" value={stats.upcoming_30d} accent="primary"
+            onClick={() => setRangeUpcoming(30)}
+            active={filters.to === _isoDateAdd(30)}
+          />
+          <StatCard label="Sắp diễn ra (90 ngày)" value={stats.upcoming_90d}
+            onClick={() => setRangeUpcoming(90)}
+            active={filters.to === _isoDateAdd(90)}
+          />
           <StatCard label="Vùng nhiều lễ nhất" isText value={
             (() => {
               const top = Object.entries(stats.by_region).sort((a, b) => b[1] - a[1])[0]?.[0];
@@ -203,29 +240,56 @@ function TimelineTab({ onPickFestival }: { onPickFestival: (slug: string) => voi
           } />
         </div>
       )}
-      <div className="card p-4 flex flex-wrap gap-3 items-end">
-        <FilterSelect label="Vùng" value={filters.region ?? ""}
-          onChange={(v) => setFilters((f) => ({ ...f, region: (v || undefined) as FestivalRegion | undefined }))}
-          options={[
-            { value: "", label: "Tất cả vùng" }, { value: "bac", label: "Miền Bắc" },
-            { value: "trung", label: "Miền Trung" }, { value: "nam", label: "Miền Nam" },
-            { value: "intl", label: "Quốc tế" },
-          ]} />
-        <FilterSelect label="Loại lễ" value={filters.category ?? ""}
-          onChange={(v) => setFilters((f) => ({ ...f, category: (v || undefined) as FestivalCategory | undefined }))}
-          options={[
-            { value: "", label: "Tất cả loại" }, { value: "cultural", label: "Văn hóa" },
-            { value: "religious", label: "Tâm linh" }, { value: "music", label: "Âm nhạc" },
-            { value: "food", label: "Ẩm thực" }, { value: "sport", label: "Thể thao" },
-            { value: "other", label: "Khác" },
-          ]} />
-        <div className="ml-auto flex gap-1 bg-gray-100 p-1 rounded-md">
-          <ViewButton active={view === "timeline"} onClick={() => setView("timeline")}>
-            <List size={14} /> Timeline
-          </ViewButton>
-          <ViewButton active={view === "calendar"} onClick={() => setView("calendar")}>
-            <Calendar size={14} /> Calendar
-          </ViewButton>
+      <div className="card p-4 space-y-3">
+        <div className="flex flex-wrap gap-3 items-end">
+          <FilterSelect label="Vùng" value={filters.region ?? ""}
+            onChange={(v) => setFilters((f) => ({ ...f, region: (v || undefined) as FestivalRegion | undefined }))}
+            options={[
+              { value: "", label: "Tất cả vùng" }, { value: "bac", label: "Miền Bắc" },
+              { value: "trung", label: "Miền Trung" }, { value: "nam", label: "Miền Nam" },
+              { value: "intl", label: "Quốc tế" },
+            ]} />
+          <FilterSelect label="Loại lễ" value={filters.category ?? ""}
+            onChange={(v) => setFilters((f) => ({ ...f, category: (v || undefined) as FestivalCategory | undefined }))}
+            options={[
+              { value: "", label: "Tất cả loại" }, { value: "cultural", label: "Văn hóa" },
+              { value: "religious", label: "Tâm linh" }, { value: "music", label: "Âm nhạc" },
+              { value: "food", label: "Ẩm thực" }, { value: "sport", label: "Thể thao" },
+              { value: "other", label: "Khác" },
+            ]} />
+          <div>
+            <label className="text-xs text-gray-500 block mb-0.5">Giai đoạn từ</label>
+            <input type="date" className="input text-sm"
+              value={filters.from ?? ""}
+              onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value || undefined }))} />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500 block mb-0.5">Đến</label>
+            <input type="date" className="input text-sm"
+              value={filters.to ?? ""}
+              onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value || undefined }))} />
+          </div>
+          {(filters.from || filters.to) && (
+            <button type="button" className="text-xs text-gray-500 hover:text-gray-900 underline"
+              onClick={() => setFilters((f) => ({ ...f, from: undefined, to: undefined }))}>
+              Xóa giai đoạn
+            </button>
+          )}
+          <div className="ml-auto flex gap-1 bg-gray-100 p-1 rounded-md">
+            <ViewButton active={view === "timeline"} onClick={() => setView("timeline")}>
+              <List size={14} /> Timeline
+            </ViewButton>
+            <ViewButton active={view === "calendar"} onClick={() => setView("calendar")}>
+              <Calendar size={14} /> Calendar
+            </ViewButton>
+          </div>
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 block mb-0.5">Tìm tên sự kiện</label>
+          <input type="text" className="input text-sm w-full"
+            placeholder="Vd: Festival Huế, Đắk Lắk, Sầu riêng..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)} />
         </div>
       </div>
 
@@ -235,18 +299,30 @@ function TimelineTab({ onPickFestival }: { onPickFestival: (slug: string) => voi
         </div>
       )}
       {error && <div className="card p-6 text-red-600 text-sm">Lỗi tải: {(error as Error).message}</div>}
-      {!isLoading && festivals && festivals.length === 0 && (
+      {!isLoading && filteredFestivals.length === 0 && (
         <div className="card p-12 text-center text-gray-400 space-y-3">
           <Calendar size={40} className="mx-auto" />
-          <p className="text-sm">Chưa có dữ liệu lễ hội.</p>
-          <p className="text-xs">Bấm <strong>Refresh scrape</strong> để crawl, hoặc <strong>Seed lễ âm</strong> để có Tết/Trung Thu.</p>
+          <p className="text-sm">
+            {search ? `Không có sự kiện nào khớp "${search}".` : "Chưa có dữ liệu lễ hội."}
+          </p>
+          {!search && (
+            <p className="text-xs">Bấm <strong>Refresh scrape</strong> để crawl, hoặc <strong>Seed lễ âm</strong> để có Tết/Trung Thu.</p>
+          )}
         </div>
       )}
-      {!isLoading && festivals && festivals.length > 0 && view === "timeline" && (
-        <TimelineView festivals={festivals} onPick={onPickFestival} />
+      {!isLoading && filteredFestivals.length > 0 && (
+        <p className="text-xs text-gray-500">
+          Hiển thị <strong>{filteredFestivals.length}</strong> sự kiện
+          {festivals && filteredFestivals.length < festivals.length && (
+            <span> · lọc từ {festivals.length}</span>
+          )}
+        </p>
       )}
-      {!isLoading && festivals && festivals.length > 0 && view === "calendar" && (
-        <CalendarView festivals={festivals} month={calendarMonth} onPick={onPickFestival}
+      {!isLoading && filteredFestivals.length > 0 && view === "timeline" && (
+        <TimelineView festivals={filteredFestivals} onPick={onPickFestival} />
+      )}
+      {!isLoading && filteredFestivals.length > 0 && view === "calendar" && (
+        <CalendarView festivals={filteredFestivals} month={calendarMonth} onPick={onPickFestival}
           onPrev={() => setCalendarMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
           onNext={() => setCalendarMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))} />
       )}
@@ -807,15 +883,15 @@ function FestivalDetailModal({ slug, onClose }: { slug: string; onClose: () => v
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+      <div className="bg-white rounded-xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-4 border-b">
-          <h2 className="text-lg font-bold text-gray-900">{summary?.name ?? "Lễ hội"}</h2>
-          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-700">
+        <div className="flex items-center justify-between p-4 border-b shrink-0">
+          <h2 className="text-lg font-bold text-gray-900 truncate pr-2">{summary?.name ?? "Lễ hội"}</h2>
+          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-700 shrink-0">
             <X size={20} />
           </button>
         </div>
-        <div className="overflow-auto p-4 space-y-4">
+        <div className="overflow-auto p-4 space-y-4 flex-1">
           {isLoading && <Loading />}
           {summary && (
             <div className="grid grid-cols-3 gap-3">
@@ -827,21 +903,21 @@ function FestivalDetailModal({ slug, onClose }: { slug: string; onClose: () => v
           {tours && tours.length > 0 && (
             <div>
               <h3 className="text-sm font-semibold text-gray-700 mb-2">Tour gắn lễ ({tours.length})</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
+              <div className="overflow-x-auto -mx-4 px-4">
+                <table className="w-full text-xs min-w-[800px]">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="px-2 py-1.5 text-left">Công ty</th>
+                      <th className="px-2 py-1.5 text-left whitespace-nowrap">Công ty</th>
                       <th className="px-2 py-1.5 text-left">Tên tour</th>
-                      <th className="px-2 py-1.5 text-right">Giá</th>
-                      <th className="px-2 py-1.5 text-right">Ngày</th>
-                      <th className="px-2 py-1.5 text-right">Cách lễ</th>
+                      <th className="px-2 py-1.5 text-right whitespace-nowrap">Giá</th>
+                      <th className="px-2 py-1.5 text-right whitespace-nowrap">Ngày</th>
+                      <th className="px-2 py-1.5 text-right whitespace-nowrap">Cách lễ</th>
                     </tr>
                   </thead>
                   <tbody>
                     {tours.map((t: FestivalTourLite) => (
                       <tr key={t.id} className="border-t hover:bg-gray-50">
-                        <td className="px-2 py-1.5">
+                        <td className="px-2 py-1.5 whitespace-nowrap">
                           <span className={cn(
                             "px-1 py-0.5 rounded text-[10px] font-medium",
                             t.cong_ty.toLowerCase().includes("vietravel") ? "bg-primary-100 text-primary-800" : "bg-gray-100 text-gray-700",
@@ -849,12 +925,12 @@ function FestivalDetailModal({ slug, onClose }: { slug: string; onClose: () => v
                             {t.cong_ty}
                           </span>
                         </td>
-                        <td className="px-2 py-1.5 max-w-[300px] truncate" title={t.ten_tour}>
+                        <td className="px-2 py-1.5 max-w-[400px] truncate" title={t.ten_tour}>
                           {t.ten_tour}
                         </td>
-                        <td className="px-2 py-1.5 text-right font-mono">{fmtVND(t.gia)}</td>
-                        <td className="px-2 py-1.5 text-right text-gray-500">{t.so_ngay ? `${t.so_ngay}N` : "—"}</td>
-                        <td className="px-2 py-1.5 text-right text-gray-600">
+                        <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap">{fmtVND(t.gia)}</td>
+                        <td className="px-2 py-1.5 text-right text-gray-500 whitespace-nowrap">{t.so_ngay ? `${t.so_ngay}N` : "—"}</td>
+                        <td className="px-2 py-1.5 text-right text-gray-600 whitespace-nowrap">
                           {t.festival_distance_days === 0 ? "Trùng" :
                             t.festival_distance_days === null ? "—" :
                             t.festival_distance_days > 0 ? `${t.festival_distance_days}d trước` :
@@ -868,7 +944,7 @@ function FestivalDetailModal({ slug, onClose }: { slug: string; onClose: () => v
             </div>
           )}
           {tours && tours.length === 0 && (
-            <p className="text-center text-gray-500 text-sm py-8">Chưa có tour nào gắn lễ này.</p>
+            <p className="text-center text-gray-500 text-sm py-8">Chưa có tour nào gắn lễ này (cùng location).</p>
           )}
         </div>
       </div>
@@ -878,16 +954,34 @@ function FestivalDetailModal({ slug, onClose }: { slug: string; onClose: () => v
 
 // ── Shared atoms ──────────────────────────────────────────────────────────
 
-function StatCard({ label, value, accent, isText }: { label: string; value: number | string; accent?: "primary"; isText?: boolean }) {
+function StatCard({ label, value, accent, isText, onClick, active }: {
+  label: string;
+  value: number | string;
+  accent?: "primary";
+  isText?: boolean;
+  onClick?: () => void;
+  active?: boolean;
+}) {
+  const isClickable = !!onClick;
+  const Tag = isClickable ? "button" : "div";
   return (
-    <div className={cn("card p-4", accent === "primary" && "border-primary-200 bg-primary-50/40")}>
+    <Tag
+      type={isClickable ? "button" : undefined}
+      onClick={onClick}
+      className={cn(
+        "card p-4 text-left w-full transition-all",
+        accent === "primary" && "border-primary-200 bg-primary-50/40",
+        active && "ring-2 ring-primary-500",
+        isClickable && "hover:shadow-md cursor-pointer",
+      )}
+    >
       <p className="text-xs text-gray-500 mb-1">{label}</p>
       <p className={cn(
         "font-bold tracking-tight",
         isText ? "text-base" : "text-2xl",
         accent === "primary" && "text-primary-700",
       )}>{value}</p>
-    </div>
+    </Tag>
   );
 }
 

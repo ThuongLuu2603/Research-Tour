@@ -16,6 +16,7 @@ Cron: daily after sync chain. Idempotent — re-run không gây side effect.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -197,17 +198,108 @@ def tag_tours_with_festivals(
     return stats
 
 
+# Region → thị trường VN tour database
+# Tour DB dùng thi_truong như "Việt Nam", "Hàn Quốc", "Nhật Bản", ...
+_REGION_TO_TOUR_THI_TRUONG = {
+    "bac": ["miền bắc", "việt nam"],
+    "trung": ["miền trung", "việt nam"],
+    "nam": ["miền nam", "việt nam"],
+}
+
+# Map intl country → tour thị trường keywords
+_INTL_COUNTRY_TO_TOUR_MARKET = {
+    "hàn quốc": ["hàn quốc", "han quoc", "korea"],
+    "nhật bản": ["nhật bản", "nhat ban", "japan"],
+    "trung quốc": ["trung quốc", "trung quoc", "china"],
+    "thái lan": ["thái lan", "thai lan", "thailand"],
+    "singapore": ["singapore"],
+    "mỹ": ["mỹ", "my", "hoa kỳ", "usa", "america"],
+    "pháp": ["pháp", "phap", "france"],
+    "đức": ["đức", "duc", "germany"],
+    "ý": ["ý", "y", "italy"],
+    "úc": ["úc", "uc", "australia"],
+    "ấn độ": ["ấn độ", "an do", "india"],
+    "indonesia": ["indonesia"],
+    "malaysia": ["malaysia"],
+    "philippines": ["philippines"],
+    "đài loan": ["đài loan", "dai loan", "taiwan"],
+    "lào": ["lào", "lao", "laos"],
+    "campuchia": ["campuchia", "cambodia"],
+    "anh": ["anh", "uk", "england", "britain"],
+}
+
+
+def _location_match_filter(f, Tour):
+    """Build SQL filter cho tour matching location của 1 festival.
+
+    Trả SQLAlchemy filter clause:
+      - Festival VN: tour có diem_kh hoặc tuyen_tour hoặc thi_truong match
+        province name (vd "Đắk Lắk", "Hà Nội") của festival.
+      - Festival intl: tour thi_truong match country name.
+
+    Nếu không match được location → trả None → caller skip festival.
+    """
+    from sqlalchemy import or_, func
+
+    # Lấy keyword location chính từ festival
+    keywords: list[str] = []
+
+    # Strip prefix "T. " / "TP. " / "P. " trong location_text
+    location_clean = (f.location_text or "").strip()
+    # Tách parts: "P. Tam Chúc, T. Ninh Bình" → ["P. Tam Chúc", "T. Ninh Bình"]
+    parts = [p.strip() for p in location_clean.split(",") if p.strip()]
+    for p in parts:
+        # Bỏ prefix "T.", "TP.", "P.", "X.", "H."
+        cleaned = re.sub(r"^(t\.|tp\.|p\.|x\.|h\.|q\.)\s*", "", p, flags=re.IGNORECASE).strip()
+        if cleaned and len(cleaned) >= 3:
+            keywords.append(cleaned.lower())
+
+    # Intl: thêm country keywords
+    if f.region == "intl":
+        for vn_name, keys in _INTL_COUNTRY_TO_TOUR_MARKET.items():
+            for k in keys:
+                if k.lower() in (location_clean or "").lower():
+                    keywords.extend([kk for kk in keys])
+                    break
+
+    if not keywords:
+        return None
+
+    # Build OR filter: tour location (any text) chứa keyword
+    conds = []
+    for kw in keywords[:5]:  # cap 5 keywords để tránh query quá rộng
+        pattern = f"%{kw}%"
+        conds.append(or_(
+            func.lower(Tour.diem_kh).like(pattern),
+            func.lower(Tour.tuyen_tour).like(pattern),
+            func.lower(Tour.thi_truong).like(pattern),
+        ))
+    return or_(*conds)
+
+
 def get_festival_tours_summary(db, slug: str) -> dict[str, Any]:
-    """Stats nhanh cho 1 festival: số tour gắn, theo công ty, giá TB, etc."""
+    """Stats nhanh cho 1 festival: số tour gắn + ở cùng location.
+
+    "Cùng location" = tour có diem_kh / tuyen_tour / thi_truong chứa keyword
+    location của festival (vd lễ Đắk Lắk → tour Đắk Lắk).
+    """
+    import re
     from models import Festival, Tour
-    from sqlalchemy import func
+    from sqlalchemy import func, and_
 
     f = db.query(Festival).filter(Festival.slug == slug).first()
     if not f:
         return {"error": "Festival không tồn tại"}
 
-    q = db.query(Tour).filter(Tour.festival_slug == slug)
-    total = q.count()
+    loc_filter = _location_match_filter(f, Tour)
+    # Filter: tour có festival_slug = slug HOẶC (location match AND date overlap)
+    # Nhưng để consistency: chỉ giữ tour đã được tag (festival_slug = slug)
+    # VÀ location match (nếu có filter).
+    base_query = db.query(Tour).filter(Tour.festival_slug == slug)
+    if loc_filter is not None:
+        base_query = base_query.filter(loc_filter)
+
+    total = base_query.count()
     if total == 0:
         return {
             "slug": slug,
@@ -220,19 +312,25 @@ def get_festival_tours_summary(db, slug: str) -> dict[str, Any]:
         }
 
     # Group by company
-    by_company = dict(
-        db.query(Tour.cong_ty, func.count(Tour.id))
-        .filter(Tour.festival_slug == slug)
-        .group_by(Tour.cong_ty)
-        .all()
-    )
-    # Avg price (chỉ tour có giá)
-    avg_price = (
+    by_company_q = db.query(Tour.cong_ty, func.count(Tour.id)).filter(Tour.festival_slug == slug)
+    if loc_filter is not None:
+        by_company_q = by_company_q.filter(loc_filter)
+    by_company = dict(by_company_q.group_by(Tour.cong_ty).all())
+
+    # Avg price (chỉ tour có giá hợp lý, loại outlier)
+    avg_price_q = (
         db.query(func.avg(Tour.gia))
-        .filter(Tour.festival_slug == slug, Tour.gia.isnot(None))
-        .scalar()
+        .filter(
+            Tour.festival_slug == slug,
+            Tour.gia.isnot(None),
+            Tour.gia >= 500_000,
+            Tour.gia <= 500_000_000,
+        )
     )
-    # VTR vs competitor
+    if loc_filter is not None:
+        avg_price_q = avg_price_q.filter(loc_filter)
+    avg_price = avg_price_q.scalar()
+
     vtr = sum(c for co, c in by_company.items() if "vietravel" in (co or "").lower())
     return {
         "slug": slug,
@@ -246,10 +344,12 @@ def get_festival_tours_summary(db, slug: str) -> dict[str, Any]:
 
 
 def get_coverage_gap(db, limit: int = 30) -> list[dict[str, Any]]:
-    """Coverage gap: festival nào competitor có tour mà VTR không cover.
+    """Coverage gap: festival nào competitor cover ở ĐÚNG location mà VTR miss.
 
-    Sort theo competitor_count desc → festival "hot" mà VTR đang miss.
+    "Cover" = tour có festival_slug match VÀ tour location match festival location.
+    Sort theo gap_score desc → festival VTR thiếu nhất ở đầu.
     """
+    import re
     from models import Festival, Tour
     from sqlalchemy import func
 
@@ -264,13 +364,16 @@ def get_coverage_gap(db, limit: int = 30) -> list[dict[str, Any]]:
 
     out: list[dict[str, Any]] = []
     for f in festivals:
-        # Count tour gắn lễ này theo VTR vs khác
-        rows = (
+        # Apply location filter: chỉ count tour ở cùng vùng với festival
+        loc_filter = _location_match_filter(f, Tour)
+        rows_q = (
             db.query(Tour.cong_ty, func.count(Tour.id))
             .filter(Tour.festival_slug == f.slug)
-            .group_by(Tour.cong_ty)
-            .all()
         )
+        if loc_filter is not None:
+            rows_q = rows_q.filter(loc_filter)
+        rows = rows_q.group_by(Tour.cong_ty).all()
+
         vtr_count = 0
         comp_count = 0
         comp_companies: dict[str, int] = {}
@@ -282,18 +385,18 @@ def get_coverage_gap(db, limit: int = 30) -> list[dict[str, Any]]:
                 if co:
                     comp_companies[co] = cnt
         if comp_count == 0 and vtr_count == 0:
-            continue  # không lễ nào cover, skip
+            continue
         out.append({
             "slug": f.slug,
             "name": f.name_vi,
             "date_start": f.date_start.isoformat(),
             "date_end": f.date_end.isoformat(),
             "region": f.region,
+            "location": f.location_text or "",
             "vtr_tours": vtr_count,
             "competitor_tours": comp_count,
             "top_competitors": dict(sorted(comp_companies.items(), key=lambda kv: -kv[1])[:5]),
-            "gap_score": comp_count - vtr_count * 1.5,  # comp nhiều + VTR 0 = score cao
+            "gap_score": comp_count - vtr_count * 1.5,
         })
-    # Sort theo gap_score desc — VTR thiếu nhất ở đầu
     out.sort(key=lambda x: -x["gap_score"])
     return out[:limit]

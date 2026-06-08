@@ -17,68 +17,91 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+# Hợp lý range giá tour VN (VND): 500K - 500M.
+# Trên 500M (vd 724 nghìn tỷ trong DB) chắc chắn là data corruption.
+# Dưới 500K không phải tour trọn gói (chỉ vé hoặc DV combo lẻ).
+TOUR_PRICE_MIN_VND = 500_000
+TOUR_PRICE_MAX_VND = 500_000_000
+
+# Premium % cap — premium > 500% gần như chắc chắn do outlier.
+PREMIUM_PCT_CAP = 500.0
+
+
 def get_pricing_premium(db, top_n: int = 20) -> dict[str, Any]:
     """UC#2 — So giá tour gắn lễ vs không gắn lễ cùng tuyến.
 
     Pipeline:
-      1. Group tours theo (thi_truong, tuyen_tour).
-      2. Mỗi group: tách tour có festival_slug vs không.
-      3. Tính avg(gia) cho 2 nhóm. Premium % = (gia_le - gia_thuong) / gia_thuong * 100.
-      4. Sort theo premium desc — lễ nào pricing power mạnh nhất.
-
-    Trả {summary, top_premium_routes}.
+      1. Filter tour gia trong range hợp lý 500K-500M (loại outlier corruption).
+      2. Group theo (thi_truong, tuyen_tour, has_festival).
+      3. Tính median (không phải mean) → robust với outlier.
+      4. Premium % = (median_le - median_thuong) / median_thuong * 100.
+      5. Skip nếu |premium| > 500% (chắc chắn data error).
+      6. Sort theo premium desc.
     """
-    from sqlalchemy import func
-    from models import Tour, Festival
+    from sqlalchemy import func, and_
+    from models import Tour
 
-    # Tour có giá + có thi_truong/tuyen_tour
-    base = db.query(Tour).filter(
+    # Filter tour có giá trong range hợp lý + có thi_truong/tuyen_tour
+    valid_filter = and_(
         Tour.gia.isnot(None),
+        Tour.gia >= TOUR_PRICE_MIN_VND,
+        Tour.gia <= TOUR_PRICE_MAX_VND,
         Tour.thi_truong != "",
         Tour.tuyen_tour != "",
     )
-    # Group all by (TT, Tuyến, has_festival)
-    rows = (
+
+    # Lấy raw rows để compute median (SQL func.percentile chưa universal cross-DB)
+    raw = (
         db.query(
             Tour.thi_truong,
             Tour.tuyen_tour,
             (Tour.festival_slug.isnot(None)).label("has_festival"),
-            func.count(Tour.id).label("n"),
-            func.avg(Tour.gia).label("avg_gia"),
+            Tour.gia,
         )
-        .filter(
-            Tour.gia.isnot(None),
-            Tour.thi_truong != "",
-            Tour.tuyen_tour != "",
-        )
-        .group_by(Tour.thi_truong, Tour.tuyen_tour, "has_festival")
+        .filter(valid_filter)
         .all()
     )
-    # Pivot: {(TT, Tuyến): {True: (n, avg), False: (n, avg)}}
-    pivot: dict[tuple[str, str], dict[bool, tuple[int, float]]] = defaultdict(dict)
-    for r in rows:
-        pivot[(r.thi_truong, r.tuyen_tour)][bool(r.has_festival)] = (int(r.n), float(r.avg_gia or 0))
+
+    # Group: {(TT, Tuyến): {True: [gia_list], False: [gia_list]}}
+    groups: dict[tuple[str, str], dict[bool, list[float]]] = defaultdict(lambda: {True: [], False: []})
+    for r in raw:
+        groups[(r.thi_truong, r.tuyen_tour)][bool(r.has_festival)].append(float(r.gia))
+
+    def _median(xs: list[float]) -> float:
+        if not xs:
+            return 0.0
+        xs_sorted = sorted(xs)
+        n = len(xs_sorted)
+        mid = n // 2
+        if n % 2 == 1:
+            return xs_sorted[mid]
+        return (xs_sorted[mid - 1] + xs_sorted[mid]) / 2
 
     premiums: list[dict[str, Any]] = []
-    for (tt, tuyen), buckets in pivot.items():
-        with_le = buckets.get(True)
-        without_le = buckets.get(False)
-        if not with_le or not without_le:
+    for (tt, tuyen), buckets in groups.items():
+        list_le = buckets[True]
+        list_thuong = buckets[False]
+        n_le = len(list_le)
+        n_thuong = len(list_thuong)
+        if n_le < 2 or n_thuong < 3:
             continue
-        n_le, gia_le = with_le
-        n_thuong, gia_thuong = without_le
-        if n_le < 2 or n_thuong < 3 or gia_thuong < 1:
-            continue  # too few samples → skip noise
-        premium_pct = (gia_le - gia_thuong) / gia_thuong * 100
+        med_le = _median(list_le)
+        med_thuong = _median(list_thuong)
+        if med_thuong < 1:
+            continue
+        premium_pct = (med_le - med_thuong) / med_thuong * 100
+        # Cap outlier (premium > 500% hoặc < -90% chắc chắn data error)
+        if abs(premium_pct) > PREMIUM_PCT_CAP:
+            continue
         premiums.append({
             "thi_truong": tt,
             "tuyen_tour": tuyen,
             "n_with_festival": n_le,
             "n_without_festival": n_thuong,
-            "avg_price_with_festival": round(gia_le),
-            "avg_price_without_festival": round(gia_thuong),
+            "avg_price_with_festival": round(med_le),
+            "avg_price_without_festival": round(med_thuong),
             "premium_pct": round(premium_pct, 1),
-            "premium_vnd": round(gia_le - gia_thuong),
+            "premium_vnd": round(med_le - med_thuong),
         })
     premiums.sort(key=lambda x: -x["premium_pct"])
 
