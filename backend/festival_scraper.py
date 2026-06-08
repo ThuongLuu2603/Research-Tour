@@ -42,9 +42,12 @@ DIRECT_TIMEOUT_SEC = 5.0   # ConnectTimeout < 5s = chắc chắn không reach đ
 PROXY_TIMEOUT_SEC = 15.0   # Proxy edge thường nhanh hơn, đặt 15s overhead
 RATE_LIMIT_SEC = 1.0       # Giảm rate limit vì có nhiều proxy candidates
 
-# Proxy chain — sort theo độ tin cậy/tốc độ. Đầu tiên thử cái phổ biến nhất.
+# Proxy chain — sort theo độ tin cậy. r.jina.ai là Jina AI Reader (free 1M
+# token/tháng, KHÔNG bị Cloudflare block vì là AI research tool nổi tiếng).
+# Đặt đầu tiên vì stable hơn public CORS proxies hỗn loạn.
 PROXY_PROVIDERS = [
     # (name, build_fn) — build_fn(target_url) -> proxy URL
+    ("jina-reader",    lambda u: f"https://r.jina.ai/{u}"),  # path-prefix style
     ("allorigins-raw", lambda u: f"https://api.allorigins.win/raw?url={_url_encode(u)}"),
     ("codetabs",       lambda u: f"https://api.codetabs.com/v1/proxy?quest={_url_encode(u)}"),
     ("corsproxy.io",   lambda u: f"https://corsproxy.io/?{_url_encode(u)}"),
@@ -221,9 +224,17 @@ def _month_to_num(s: str) -> int | None:
 
 
 def _try_get(url: str, client, timeout: float) -> tuple[str | None, str | None]:
-    """1 lần GET với timeout cụ thể. Trả (html, error_type)."""
+    """1 lần GET với timeout cụ thể. Trả (html, error_type).
+
+    Jina AI Reader (r.jina.ai) cần header `X-Return-Format: html` nếu muốn raw
+    HTML thay vì markdown — mặc định trả markdown.
+    """
     try:
-        r = client.get(url, timeout=timeout)
+        # r.jina.ai cần X-Return-Format header để trả raw HTML
+        headers_override = None
+        if "r.jina.ai/" in url:
+            headers_override = {"X-Return-Format": "html"}
+        r = client.get(url, timeout=timeout, headers=headers_override)
         if r.status_code == 200:
             text = r.text
             # allorigins-get JSON wrapper: {"contents": "...html..."}
