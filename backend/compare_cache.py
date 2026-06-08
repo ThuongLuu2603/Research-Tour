@@ -159,6 +159,9 @@ def load_tours(
         ))
         .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
     )
+    # System-wide rule: loại trừ market "Không xác định" khỏi mọi calculation.
+    from tour_filters import market_filter_clause
+    q = q.filter(market_filter_clause(Tour))
     if thi_truong:
         q = q.filter(Tour.thi_truong.in_(thi_truong))
     if tuyen_tour:

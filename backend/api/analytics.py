@@ -96,11 +96,13 @@ def by_market(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    from tour_filters import market_filter_clause
     q = db.query(Tour.thi_truong, func.count(Tour.id).label("cnt"))
     if nguon:
         q = q.filter(Tour.nguon.in_(nguon))
     rows = (
         q.filter(Tour.thi_truong != "")
+        .filter(market_filter_clause(Tour))
         .group_by(Tour.thi_truong)
         .order_by(func.count(Tour.id).desc())
         .all()
@@ -115,11 +117,13 @@ def by_company(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    from tour_filters import market_filter_clause
     q = db.query(Tour.cong_ty, func.count(Tour.id).label("cnt"))
     if nguon:
         q = q.filter(Tour.nguon.in_(nguon))
     rows = (
         q.filter(Tour.cong_ty != "")
+        .filter(market_filter_clause(Tour))
         .group_by(Tour.cong_ty)
         .order_by(func.count(Tour.id).desc())
         .limit(limit)
@@ -134,11 +138,13 @@ def by_segment(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    from tour_filters import market_filter_clause
     q = db.query(Tour.phan_khuc, func.count(Tour.id).label("cnt"))
     if nguon:
         q = q.filter(Tour.nguon.in_(nguon))
     rows = (
         q.filter(Tour.phan_khuc != "")
+        .filter(market_filter_clause(Tour))
         .group_by(Tour.phan_khuc)
         .all()
     )

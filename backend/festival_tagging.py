@@ -338,11 +338,16 @@ def get_festival_tours_summary(db, slug: str) -> dict[str, Any]:
     if not f:
         return {"error": "Festival không tồn tại"}
 
+    from tour_filters import market_filter_clause
+
     loc_filter = _location_match_filter(f, Tour)
     # Filter: tour có festival_slug = slug HOẶC (location match AND date overlap)
     # Nhưng để consistency: chỉ giữ tour đã được tag (festival_slug = slug)
     # VÀ location match (nếu có filter).
-    base_query = db.query(Tour).filter(Tour.festival_slug == slug)
+    base_query = db.query(Tour).filter(
+        Tour.festival_slug == slug,
+        market_filter_clause(Tour),
+    )
     if loc_filter is not None:
         base_query = base_query.filter(loc_filter)
 
@@ -359,12 +364,16 @@ def get_festival_tours_summary(db, slug: str) -> dict[str, Any]:
         }
 
     # Group by company
-    by_company_q = db.query(Tour.cong_ty, func.count(Tour.id)).filter(Tour.festival_slug == slug)
+    by_company_q = (
+        db.query(Tour.cong_ty, func.count(Tour.id))
+        .filter(Tour.festival_slug == slug)
+        .filter(market_filter_clause(Tour))
+    )
     if loc_filter is not None:
         by_company_q = by_company_q.filter(loc_filter)
     by_company = dict(by_company_q.group_by(Tour.cong_ty).all())
 
-    # Avg price (chỉ tour có giá hợp lý, loại outlier)
+    # Avg price (chỉ tour có giá hợp lý, loại outlier + market "Không xác định")
     avg_price_q = (
         db.query(func.avg(Tour.gia))
         .filter(
@@ -372,6 +381,7 @@ def get_festival_tours_summary(db, slug: str) -> dict[str, Any]:
             Tour.gia.isnot(None),
             Tour.gia >= 500_000,
             Tour.gia <= 500_000_000,
+            market_filter_clause(Tour),
         )
     )
     if loc_filter is not None:
@@ -410,12 +420,15 @@ def get_coverage_gap(db, limit: int = 30) -> list[dict[str, Any]]:
     )
 
     out: list[dict[str, Any]] = []
+    from tour_filters import market_filter_clause
+
     for f in festivals:
         # Apply location filter: chỉ count tour ở cùng vùng với festival
         loc_filter = _location_match_filter(f, Tour)
         rows_q = (
             db.query(Tour.cong_ty, func.count(Tour.id))
             .filter(Tour.festival_slug == f.slug)
+            .filter(market_filter_clause(Tour))
         )
         if loc_filter is not None:
             rows_q = rows_q.filter(loc_filter)

@@ -29,13 +29,20 @@ def get_tour_filter_options(db: Session) -> dict[str, list[str]]:
         if hit and now - hit[0] < FILTER_OPTS_TTL and hit[1] == fp:
             return hit[2]
 
+    from tour_filters import EXCLUDED_MARKETS, market_filter_clause
+
     def distinct(col):
-        return [r[0] for r in db.query(col).filter(col != "").distinct().order_by(col).all()]
+        q = db.query(col).filter(col != "")
+        # Loại trừ "Không xác định" khỏi list thi_truong (col is Tour.thi_truong)
+        if col is Tour.thi_truong:
+            q = q.filter(market_filter_clause(Tour))
+        return [r[0] for r in q.distinct().order_by(col).all() if r[0] not in EXCLUDED_MARKETS]
 
     pairs = (
         db.query(Tour.thi_truong, Tour.tuyen_tour)
         .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
         .filter(Tour.thi_truong != "", Tour.tuyen_tour != "")
+        .filter(market_filter_clause(Tour))
         .distinct()
         .order_by(Tour.thi_truong, Tour.tuyen_tour)
         .all()

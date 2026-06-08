@@ -40,14 +40,17 @@ def get_pricing_premium(db, top_n: int = 20) -> dict[str, Any]:
     """
     from sqlalchemy import func, and_
     from models import Tour
+    from tour_filters import market_filter_clause
 
     # Filter tour có giá trong range hợp lý + có thi_truong/tuyen_tour
+    # + loại trừ market "Không xác định" (rule toàn hệ thống)
     valid_filter = and_(
         Tour.gia.isnot(None),
         Tour.gia >= TOUR_PRICE_MIN_VND,
         Tour.gia <= TOUR_PRICE_MAX_VND,
         Tour.thi_truong != "",
         Tour.tuyen_tour != "",
+        market_filter_clause(Tour),
     )
 
     # Lấy raw rows để compute median (SQL func.percentile chưa universal cross-DB)
@@ -166,11 +169,18 @@ def get_demand_forecast(db, months_ahead: int = 6) -> dict[str, Any]:
         tour_count = 0
         vtr_count = 0
         if festival_slugs:
-            tour_count = db.query(Tour).filter(Tour.festival_slug.in_(festival_slugs)).count()
+            from tour_filters import market_filter_clause
+            tour_count = (
+                db.query(Tour)
+                .filter(Tour.festival_slug.in_(festival_slugs))
+                .filter(market_filter_clause(Tour))
+                .count()
+            )
             vtr_count = (
                 db.query(Tour)
                 .filter(Tour.festival_slug.in_(festival_slugs))
                 .filter(Tour.cong_ty.ilike("%vietravel%"))
+                .filter(market_filter_clause(Tour))
                 .count()
             )
 
@@ -239,6 +249,7 @@ def get_marketing_calendar(db, months_ahead: int = 12) -> list[dict[str, Any]]:
             .filter(Tour.festival_slug == f.slug)
             .filter(Tour.cong_ty.ilike("%vietravel%"))
             .filter(Tour.gia.isnot(None))
+            .filter(market_filter_clause(Tour))
             .order_by(Tour.gia.asc())
             .limit(3)
             .all()
