@@ -21,7 +21,10 @@ from urllib.parse import urljoin
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://vietnam.travel"
-EVENT_LIST_URL = f"{BASE_URL}/things-to-do/festival-event"
+# URL chính là /event (số ít), KHÔNG phải /things-to-do/festival-event (đã thử 404).
+# Trang /event là listing, link tới detail vẫn là /things-to-do/festival-event/{slug}.
+EVENT_LIST_URL = f"{BASE_URL}/event"
+DETAIL_PATH_PREFIX = "/things-to-do/festival-event/"
 USER_AGENT = (
     "VietravelOTA-FestivalBot/1.0 (research; respects robots.txt; "
     "contact via vietravel.com)"
@@ -109,14 +112,33 @@ def _classify_category(name: str, description: str = "") -> str:
 
 def _parse_date_range(text: str) -> tuple[date | None, date | None]:
     """Parse các format ngày phổ biến vietnam.travel:
-        "5 - 7 Jun, 2026"
+        "20 May 2026 - 10 Jun 2026"   ← FORMAT CHÍNH hiện tại
+        "01 Jun 2026 - 30 Jun 2026"
         "Jun 15, 2026"
-        "2026-06-05 to 2026-06-07"
+        "2026-06-05 to 2026-06-07"    ← ISO fallback
+        "5 - 7 Jun, 2026"             ← cũ
     Trả (start, end). Nếu chỉ 1 ngày → start == end.
     """
     if not text:
         return None, None
     t = text.strip()
+
+    # Format CHÍNH: "DD MMM YYYY - DD MMM YYYY" (có month name ở cả 2)
+    m = re.search(
+        r"(\d{1,2})\s+(\w+)\s+(\d{4})\s*[-–to]+\s*(\d{1,2})\s+(\w+)\s+(\d{4})",
+        t, re.IGNORECASE,
+    )
+    if m:
+        try:
+            d1, mo1_str, yr1 = int(m.group(1)), m.group(2), int(m.group(3))
+            d2, mo2_str, yr2 = int(m.group(4)), m.group(5), int(m.group(6))
+            mo1 = _month_to_num(mo1_str)
+            mo2 = _month_to_num(mo2_str)
+            if mo1 and mo2:
+                return date(yr1, mo1, d1), date(yr2, mo2, d2)
+        except ValueError:
+            pass
+
     # Format ISO "2026-06-05 to 2026-06-07"
     m = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})\s*(?:to|–|-)\s*(\d{4})-(\d{1,2})-(\d{1,2})", t)
     if m:
@@ -127,7 +149,8 @@ def _parse_date_range(text: str) -> tuple[date | None, date | None]:
             )
         except ValueError:
             return None, None
-    # Format "5 - 7 Jun, 2026"
+
+    # Format "5 - 7 Jun, 2026" (cùng tháng)
     m = re.search(
         r"(\d{1,2})\s*[-–]\s*(\d{1,2})\s+(\w+)[,\s]+(\d{4})",
         t,
@@ -141,7 +164,8 @@ def _parse_date_range(text: str) -> tuple[date | None, date | None]:
                 return date(yr, mo, d1), date(yr, mo, d2)
         except ValueError:
             pass
-    # Format "Jun 15, 2026" hoặc "15 Jun 2026"
+
+    # Format đơn ngày "Jun 15, 2026" hoặc "15 Jun 2026"
     m = re.search(r"(?:(\d{1,2})\s+(\w+)|(\w+)\s+(\d{1,2}))[,\s]+(\d{4})", t)
     if m:
         try:
@@ -182,72 +206,84 @@ def _fetch(url: str, client) -> str | None:
 
 
 def _parse_list_page(html: str) -> list[dict[str, Any]]:
-    """Parse trang danh sách event → list dict {slug, name, date_text, location, image, url}.
+    """Parse trang danh sách event → list dict.
 
-    Cấu trúc HTML vietnam.travel (Drupal): mỗi event nằm trong card. Selector
-    có thể đổi theo theme update — wrap trong try và log nếu parse fail nhiều.
+    STRATEGY MỚI (Phase 1.1): link-based extraction.
+      1. Tìm mọi anchor có href chứa "/things-to-do/festival-event/{slug}".
+      2. Mỗi anchor → traverse parent để tìm card chứa nó.
+      3. Trong card: lấy title (text anchor), image (img gần nhất), date_text + location
+         (text node có pattern ngày hoặc tên tỉnh VN).
+
+    Lý do: vietnam.travel KHÔNG dùng class CSS thuần (vd .event-card hay article.node),
+    HTML generic divs. Anchor-based extraction robust hơn nhiều khi theme update.
     """
     from selectolax.parser import HTMLParser
 
     tree = HTMLParser(html)
     events: list[dict[str, Any]] = []
+    seen_slugs: set[str] = set()
 
-    # Card selector — Drupal node teaser, có thể là article.node hoặc div.event-card
-    # Thử nhiều selector và lấy cái nào có kết quả
-    selectors = [
-        "article.node--type-event",
-        "div.event-card",
-        "article.event-teaser",
-        "div.views-row article",
-        "div.views-row",
-    ]
-    cards = []
-    for sel in selectors:
-        cards = tree.css(sel)
-        if cards:
-            break
+    # Tìm mọi link tới festival detail page
+    detail_links = tree.css(f'a[href*="{DETAIL_PATH_PREFIX}"]')
+    logger.info("Tìm thấy %d detail link trên trang", len(detail_links))
 
-    for card in cards:
+    for link in detail_links:
         try:
-            # Title + URL
-            title_node = (
-                card.css_first("h2 a")
-                or card.css_first("h3 a")
-                or card.css_first(".event-title a")
-                or card.css_first("a.event-link")
-            )
-            if not title_node:
+            href = link.attributes.get("href", "")
+            if not href or DETAIL_PATH_PREFIX not in href:
                 continue
-            name = (title_node.text() or "").strip()
-            href = title_node.attributes.get("href", "")
-            if not name or not href:
+            # Extract slug từ URL (giữa /festival-event/ và ?param/end)
+            path = href.split(DETAIL_PATH_PREFIX, 1)[1]
+            slug = path.split("?")[0].split("/")[0].strip()
+            if not slug or slug in seen_slugs:
                 continue
+
+            # Name = text của anchor (đã filter link không có text trống)
+            name = (link.text(strip=True) or "").strip()
+            if not name:
+                # Có thể anchor chỉ wrap image, lấy alt của img bên trong
+                img_inside = link.css_first("img")
+                if img_inside:
+                    name = (img_inside.attributes.get("alt") or "").strip()
+            if not name:
+                continue
+
             url = urljoin(BASE_URL, href)
-            slug = href.rstrip("/").split("/")[-1] or _slugify(name)
 
-            # Date text
-            date_node = (
-                card.css_first(".event-date")
-                or card.css_first(".field--name-field-event-date")
-                or card.css_first("time")
-            )
-            date_text = (date_node.text() or "").strip() if date_node else ""
+            # Traverse parent (max 5 levels) để tìm container chứa info bổ sung
+            parent = link.parent
+            depth = 0
+            container = parent
+            while parent is not None and depth < 5:
+                container = parent
+                parent = parent.parent
+                depth += 1
 
-            # Location
-            loc_node = (
-                card.css_first(".event-location")
-                or card.css_first(".field--name-field-location")
-            )
-            location_text = (loc_node.text() or "").strip() if loc_node else ""
+            # Date text: tìm text node match "DD MMM YYYY" hoặc range
+            date_text = _extract_date_text_near(container, name)
 
-            # Image
-            img_node = card.css_first("img")
+            # Location: tìm trong container các từ tỉnh VN ngắn (Ninh Binh, Hue, ...)
+            location_text = _extract_location_near(container, name, date_text)
+
+            # Image: img gần link nhất (anchor chính nó nếu wrap, không thì sibling)
             image_url = ""
+            img_node = link.css_first("img") or (container.css_first("img") if container else None)
             if img_node:
-                src = img_node.attributes.get("src") or img_node.attributes.get("data-src", "")
+                src = (
+                    img_node.attributes.get("src")
+                    or img_node.attributes.get("data-src")
+                    or img_node.attributes.get("srcset", "").split()[0] if img_node.attributes.get("srcset") else ""
+                )
                 if src:
-                    image_url = urljoin(BASE_URL, src)
+                    # Một số URL bắt đầu bằng "//image.vietnam.travel/..." → cần "https:" prefix
+                    if src.startswith("//"):
+                        image_url = "https:" + src
+                    elif src.startswith("/"):
+                        image_url = urljoin(BASE_URL, src)
+                    else:
+                        image_url = src
 
+            seen_slugs.add(slug)
             events.append({
                 "slug": slug,
                 "name": name,
@@ -257,23 +293,105 @@ def _parse_list_page(html: str) -> list[dict[str, Any]]:
                 "source_url": url,
             })
         except Exception as e:  # noqa: BLE001
-            logger.debug("Parse 1 card lỗi: %s", e)
+            logger.debug("Parse 1 link lỗi: %s", e)
             continue
 
     return events
 
 
+def _extract_date_text_near(container, exclude_text: str) -> str:
+    """Tìm text trong container chứa pattern ngày tháng.
+
+    Pattern phổ biến: "DD MMM YYYY - DD MMM YYYY" hoặc "DD MMM YYYY".
+    """
+    if not container:
+        return ""
+    # Lấy tất cả text node (không phải text con thẻ a — vì đó là name)
+    text = container.text(separator=" ", strip=True)
+    if not text:
+        return ""
+    # Bỏ exclude_text khỏi text để regex không match tên event
+    if exclude_text:
+        text = text.replace(exclude_text, " ")
+    # Match "20 May 2026 - 10 Jun 2026" hoặc đơn ngày "20 May 2026"
+    m = re.search(
+        r"\d{1,2}\s+\w{3,9}\s+\d{4}\s*[-–to]+\s*\d{1,2}\s+\w{3,9}\s+\d{4}",
+        text, re.IGNORECASE,
+    )
+    if m:
+        return m.group(0).strip()
+    m = re.search(r"\d{1,2}\s+\w{3,9}\s+\d{4}", text, re.IGNORECASE)
+    if m:
+        return m.group(0).strip()
+    return ""
+
+
+# Danh sách tỉnh VN viết tắt + có dấu (lowercase) để extract location.
+# Match theo substring trong text container.
+_VN_PROVINCE_KEYWORDS = [
+    "ninh binh", "hue", "da nang", "hanoi", "ha noi", "ho chi minh", "saigon",
+    "nha trang", "khanh hoa", "phu quoc", "kien giang", "vung tau", "can tho",
+    "hoi an", "quang nam", "sapa", "lao cai", "ha long", "quang ninh",
+    "phong nha", "quang binh", "buon ma thuot", "dak lak", "da lat", "lam dong",
+    "phu yen", "binh thuan", "phan thiet", "mui ne", "ca mau", "bac lieu",
+    "hai phong", "nam dinh", "ninh thuan", "binh dinh", "quy nhon",
+    "vietnam", "viet nam", "northern", "central", "southern", "north", "south",
+]
+
+
+def _extract_location_near(container, exclude_text: str, exclude_date: str) -> str:
+    """Tìm tỉnh/thành VN xuất hiện trong text container, không trùng tên event/ngày."""
+    if not container:
+        return ""
+    text = container.text(separator=" ", strip=True)
+    if not text:
+        return ""
+    if exclude_text:
+        text = text.replace(exclude_text, " ")
+    if exclude_date:
+        text = text.replace(exclude_date, " ")
+    low = text.lower()
+    # Match keyword đầu tiên xuất hiện
+    found = []
+    for kw in _VN_PROVINCE_KEYWORDS:
+        if kw in low:
+            # Trả về dạng đúng case từ text gốc
+            idx = low.find(kw)
+            found.append((idx, text[idx:idx + len(kw)]))
+    if not found:
+        return ""
+    # Chọn keyword xuất hiện đầu tiên (gần card hơn)
+    found.sort(key=lambda x: x[0])
+    return found[0][1].title()
+
+
 def _parse_detail_page(html: str) -> dict[str, str]:
-    """Parse trang detail → description chi tiết (Phase 1 chỉ lấy mô tả)."""
+    """Parse trang detail → description chi tiết (Phase 1 chỉ lấy mô tả).
+
+    Vietnam.travel detail page không có class CSS đặc trưng — lấy text
+    body chính bằng cách find paragraphs trong main content. Heuristic:
+    paragraph dài nhất là description.
+    """
     from selectolax.parser import HTMLParser
 
     tree = HTMLParser(html)
+    # Thử các selector phổ biến trước
     desc_node = (
         tree.css_first("div.field--name-body")
         or tree.css_first("div.event-description")
         or tree.css_first("article .content")
+        or tree.css_first("main p")
     )
-    description = (desc_node.text(separator=" ", strip=True) if desc_node else "")
+    if desc_node:
+        description = desc_node.text(separator=" ", strip=True)
+    else:
+        # Fallback: lấy paragraph dài nhất trong main
+        paragraphs = tree.css("main p, article p, div p")
+        if paragraphs:
+            best = max(paragraphs, key=lambda p: len(p.text() or ""))
+            description = (best.text(separator=" ", strip=True) or "")
+        else:
+            description = ""
     return {"description": description[:4000]}
 
 
@@ -300,11 +418,15 @@ def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
         for year in years:
             for month_idx, month_slug in enumerate(_MONTH_SLUG, start=1):
                 url = f"{EVENT_LIST_URL}?month={month_slug}&year={year}"
-                logger.info("Crawl festival list %s", url)
                 html = _fetch(url, client)
                 if not html:
+                    logger.warning("Crawl %s/%s: fetch fail", month_slug, year)
                     continue
                 events = _parse_list_page(html)
+                logger.info(
+                    "Crawl %s/%s: %d event (HTML %d bytes)",
+                    month_slug, year, len(events), len(html),
+                )
                 for ev in events:
                     if ev["slug"] in seen_slugs:
                         continue
