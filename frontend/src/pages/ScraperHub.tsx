@@ -2,10 +2,11 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   triggerScrape, getScrapeJobs, getScrapeJob, getSchedule, updateSchedule, getDataStatus, syncMainSheetLive,
+  syncVietravelFromSheet,
   cancelScrapeJob, reconcileStaleScrapeJobs, ScrapeJob,
 } from "@/lib/api";
 import { fmtDate, parseAppDate, statusColor, cn } from "@/lib/utils";
-import { Play, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Database, Square } from "lucide-react";
+import { Play, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Database, Square, ArrowDownToLine } from "lucide-react";
 
 interface ProgressEvent { pct: number; msg: string; done: boolean; added?: number; updated?: number; error?: boolean }
 
@@ -24,12 +25,50 @@ function JobStatusBadge({ status }: { status: string }) {
   );
 }
 
-function ScraperCard({ scraper, label, desc }: { scraper: "vietravel" | "findtourgo"; label: string; desc: string }) {
+function ScraperCard({
+  scraper,
+  label,
+  desc,
+  showSyncFromSheet,
+}: {
+  scraper: "vietravel" | "findtourgo";
+  label: string;
+  desc: string;
+  /** Nếu true: hiển thị thêm nút "Sync từ Sheet → DB" (chỉ áp dụng cho Vietravel —
+   *  cho phép user edit thủ công tab Vietravel của Sheet rồi sync ngược về DB).
+   *  Auto-chain KHÔNG dùng bước này vì Vietravel scrape đã ghi DB trước. */
+  showSyncFromSheet?: boolean;
+}) {
   const qc = useQueryClient();
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [syncErr, setSyncErr] = useState<string | null>(null);
+  const syncFromSheet = useMutation({
+    mutationFn: syncVietravelFromSheet,
+    onMutate: () => {
+      setSyncMsg(null);
+      setSyncErr(null);
+    },
+    onSuccess: (r: unknown) => {
+      const d = (r ?? {}) as { inserted?: number; updated?: number; deleted?: number };
+      setSyncMsg(
+        `Đã sync Vietravel Sheet → DB: +${d.inserted ?? 0} mới · ~${d.updated ?? 0} cập nhật · −${d.deleted ?? 0} xóa`,
+      );
+      qc.invalidateQueries({ queryKey: ["scrape-jobs"] });
+      qc.invalidateQueries({ queryKey: ["kpi"] });
+      qc.invalidateQueries({ queryKey: ["tours"] });
+    },
+    onError: (e: unknown) => {
+      const msg =
+        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        || (e as Error)?.message
+        || "Sync thất bại";
+      setSyncErr(msg);
+    },
+  });
   // Khoá "đã xong": một khi job kết thúc, BỎ QUA mọi event cũ (SSE trễ) để card không bị
   // kẹt lại ở 84% "đang ghi…". SSE và polling chạy song song → tránh ghi đè ngược trạng thái.
   const doneRef = useRef(false);
@@ -120,20 +159,41 @@ function ScraperCard({ scraper, label, desc }: { scraper: "vietravel" | "findtou
 
   return (
     <div className="card p-5 space-y-4">
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between gap-2">
         <div>
           <h3 className="font-semibold text-gray-900">{label}</h3>
           <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
         </div>
-        <button
-          onClick={() => trigger.mutate()}
-          disabled={!!isRunning}
-          className="btn-primary text-xs"
-        >
-          {isRunning ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-          {isRunning ? "Đang chạy..." : "Chạy ngay"}
-        </button>
+        <div className="flex flex-col gap-2 shrink-0">
+          <button
+            onClick={() => trigger.mutate()}
+            disabled={!!isRunning}
+            className="btn-primary text-xs"
+          >
+            {isRunning ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+            {isRunning ? "Đang chạy..." : "Chạy ngay"}
+          </button>
+          {showSyncFromSheet && (
+            <button
+              type="button"
+              onClick={() => syncFromSheet.mutate()}
+              disabled={syncFromSheet.isPending || !!isRunning}
+              className="btn-secondary text-xs"
+              title="Kéo edit thủ công từ tab Vietravel của Sheet ngược về DB. Auto-chain KHÔNG chạy bước này."
+            >
+              {syncFromSheet.isPending
+                ? <Loader2 size={14} className="animate-spin" />
+                : <ArrowDownToLine size={14} />}
+              {syncFromSheet.isPending ? "Đang sync..." : "Sync từ Sheet"}
+            </button>
+          )}
+        </div>
       </div>
+      {showSyncFromSheet && (syncMsg || syncErr) && (
+        <p className={cn("text-xs", syncErr ? "text-red-600" : "text-green-700")}>
+          {syncErr ?? syncMsg}
+        </p>
+      )}
 
       {/* Progress */}
       {progress && (
@@ -380,6 +440,7 @@ export default function ScraperHub() {
           scraper="vietravel"
           label="Vietravel — travel.com.vn"
           desc="DB trước → xuất tab Sheet Vietravel"
+          showSyncFromSheet
         />
         <ScraperCard
           scraper="findtourgo"

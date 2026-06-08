@@ -378,6 +378,16 @@ export const syncMainSheetLive = async () => {
   return data;
 };
 
+/** Đồng bộ tab Vietravel từ Google Sheet (live) → DB. Dùng khi user edit thủ
+ *  công trực tiếp trên tab Vietravel của sheet (auto-chain KHÔNG chạy bước này
+ *  vì Vietravel scrape đã ghi DB trước → tránh round-trip vô nghĩa). */
+export const syncVietravelFromSheet = async () => {
+  const { data } = await sheetSyncApi.post(
+    `/admin/sync-sheet-source?nguon=Vietravel&recompute=true`,
+  );
+  return data;
+};
+
 /** Import CSV gói khi deploy — không dùng khi Sheet đã cập nhật hàng ngày. */
 export const syncBundledCsvImport = async () => {
   const { data } = await api.post("/admin/sync-data");

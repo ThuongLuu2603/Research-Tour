@@ -62,8 +62,12 @@ def _job_plan(hour: int | None = None, minute: int | None = None) -> list[tuple[
     return [
         ("daily_vietravel", "1. Scrape Vietravel", h, m),
         ("daily_findtourgo", "2. Scrape FindTourGo → Sheet", None, None),
-        # Gộp "Sync Main" + "Sync All" thành 1 (Sync All bao gồm Main)
-        ("daily_sheet_sync", "3. Sync All Sheets → DB", None, None),
+        # Auto chain CHỈ sync Main → DB (FTG đã merge vào Main bằng code Sheet).
+        # KHÔNG sync Vietravel sheet → DB ở auto chain vì:
+        #   - Vietravel scrape ở bước 1 đã ghi DB trước (rồi mới export Sheet).
+        #   - Sync Vietravel sheet → DB chỉ là round-trip vô nghĩa, tốn RU.
+        # User vẫn có nút manual "Sync Vietravel từ Sheet" trên ScraperHub khi cần.
+        ("daily_main_sheet_sync", "3. Sync Main → DB", None, None),
         ("daily_intel_snapshot", "4. Snapshot BGĐ", None, None),
     ]
 
@@ -127,7 +131,7 @@ def update_schedule_config(hour: int, minute: int, db=None) -> None:
         except Exception as e:  # noqa: BLE001
             logger.warning("Reschedule daily_chain failed: %s", e)
     logger.info(
-        "Schedule updated (VN): chuỗi khởi động %02d:%02d (Vietravel → FindTourGo → Sync → Snapshot)",
+        "Schedule updated (VN): chuỗi khởi động %02d:%02d (Vietravel → FindTourGo → Sync Main → Snapshot)",
         hour, minute,
     )
 
@@ -455,18 +459,19 @@ def _wait_for_scraper_to_finish(scraper_name: str) -> bool:
 
 
 def _run_daily_chain():
-    """Chuỗi tự động: Vietravel → FindTourGo → Sync All Sheets → Snapshot.
+    """Chuỗi tự động: Vietravel → FindTourGo → Sync Main → Snapshot.
 
     Mỗi bước chạy NGAY sau khi bước trước hoàn tất (thay vì chờ cron giờ cố định).
     Bước scrape là async (queue) nên dùng polling DB; bước sync/snapshot chạy inline.
     Một bước fail không chặn các bước sau — log warning và tiếp tục.
 
-    Lưu ý: trước đây có 5 bước (riêng "Sync Main → DB" và "Sync All Sheets → DB"),
-    nhưng "Sync All" đã bao gồm Main + Vietravel + FTG → bỏ bước trùng. Bước
-    "Sync All" giờ là bước 3 thay vì 4."""
+    Bước 3 CHỈ sync tab Main → DB (FTG đã merge vào Main qua code Sheet). KHÔNG sync
+    tab Vietravel vì Vietravel scrape ở bước 1 đã ghi DB trước (rồi mới export Sheet)
+    → round-trip vô nghĩa. User có nút manual "Sync Vietravel từ Sheet" trên ScraperHub
+    nếu cần edit thủ công tab Vietravel."""
     logger.info("[CHAIN] Bắt đầu chuỗi tự động hàng ngày")
 
-    # 1. Scrape Vietravel
+    # 1. Scrape Vietravel (ghi DB trước rồi export Sheet)
     logger.info("[CHAIN 1/4] Scrape Vietravel")
     try:
         _auto_scrape("vietravel")
@@ -474,7 +479,7 @@ def _run_daily_chain():
     except Exception as e:  # noqa: BLE001
         logger.exception("[CHAIN 1/4] Vietravel scrape lỗi: %s", e)
 
-    # 2. Scrape FindTourGo → Sheet
+    # 2. Scrape FindTourGo → Sheet (sheet code auto-merge sang tab Main)
     logger.info("[CHAIN 2/4] Scrape FindTourGo")
     try:
         _auto_scrape("findtourgo")
@@ -482,13 +487,12 @@ def _run_daily_chain():
     except Exception as e:  # noqa: BLE001
         logger.exception("[CHAIN 2/4] FindTourGo scrape lỗi: %s", e)
 
-    # 3. Sync TẤT CẢ sheet → DB (Main + Vietravel + FindTourGo tab).
-    # Trước đây tách riêng "Sync Main" + "Sync All" — Sync All đã bao gồm Main nên gộp.
-    logger.info("[CHAIN 3/4] Sync tất cả sheet → DB")
+    # 3. Sync tab Main → DB (mang FTG + manual edits vào DB)
+    logger.info("[CHAIN 3/4] Sync Main → DB")
     try:
-        _daily_sheet_sync()
+        _sync_main_sheet()
     except Exception as e:  # noqa: BLE001
-        logger.exception("[CHAIN 3/4] Sync all sheets lỗi: %s", e)
+        logger.exception("[CHAIN 3/4] Sync Main lỗi: %s", e)
 
     # 4. Snapshot (cuối chuỗi để có data mới nhất)
     logger.info("[CHAIN 4/4] Daily intelligence snapshot")
@@ -542,7 +546,7 @@ def start_scheduler():
     _scheduler.start()
     logger.info(
         "Scheduler (VN %s): chuỗi tự động khởi động %02d:%02d → Vietravel → FindTourGo → "
-        "Sync Main → Sync All → Snapshot (chain mode, mỗi bước chờ bước trước xong)",
+        "Sync Main → Snapshot (chain mode, mỗi bước chờ bước trước xong)",
         VN_TZ_NAME, _schedule_hour, _schedule_minute,
     )
 
