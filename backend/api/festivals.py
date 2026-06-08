@@ -10,9 +10,9 @@ from pydantic import BaseModel
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
-from auth import User, get_current_user, require_admin
+from api.auth import get_current_user, require_admin
 from database import get_db
-from models import Festival
+from models import Festival, User
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/festivals", tags=["festivals"])
