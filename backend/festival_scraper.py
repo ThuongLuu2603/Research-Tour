@@ -356,6 +356,82 @@ def _fetch_json_page(url: str, client) -> dict | None:
         return None
 
 
+# Country keywords để tìm intl events qua API search (?q=).
+# API filter "?from=today" loại bớt intl events → phải search riêng để get đầy đủ.
+_INTL_SEARCH_KEYWORDS = [
+    "Korea", "Hàn Quốc",
+    "Japan", "Nhật Bản",
+    "USA", "Mỹ", "Hoa Kỳ",
+    "France", "Pháp",
+    "Germany", "Đức",
+    "China", "Trung Quốc",
+    "Thailand", "Thái Lan",
+    "Singapore",
+    "India", "Ấn Độ",
+    "UK", "Anh",
+    "Italy", "Ý",
+    "Australia", "Úc",
+    "Russia", "Nga",
+    "Canada",
+    "Brazil",
+    "Indonesia",
+    "Malaysia",
+    "Philippines",
+    "Taiwan", "Đài Loan",
+    "Hong Kong",
+    "Spain", "Tây Ban Nha",
+    "Netherlands", "Hà Lan",
+    "Sweden", "Thụy Điển",
+    "Lào", "Laos",
+    "Campuchia", "Cambodia",
+]
+
+
+def _scrape_intl_via_search(client, seen_slugs: set[str], today_iso: str) -> list[dict[str, Any]]:
+    """Scrape intl events qua API search ?q=<country>.
+
+    API filter ?from=today&sort không cover được tất cả intl events. Workaround:
+    search từng country keyword → get tất cả events liên quan → filter chỉ
+    upcoming (date_end >= today) + intl (loc2.name không có prefix VN).
+    """
+    out: list[dict[str, Any]] = []
+    today_d = date.fromisoformat(today_iso)
+    for kw in _INTL_SEARCH_KEYWORDS:
+        from urllib.parse import quote
+        url = f"{API_URL}?q={quote(kw)}&page=1"
+        data = _fetch_json_page(url, client)
+        if not data:
+            continue
+        items = data.get("items") or []
+        if not items:
+            continue
+        kept_this_kw = 0
+        for item in items:
+            # Chỉ giữ intl
+            if not _is_intl_event(item):
+                continue
+            # Chỉ giữ upcoming (date_end >= today)
+            end_str = item.get("end_date") or item.get("start_date") or ""
+            end_d = _parse_iso_date(end_str)
+            if not end_d or end_d < today_d:
+                continue
+            ev = _build_event_from_api_item(item)
+            if not ev:
+                continue
+            slug_with_prefix = f"intl-{ev['slug']}"
+            if slug_with_prefix in seen_slugs:
+                continue
+            ev["slug"] = slug_with_prefix
+            ev["region"] = "intl"
+            seen_slugs.add(slug_with_prefix)
+            out.append(ev)
+            kept_this_kw += 1
+        if kept_this_kw:
+            logger.info("[intl] q=%s: +%d event", kw, kept_this_kw)
+        time.sleep(0.3)  # polite throttle (28 keywords × 0.3s = 8s)
+    return out
+
+
 def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
     """Scrape lehoivietnam.com.vn JSON API.
 
@@ -434,8 +510,19 @@ def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
             time.sleep(RATE_LIMIT_SEC)
 
     logger.info(
-        "Festival API scrape xong: %d event tổng (domestic=%d, intl=%d)",
+        "Festival main scrape: %d event (domestic=%d, intl=%d)",
         len(out), domestic_count, intl_count,
+    )
+
+    # ── Phase 2: Intl search ────────────────────────────────────────────
+    # API filter ?from=today bỏ sót nhiều intl events (vd Seoul Food chỉ
+    # xuất hiện khi search ?q=Seoul). Bổ sung scrape qua country keywords.
+    with httpx.Client(headers=headers, follow_redirects=True, timeout=REQUEST_TIMEOUT_SEC) as client:
+        intl_extras = _scrape_intl_via_search(client, seen_slugs, today_iso)
+    out.extend(intl_extras)
+    logger.info(
+        "Festival scrape xong: %d event tổng (domestic=%d, intl=%d + %d từ search)",
+        len(out), domestic_count, intl_count, len(intl_extras),
     )
     return out
 
