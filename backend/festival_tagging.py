@@ -229,52 +229,99 @@ _INTL_COUNTRY_TO_TOUR_MARKET = {
 }
 
 
+# Country names trong tour.thi_truong = tour đi NƯỚC NGOÀI. Khi festival VN
+# match keyword như "Hà Nội", tour Trung Quốc xuất phát từ Hà Nội cũng match
+# diem_kh="Hà Nội" → false positive. Loại bỏ tour có thi_truong là country
+# khi match VN festival.
+_FOREIGN_MARKET_KEYWORDS = [
+    "trung quốc", "trung quoc", "china",
+    "hàn quốc", "han quoc", "korea",
+    "nhật bản", "nhat ban", "japan",
+    "thái lan", "thai lan", "thailand",
+    "singapore",
+    "malaysia",
+    "indonesia",
+    "philippines",
+    "đài loan", "dai loan", "taiwan",
+    "hong kong",
+    "lào", "laos",
+    "campuchia", "cambodia",
+    "myanmar",
+    "ấn độ", "an do", "india",
+    "úc", "australia",
+    "mỹ", "usa", "america", "hoa kỳ",
+    "canada",
+    "pháp", "phap", "france",
+    "đức", "duc", "germany",
+    "anh", "uk", "england",
+    "ý", "italy",
+    "tây ban nha", "spain",
+    "nga", "russia",
+    "thụy sĩ", "thuy si", "switzerland",
+    "hà lan", "ha lan", "netherlands",
+    "brazil",
+    "bắc âu", "bac au", "tây âu", "tay au", "nam âu", "đông âu",
+    "trung đông",
+    "châu âu", "chau au", "europe",
+    "châu phi", "chau phi", "africa",
+    "châu mỹ",
+]
+
+
 def _location_match_filter(f, Tour):
-    """Build SQL filter cho tour matching location của 1 festival.
+    """Build SQL filter cho tour ở CÙNG ĐÍCH ĐẾN với 1 festival.
 
-    Trả SQLAlchemy filter clause:
-      - Festival VN: tour có diem_kh hoặc tuyen_tour hoặc thi_truong match
-        province name (vd "Đắk Lắk", "Hà Nội") của festival.
-      - Festival intl: tour thi_truong match country name.
+    QUAN TRỌNG: dùng destination (tuyen_tour, thi_truong), KHÔNG dùng diem_kh
+    (= điểm khởi hành). Bug cũ: tour Trung Quốc khởi hành từ Hà Nội match
+    diem_kh="Hà Nội" → match nhầm festival ở Hà Nội.
 
-    Nếu không match được location → trả None → caller skip festival.
+    Logic:
+      - Festival VN: tour.tuyen_tour chứa province name VÀ tour.thi_truong
+        KHÔNG phải nước ngoài (loại tour outbound từ VN).
+      - Festival intl: tour.thi_truong chứa country name của festival.
+
+    Trả None nếu không extract được keyword.
     """
-    from sqlalchemy import or_, func
+    from sqlalchemy import or_, and_, not_, func
 
-    # Lấy keyword location chính từ festival
     keywords: list[str] = []
 
-    # Strip prefix "T. " / "TP. " / "P. " trong location_text
+    # Extract location keywords từ festival.location_text
     location_clean = (f.location_text or "").strip()
-    # Tách parts: "P. Tam Chúc, T. Ninh Bình" → ["P. Tam Chúc", "T. Ninh Bình"]
     parts = [p.strip() for p in location_clean.split(",") if p.strip()]
     for p in parts:
-        # Bỏ prefix "T.", "TP.", "P.", "X.", "H."
         cleaned = re.sub(r"^(t\.|tp\.|p\.|x\.|h\.|q\.)\s*", "", p, flags=re.IGNORECASE).strip()
         if cleaned and len(cleaned) >= 3:
             keywords.append(cleaned.lower())
 
-    # Intl: thêm country keywords
-    if f.region == "intl":
-        for vn_name, keys in _INTL_COUNTRY_TO_TOUR_MARKET.items():
-            for k in keys:
-                if k.lower() in (location_clean or "").lower():
-                    keywords.extend([kk for kk in keys])
-                    break
+    is_intl = f.region == "intl"
 
+    if is_intl:
+        # Intl festival: expand keyword tập tên nước (vd "Hàn Quốc" → ["hàn quốc", "korea", "kr"])
+        intl_keywords: list[str] = []
+        for _vn_name, keys in _INTL_COUNTRY_TO_TOUR_MARKET.items():
+            if any(k.lower() in location_clean.lower() for k in keys):
+                intl_keywords.extend(keys)
+        if not intl_keywords:
+            intl_keywords = keywords  # fallback dùng raw
+        if not intl_keywords:
+            return None
+        # Match tour.thi_truong (market category) với country
+        conds = [func.lower(Tour.thi_truong).like(f"%{k.lower()}%") for k in intl_keywords[:5]]
+        return or_(*conds)
+
+    # VN festival branch
     if not keywords:
         return None
-
-    # Build OR filter: tour location (any text) chứa keyword
-    conds = []
-    for kw in keywords[:5]:  # cap 5 keywords để tránh query quá rộng
-        pattern = f"%{kw}%"
-        conds.append(or_(
-            func.lower(Tour.diem_kh).like(pattern),
-            func.lower(Tour.tuyen_tour).like(pattern),
-            func.lower(Tour.thi_truong).like(pattern),
-        ))
-    return or_(*conds)
+    # Match tuyen_tour chứa province
+    dest_conds = [func.lower(Tour.tuyen_tour).like(f"%{kw}%") for kw in keywords[:5]]
+    dest_match = or_(*dest_conds)
+    # Loại tour có thi_truong = nước ngoài (tour outbound, không phải tour nội địa)
+    foreign_excludes = [
+        ~func.lower(Tour.thi_truong).like(f"%{fk}%")
+        for fk in _FOREIGN_MARKET_KEYWORDS
+    ]
+    return and_(dest_match, *foreign_excludes)
 
 
 def get_festival_tours_summary(db, slug: str) -> dict[str, Any]:

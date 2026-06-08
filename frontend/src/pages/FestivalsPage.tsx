@@ -38,6 +38,20 @@ const REGION_COLOR: Record<FestivalRegion, string> = {
   intl: "bg-purple-100 text-purple-800 border-purple-200",
   "": "bg-gray-100 text-gray-700 border-gray-200",
 };
+/**
+ * Cho intl events, ưu tiên show country name thực thay vì generic "Quốc tế".
+ * Festival.location_text có dạng "Seoul, Hàn Quốc" hoặc "Hàn Quốc" → extract.
+ */
+function regionDisplay(region: FestivalRegion, location_text?: string): string {
+  if (region === "intl" && location_text) {
+    // Lấy phần cuối của location_text (thường là country)
+    const parts = location_text.split(",").map(s => s.trim()).filter(Boolean);
+    const last = parts[parts.length - 1] || location_text;
+    return last;
+  }
+  return REGION_LABEL[region];
+}
+
 const CATEGORY_META: Record<FestivalCategory, { label: string; Icon: LucideIcon }> = {
   cultural:  { label: "Văn hóa",   Icon: Sparkles },
   religious: { label: "Tâm linh",  Icon: Building },
@@ -386,7 +400,7 @@ function TimelineCard({ festival: f, onClick }: { festival: Festival; onClick: (
             <div className="flex items-center gap-1.5 flex-wrap mb-2">
               {f.region && (
                 <span className={cn("inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border", REGION_COLOR[f.region])}>
-                  Miền {REGION_LABEL[f.region]}
+                  {f.region === "intl" ? regionDisplay(f.region, f.location_text) : `Miền ${REGION_LABEL[f.region]}`}
                 </span>
               )}
               <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-700 border border-gray-200">
@@ -515,7 +529,7 @@ function CoverageGapTab({ onPickFestival }: { onPickFestival: (slug: string) => 
               <td className="px-3 py-2">
                 {row.region && (
                   <span className={cn("text-[10px] px-1.5 py-0.5 rounded border", REGION_COLOR[row.region as FestivalRegion])}>
-                    {REGION_LABEL[row.region as FestivalRegion]}
+                    {regionDisplay(row.region as FestivalRegion, (row as { location?: string }).location)}
                   </span>
                 )}
               </td>
@@ -717,7 +731,7 @@ function MarketingTab() {
               <div className="flex gap-1.5 flex-wrap">
                 {item.region && (
                   <span className={cn("text-[10px] px-1.5 py-0.5 rounded border", REGION_COLOR[item.region as FestivalRegion])}>
-                    Miền {REGION_LABEL[item.region as FestivalRegion]}
+                    {item.region === "intl" ? regionDisplay(item.region as FestivalRegion, item.location_text) : `Miền ${REGION_LABEL[item.region as FestivalRegion]}`}
                   </span>
                 )}
                 {item.is_lunar && (

@@ -1354,6 +1354,7 @@ export interface CoverageGapItem {
   date_start: string;
   date_end: string;
   region: string;
+  location?: string;
   vtr_tours: number;
   competitor_tours: number;
   top_competitors: Record<string, number>;
@@ -1424,6 +1425,7 @@ export interface MarketingCalendarItem {
   date_start: string;
   date_end: string;
   region: string;
+  location_text?: string;
   category: string;
   is_lunar: boolean;
   suggested_tours: {

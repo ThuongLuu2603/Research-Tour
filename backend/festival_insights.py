@@ -249,6 +249,7 @@ def get_marketing_calendar(db, months_ahead: int = 12) -> list[dict[str, Any]]:
             "date_start": f.date_start.isoformat(),
             "date_end": f.date_end.isoformat(),
             "region": f.region,
+            "location_text": f.location_text or "",
             "category": f.category,
             "is_lunar": f.is_lunar,
             "suggested_tours": [

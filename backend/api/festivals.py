@@ -263,6 +263,7 @@ class CoverageGapItem(BaseModel):
     date_start: str
     date_end: str
     region: str
+    location: str = ""
     vtr_tours: int
     competitor_tours: int
     top_competitors: dict[str, int]
