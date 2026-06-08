@@ -31,26 +31,36 @@ VV_EVENT_LIST_URL = f"{VV_BASE_URL}/en/events"
 VV_DETAIL_PATH_PREFIXES = ("/en/events/", "/en/event/", "/en/festival/")
 VV_MAX_PAGES = 10  # đủ cover 100-200 event nếu mỗi page 20
 
-# Render free tier outbound → vietnam.travel (VN) bị ConnectTimeout do throttle
-# hoặc Cloudflare flag IP range. Fallback qua public CORS proxy allorigins.win
-# (free, no auth, cloudflare edge global → trung gian relay request).
+# Render free tier outbound → vietnam.travel có thể bị throttle hoặc IP range
+# bị Cloudflare flag. Public CORS proxies như allorigins.win đôi khi cũng down
+# (520 overload, 403). Strategy: fail-fast direct (5s) → thử 4 proxy provider
+# khác nhau (mỗi proxy 10s timeout). Total worst-case ~45s/page thay vì 60s+.
 #
-# Strategy: try direct first (nếu network OK, nhanh hơn). Fail → fallback proxy.
-# Hai mode đều dùng cùng UA + headers.
-PROXY_URL = "https://api.allorigins.win/raw"  # ?url=<encoded vietnam.travel URL>
-# Backup proxies nếu allorigins.win down (rate-limit hoặc 500)
-BACKUP_PROXIES = [
-    "https://corsproxy.io/?",        # corsproxy.io — prefix style
-    "https://api.codetabs.com/v1/proxy?quest=",  # codetabs — rate ~5 req/s
+# Lưu ý: bằng cách probe (WebFetch test), thấy allorigins đôi khi 520; corsproxy
+# đôi khi 403. Vì vậy NHIỀU candidate cần thiết, mỗi cái fail-fast.
+DIRECT_TIMEOUT_SEC = 5.0   # ConnectTimeout < 5s = chắc chắn không reach được
+PROXY_TIMEOUT_SEC = 15.0   # Proxy edge thường nhanh hơn, đặt 15s overhead
+RATE_LIMIT_SEC = 1.0       # Giảm rate limit vì có nhiều proxy candidates
+
+# Proxy chain — sort theo độ tin cậy/tốc độ. Đầu tiên thử cái phổ biến nhất.
+PROXY_PROVIDERS = [
+    # (name, build_fn) — build_fn(target_url) -> proxy URL
+    ("allorigins-raw", lambda u: f"https://api.allorigins.win/raw?url={_url_encode(u)}"),
+    ("codetabs",       lambda u: f"https://api.codetabs.com/v1/proxy?quest={_url_encode(u)}"),
+    ("corsproxy.io",   lambda u: f"https://corsproxy.io/?{_url_encode(u)}"),
+    ("allorigins-get", lambda u: f"https://api.allorigins.win/get?url={_url_encode(u)}"),  # JSON wrapper
+    ("thingproxy",     lambda u: f"https://thingproxy.freeboard.io/fetch/{u}"),
 ]
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
-RATE_LIMIT_SEC = 1.5
-REQUEST_TIMEOUT_SEC = 60.0
-MAX_RETRIES = 2
+
+
+def _url_encode(u: str) -> str:
+    from urllib.parse import quote
+    return quote(u, safe="")
 
 # Tháng tiếng Anh → số (vietnam.travel dùng query ?month=jun&year=2026)
 _MONTH_SLUG = [
@@ -210,61 +220,56 @@ def _month_to_num(s: str) -> int | None:
     return None
 
 
-def _build_proxy_urls(target_url: str) -> list[str]:
-    """Build list các URL proxy để thử lần lượt khi direct fail."""
-    from urllib.parse import quote
-    encoded = quote(target_url, safe="")
-    out = [f"{PROXY_URL}?url={encoded}"]
-    for prox in BACKUP_PROXIES:
-        if prox.endswith("?"):  # corsproxy.io style: prefix raw URL (kèm encode)
-            out.append(prox + encoded)
-        else:
-            out.append(prox + encoded)
-    return out
-
-
-def _try_get(url: str, client) -> tuple[str | None, str | None]:
-    """1 lần GET. Trả (html, error_type) — error_type None nếu thành công."""
+def _try_get(url: str, client, timeout: float) -> tuple[str | None, str | None]:
+    """1 lần GET với timeout cụ thể. Trả (html, error_type)."""
     try:
-        r = client.get(url, timeout=REQUEST_TIMEOUT_SEC)
+        r = client.get(url, timeout=timeout)
         if r.status_code == 200:
-            return r.text, None
+            text = r.text
+            # allorigins-get JSON wrapper: {"contents": "...html..."}
+            if "allorigins.win/get" in url and text.startswith("{"):
+                try:
+                    import json
+                    data = json.loads(text)
+                    text = data.get("contents", "")
+                except Exception:  # noqa: BLE001
+                    pass
+            return text, None
         return None, f"HTTP {r.status_code}"
     except Exception as e:  # noqa: BLE001
-        return None, f"{type(e).__name__}: {str(e)[:120]}"
+        return None, f"{type(e).__name__}: {str(e)[:80]}"
 
 
 def _fetch(url: str, client) -> str | None:
-    """GET URL — thử direct trước, fail thì fallback qua public proxies.
+    """Fail-fast multi-provider fetch.
 
-    Hành trình:
-      1. Direct vietnam.travel — Render có thể fail ConnectTimeout.
-      2. allorigins.win — Cloudflare edge global, thường reach VN OK.
-      3. corsproxy.io — backup.
-      4. codetabs proxy — backup nữa.
+    Strategy:
+      1. Direct (5s timeout) — nếu network OK, không tốn time.
+      2. Thử lần lượt 5 proxy providers (15s mỗi cái).
+      3. Sleep RATE_LIMIT_SEC chỉ sau khi thành công (không sleep sau fail
+         để không kéo dài chain proxy fail).
 
-    Mỗi attempt timeout 60s, không retry nội bộ (1 fail = next provider).
-    Sleep RATE_LIMIT_SEC sau mỗi attempt thành công, không sleep sau fail
-    (đỡ chậm khi cả chain proxy down).
+    Worst case (cả direct + 5 proxy fail): ~80s/url. Best case: <1s direct.
+    Trung bình khi direct fail: 5 + 1-3 × 15s = ~20-50s/url.
     """
     # Pass 1: direct
-    html, err = _try_get(url, client)
+    html, err = _try_get(url, client, DIRECT_TIMEOUT_SEC)
     if html:
         time.sleep(RATE_LIMIT_SEC)
         return html
-    logger.info("Festival direct fail: %s — fallback proxy", err)
+    logger.info("Direct fail (%s) — try %d proxies", err, len(PROXY_PROVIDERS))
 
-    # Pass 2: thử các proxy lần lượt
-    proxy_urls = _build_proxy_urls(url)
-    for i, proxy_url in enumerate(proxy_urls, start=1):
-        html, err = _try_get(proxy_url, client)
+    # Pass 2: thử proxy chain
+    for name, build_fn in PROXY_PROVIDERS:
+        proxy_url = build_fn(url)
+        html, err = _try_get(proxy_url, client, PROXY_TIMEOUT_SEC)
         if html:
-            logger.info("Festival proxy #%d thành công", i)
+            logger.info("Proxy [%s] OK (HTML %d bytes)", name, len(html))
             time.sleep(RATE_LIMIT_SEC)
             return html
-        logger.info("Festival proxy #%d fail: %s", i, err)
+        logger.info("Proxy [%s] fail: %s", name, err)
 
-    logger.warning("Festival fetch %s: direct + %d proxy đều fail", url, len(proxy_urls))
+    logger.warning("All providers fail for %s", url)
     return None
 
 
@@ -459,7 +464,7 @@ def _parse_detail_page(html: str) -> dict[str, str]:
 
 
 def _build_http_client(httpx_):
-    """Build httpx Client với headers + timeout breakdown."""
+    """Build httpx Client với headers + per-call timeout (override mỗi GET)."""
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -468,11 +473,11 @@ def _build_http_client(httpx_):
         "Connection": "keep-alive",
         "Upgrade-Insecure-Requests": "1",
     }
-    timeout_config = httpx_.Timeout(connect=20.0, read=REQUEST_TIMEOUT_SEC, write=10.0, pool=10.0)
+    # Timeout per-call (override trong _try_get). Default đặt 30s phòng hờ.
     return httpx_.Client(
         headers=headers,
         follow_redirects=True,
-        timeout=timeout_config,
+        timeout=httpx_.Timeout(30.0),
     )
 
 
@@ -552,15 +557,11 @@ def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
         logger.info("[VT] xong: %d list page OK, %d fail, %d event mới", vt_ok, vt_fail, len(out))
 
         # ── Source 2: visitvietnams.com ─────────────────────────────────
-        # Chỉ chạy nếu VT có ≥80% fail (network bị block) — đỡ scrape thừa
-        # khi VT hoạt động bình thường.
-        total_vt = vt_ok + vt_fail
-        if total_vt == 0 or (vt_fail / total_vt) >= 0.8:
-            logger.info("[VV] Kích hoạt secondary source visitvietnams.com (VT fail %d/%d)", vt_fail, total_vt)
-            vv_count = _scrape_visitvietnams(client, seen_slugs, out, years[0])
-            logger.info("[VV] xong: thêm %d event", vv_count)
-        else:
-            logger.info("[VV] Skip — vietnam.travel OK đủ (%d/%d list page)", vt_ok, total_vt)
+        # LUÔN chạy (không conditional) — vietnam.travel rất khó reach từ Render.
+        # VV có thể bổ sung event mà VT không có hoặc reverse.
+        logger.info("[VV] Bắt đầu scrape visitvietnams.com (VT đã được: %d event, %d/%d page OK)", len(out), vt_ok, vt_ok + vt_fail)
+        vv_count = _scrape_visitvietnams(client, seen_slugs, out, years[0])
+        logger.info("[VV] xong: thêm %d event", vv_count)
 
     logger.info("Festival scrape xong: %d event tổng", len(out))
     return out
