@@ -312,24 +312,30 @@ def _try_get(url: str, client, timeout: float) -> tuple[str | None, str | None]:
 
 
 def _fetch(url: str, client) -> str | None:
-    """Fetch URL: direct trước, fallback Jina Reader nếu direct fail.
+    """Fetch URL — FORCE qua Jina Reader.
 
-    Jina returns markdown (cleaner) — parse riêng trong _parse_list_page_markdown.
+    Lý do: lehoivietnam.com.vn là SPA (JavaScript-rendered). Direct fetch
+    trả HTTP 200 với HTML skeleton, KHÔNG có article.lh-event-item nào.
+    Browser cần execute JS để render cards. Jina Reader chạy headless browser
+    nội bộ → trả content sau khi JS render xong.
+
+    Strategy: force Jina ngay từ đầu (tiết kiệm 1 round-trip direct vô ích).
+    Direct fallback chỉ kích hoạt nếu Jina trả empty (rare).
     """
+    jina_url = f"https://r.jina.ai/{url}"
+    html, err = _try_get(jina_url, client, JINA_TIMEOUT_SEC)
+    if html and len(html) > 500:  # Min size cho content có nghĩa
+        logger.info("Jina OK (%d bytes)", len(html))
+        time.sleep(RATE_LIMIT_SEC)
+        return html
+    logger.info("Jina fail/empty (%s, %d bytes) — thử direct", err, len(html) if html else 0)
+
+    # Direct fallback (rare)
     html, err = _try_get(url, client, DIRECT_TIMEOUT_SEC)
     if html:
         time.sleep(RATE_LIMIT_SEC)
         return html
-    logger.info("Direct fail (%s) — fallback Jina", err)
-
-    # Fallback Jina
-    jina_url = f"https://r.jina.ai/{url}"
-    html, err = _try_get(jina_url, client, JINA_TIMEOUT_SEC)
-    if html:
-        logger.info("Jina OK (%d bytes)", len(html))
-        time.sleep(RATE_LIMIT_SEC)
-        return html
-    logger.warning("Cả direct + Jina fail cho %s: %s", url, err)
+    logger.warning("Cả Jina + direct fail cho %s: %s", url, err)
     return None
 
 
@@ -448,8 +454,13 @@ def _parse_card_html(card) -> dict[str, Any] | None:
 def _parse_list_page_markdown(content: str) -> list[dict[str, Any]]:
     """Parse Jina markdown output cho lehoivietnam list page.
 
-    Strategy block-based: tìm tất cả link [name](/vi/su-kien/...) → mỗi link
-    là 1 event. Block = từ link[i-1].end đến link[i+1].start.
+    Strategy block-based với precedence "after link":
+      - Tìm tất cả link [name](/vi/su-kien/...).
+      - Mỗi link là 1 event. Block = từ link[i-1].end đến link[i+1].start.
+      - QUAN TRỌNG: scan date/location/description trong `after_link` TRƯỚC,
+        chỉ fallback `block` nếu after_link không có (vì block leak data
+        event trước nếu event này không có date riêng).
+      - Image: nằm TRƯỚC link (layout image→title).
     """
     events: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -470,48 +481,80 @@ def _parse_list_page_markdown(content: str) -> list[dict[str, Any]]:
             continue
         if not name or len(name) < 3:
             continue
-        # Skip nếu name là image alt rỗng hoặc URL-like
+        # Skip nếu name là image alt-like (bắt đầu bằng `!` hoặc URL)
         if name.startswith("!") or name.startswith("http"):
             continue
         seen.add(slug)
 
         block_start = matches[i - 1].end() if i > 0 else 0
         block_end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
-        block = content[block_start:block_end]
+        before_link = content[block_start:m.start()]
+        after_link = content[m.end():block_end]
 
-        # Image: ![](url) cuối cùng TRƯỚC link, hoặc đầu tiên SAU link
+        # Image: ![](url) cuối cùng TRƯỚC link (layout lehoivietnam: image → title)
         image_url = ""
-        before = content[block_start:m.start()]
-        img_matches = re.findall(r"!\[[^\]]*?\]\((https?://[^\s)]+?)\)", before)
+        img_matches = re.findall(r"!\[[^\]]*?\]\((https?://[^\s)]+?)\)", before_link)
         if img_matches:
             image_url = img_matches[-1]
-
-        # Date text
-        date_match = re.search(
-            r"\d{1,2}/\d{1,2}(?:/\d{4})?\s*[-–]\s*\d{1,2}/\d{1,2}(?:/\d{4})?",
-            block,
-        )
-        if not date_match:
-            date_match = re.search(r"\d{1,2}/\d{1,2}(?:/\d{4})?", block)
-        date_text = date_match.group(0) if date_match else ""
-
-        # Location: trong block sau link, tìm địa danh
-        after = content[m.end():block_end]
-        location_text = ""
-        # Markdown location link: [Đắk Lắk](/vi/dia-diem/...)
-        loc_link_match = re.search(r"\[([^\]\n]+?)\]\(/vi/dia-diem/[^)]+?\)", after)
-        if loc_link_match:
-            location_text = loc_link_match.group(1).strip()
         else:
-            # Fallback: tìm tỉnh trong text
-            for kw in _REGION_BY_PROVINCE_KEYWORD.keys():
-                if kw in after.lower():
-                    idx = after.lower().find(kw)
-                    location_text = after[idx:idx + len(kw)].title()
-                    break
+            # Fallback after_link
+            img_matches = re.findall(r"!\[[^\]]*?\]\((https?://[^\s)]+?)\)", after_link)
+            if img_matches:
+                image_url = img_matches[0]
 
-        # Description: 200 chars sau link đầu (cắt tại newline đôi hoặc link kế)
-        desc = re.split(r"\n{2,}|\[[^\]]+?\]\(/vi/", after)[0][:500].strip()
+        # Date: tìm trong after_link TRƯỚC (after_link = data của event này).
+        # Thử các pattern theo độ specific (longest first để tránh "15/6" nuốt "10 - 15/6").
+        date_text = ""
+        date_patterns = [
+            # "DD/M/YYYY - DD/M/YYYY"
+            r"\d{1,2}/\d{1,2}/\d{4}\s*[-–]\s*\d{1,2}/\d{1,2}/\d{4}",
+            # "DD/M - DD/M/YYYY" (year ở cuối)
+            r"\d{1,2}/\d{1,2}\s*[-–]\s*\d{1,2}/\d{1,2}/\d{4}",
+            # "DD/M - DD/M" (no year)
+            r"\d{1,2}/\d{1,2}\s*[-–]\s*\d{1,2}/\d{1,2}(?!/?\d)",
+            # "DD - DD/M" (cùng tháng, no slash on start) ⭐ FIX
+            r"\d{1,2}\s*[-–]\s*\d{1,2}/\d{1,2}(?!/?\d)",
+            # "DD-DD/M" no space
+            r"\d{1,2}-\d{1,2}/\d{1,2}(?!/?\d)",
+            # "DD/M/YYYY" single
+            r"\d{1,2}/\d{1,2}/\d{4}",
+            # "DD/M" single
+            r"\d{1,2}/\d{1,2}(?!/?\d)",
+        ]
+        for scope_text in (after_link, before_link):
+            for pat in date_patterns:
+                date_match = re.search(pat, scope_text)
+                if date_match:
+                    date_text = date_match.group(0)
+                    break
+            if date_text:
+                break
+
+        # Location: tìm trong after_link TRƯỚC
+        location_text = ""
+        for scope_text in (after_link, before_link):
+            # Markdown location link: [Đắk Lắk](/vi/dia-diem/...)
+            # Chọn link cuối cùng (thường là tỉnh — bao trùm hơn phường/xã)
+            loc_matches = re.findall(r"\[([^\]\n]+?)\]\(/vi/dia-diem/[^)]+?\)", scope_text)
+            if loc_matches:
+                # Ưu tiên match dài hơn / bao trùm hơn (vd "Đắk Lắk" > "Xã Ea Knuếc")
+                # Heuristic: lấy match cuối (thường là tỉnh sau phường)
+                location_text = loc_matches[-1].strip()
+                break
+            # Fallback: tìm tỉnh trong text
+            scope_low = scope_text.lower()
+            for kw in _REGION_BY_PROVINCE_KEYWORD.keys():
+                if kw in scope_low:
+                    idx = scope_low.find(kw)
+                    location_text = scope_text[idx:idx + len(kw)].title()
+                    break
+            if location_text:
+                break
+
+        # Description: trong after_link, cắt tại newline đôi hoặc link kế
+        desc = re.split(r"\n{2,}|\[[^\]]+?\]\(/vi/", after_link)[0][:500].strip()
+        # Remove dữ liệu "Sắp diễn ra", "cập nhật X ngày trước" — không phải description
+        desc = re.sub(r"\b(Sắp diễn ra|Đang diễn ra|Đã kết thúc|cập nhật[^.]*?trước)\b", "", desc).strip()
 
         events.append({
             "slug": slug,
