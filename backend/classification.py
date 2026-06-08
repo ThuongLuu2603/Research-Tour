@@ -1137,10 +1137,30 @@ def _match_departure_alias(text: str) -> str | None:
 
 
 def resolve_departure_point(raw: str) -> str:
-    """Chuẩn hóa điểm khởi hành từ alias → tên chính thức."""
+    """Chuẩn hóa điểm khởi hành từ alias → tên chính thức.
+
+    PRESERVE RAW khi raw chứa multi-segment indicators:
+      ✈, →, ←, |   ← multi-leg journey separators
+      Hoặc có ≥ 2 phần khi split bằng dash → tour multi-điểm.
+
+    Lý do: alias substring match (vd "TP. Hồ Chí Minh" len ≥ 8) sẽ ăn vào
+    "TP. HỒ CHÍ MINH ✈ LỆ GIANG" → trả canonical → strip "✈ LỆ GIANG" → mất
+    thông tin. User không thấy raw trong panel "Chưa khớp alias" để map.
+    Giữ raw cho user manual map sau.
+
+    Cho single-segment (vd "Sài Gòn", "ĐÀ LẠT"): vẫn alias match như cũ.
+    """
     s = (raw or "").strip()
     if not s:
         return ""
+    # Multi-leg indicators — preserve raw, không auto-resolve
+    if any(sep in s for sep in ("✈", "→", "←", "|")):
+        return s[:256]
+    # Multi-segment dash: "A - B - C" với ≥ 2 phần text có nghĩa → preserve raw
+    dash_parts = [p.strip() for p in re.split(r"[\-–—]", s) if p.strip() and len(p.strip()) >= 3]
+    if len(dash_parts) >= 2:
+        return s[:256]
+
     matched = _match_departure_alias(s)
     if matched:
         return matched
