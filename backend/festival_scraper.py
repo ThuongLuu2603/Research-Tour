@@ -34,11 +34,11 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://lehoivietnam.com.vn"
 API_URL = f"{BASE_URL}/api/events"
-# Default scrape "events đang/sắp diễn ra" thay vì toàn bộ history.
-# Filter ?from=YYYY-MM-DD&sort=start_date_asc trả ~100-200 events relevant
-# (event chưa kết thúc hoặc chưa bắt đầu) → đủ cho timeline UI.
-# Tổng 148 pages = 2,953 events history, nhưng đa số past → không hiện trên UI.
-DEFAULT_MAX_PAGES = 15  # ~300 events upcoming, đủ cho 6-12 tháng tới
+# Scrape FULL dataset 2,953 events (148 pages × 20 per page).
+# DB lưu tất cả, UI filter date_end >= today để chỉ hiện upcoming/ongoing.
+# Đảm bảo bắt được tất cả 152 intl events (Seoul Food, FIFA, Eurosatory, ...).
+# Trade-off: scrape time 75-150s nhưng chỉ 1 lần/tuần (cron weekly).
+DEFAULT_MAX_PAGES = 150  # +2 safety margin
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -455,13 +455,14 @@ def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
     intl_count = 0
     domestic_count = 0
 
-    # Filter "upcoming + ongoing" — events có end_date >= today.
-    today_iso = date.today().isoformat()
+    # Scrape FULL dataset (no date filter). UI sẽ filter date_end >= today để
+    # chỉ hiện upcoming/ongoing. Lưu tất cả vào DB để có context history.
+    today_iso = date.today().isoformat()  # Vẫn cần cho Phase 2 intl search
 
     with httpx.Client(headers=headers, follow_redirects=True, timeout=REQUEST_TIMEOUT_SEC) as client:
         total_pages = None
         for page in range(1, max_pages + 1):
-            url = f"{API_URL}?from={today_iso}&sort=start_date_asc&page={page}"
+            url = f"{API_URL}?page={page}"
             data = _fetch_json_page(url, client)
             if not data:
                 logger.warning("Page %d: fetch fail", page)
@@ -510,20 +511,12 @@ def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
             time.sleep(RATE_LIMIT_SEC)
 
     logger.info(
-        "Festival main scrape: %d event (domestic=%d, intl=%d)",
+        "Festival scrape xong: %d event tổng (domestic=%d, intl=%d)",
         len(out), domestic_count, intl_count,
     )
-
-    # ── Phase 2: Intl search ────────────────────────────────────────────
-    # API filter ?from=today bỏ sót nhiều intl events (vd Seoul Food chỉ
-    # xuất hiện khi search ?q=Seoul). Bổ sung scrape qua country keywords.
-    with httpx.Client(headers=headers, follow_redirects=True, timeout=REQUEST_TIMEOUT_SEC) as client:
-        intl_extras = _scrape_intl_via_search(client, seen_slugs, today_iso)
-    out.extend(intl_extras)
-    logger.info(
-        "Festival scrape xong: %d event tổng (domestic=%d, intl=%d + %d từ search)",
-        len(out), domestic_count, intl_count, len(intl_extras),
-    )
+    # Full scrape 148 pages đã cover tất cả 152 intl events → KHÔNG cần
+    # Phase 2 search. Giữ hàm _scrape_intl_via_search như utility dự phòng
+    # nếu sau này muốn target specific intl events.
     return out
 
 
