@@ -165,15 +165,19 @@ def refresh_festivals(
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """Manual trigger scrape vietnam.travel/event → upsert festivals."""
-    from festival_scraper import run_festival_scrape
+    """Manual trigger scrape vietnam.travel/event → upsert festivals (background).
 
-    try:
-        result = run_festival_scrape(db)
-        return {"message": "Scrape hoàn tất", **result}
-    except Exception as e:
-        logger.exception("Festival scrape lỗi: %s", e)
-        raise HTTPException(502, f"Scrape thất bại: {e}") from e
+    Chạy nền vì scrape có thể 2-5 phút (24 list page × rate limit 1.5s + 30-60 detail
+    page × 1.5s + retry SSL). Endpoint trả ngay, user theo dõi qua /api/scraper/jobs.
+    """
+    import threading
+    from scheduler import _run_festival_scrape
+
+    threading.Thread(target=_run_festival_scrape, daemon=True, name="festival-scrape-manual").start()
+    return {
+        "message": "Đã bắt đầu scrape nền — kiểm tra Job History (Vận hành) hoặc đợi 2-5 phút rồi reload trang.",
+        "started": True,
+    }
 
 
 # ── Phase 2: Cross-ref tour ─────────────────────────────────────────────────

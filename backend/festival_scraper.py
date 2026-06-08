@@ -25,12 +25,21 @@ BASE_URL = "https://vietnam.travel"
 # Trang /event là listing, link tới detail vẫn là /things-to-do/festival-event/{slug}.
 EVENT_LIST_URL = f"{BASE_URL}/event"
 DETAIL_PATH_PREFIX = "/things-to-do/festival-event/"
+# User-Agent: dùng Chrome-like để tránh WAF chặn bot. Trước đây dùng string
+# "VietravelOTA-FestivalBot/1.0" rõ ràng nhưng vietnam.travel có thể block ở edge
+# (Cloudflare/WAF) khiến SSL handshake timeout. Thử Chrome UA để bypass.
 USER_AGENT = (
-    "VietravelOTA-FestivalBot/1.0 (research; respects robots.txt; "
-    "contact via vietravel.com)"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
-RATE_LIMIT_SEC = 1.0
-REQUEST_TIMEOUT_SEC = 30.0
+# Rate limit: vẫn polite (1.5s ≈ 40 req/min). Mỗi lần scrape ~24 list page +
+# 30-60 detail page = ~100-130 request × 1.5s = 2.5-3 phút tổng.
+RATE_LIMIT_SEC = 1.5
+# Timeout: Render free tier → vietnam.travel (server VN) qua quốc tế có thể chậm.
+# SSL handshake riêng có thể tốn 3-10s. Tăng từ 30s → 60s.
+REQUEST_TIMEOUT_SEC = 60.0
+# Retry: connect/SSL errors → thử lại 1 lần với backoff 3s.
+MAX_RETRIES = 2
 
 # Tháng tiếng Anh → số (vietnam.travel dùng query ?month=jun&year=2026)
 _MONTH_SLUG = [
@@ -191,18 +200,35 @@ def _month_to_num(s: str) -> int | None:
 
 
 def _fetch(url: str, client) -> str | None:
-    """GET URL với rate limit + retry 1 lần. Trả HTML hoặc None nếu fail."""
-    try:
-        r = client.get(url, timeout=REQUEST_TIMEOUT_SEC)
-        if r.status_code != 200:
-            logger.warning("Festival fetch %s -> HTTP %d", url, r.status_code)
-            return None
-        return r.text
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Festival fetch %s lỗi: %s", url, e)
-        return None
-    finally:
-        time.sleep(RATE_LIMIT_SEC)
+    """GET URL với rate limit + retry. Trả HTML hoặc None nếu fail sau retry.
+
+    Retry trên SSL/connect timeout phổ biến từ Render → server VN (qua quốc tế
+    có thể chậm SSL handshake). Backoff 3s giữa các lần thử.
+    """
+    last_err: Exception | None = None
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            r = client.get(url, timeout=REQUEST_TIMEOUT_SEC)
+            time.sleep(RATE_LIMIT_SEC)
+            if r.status_code != 200:
+                logger.warning("Festival fetch %s -> HTTP %d", url, r.status_code)
+                return None
+            return r.text
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            if attempt < MAX_RETRIES:
+                logger.info(
+                    "Festival fetch %s thử %d/%d lỗi: %s — retry sau 3s",
+                    url, attempt + 1, MAX_RETRIES + 1, type(e).__name__,
+                )
+                time.sleep(3.0)
+            else:
+                logger.warning(
+                    "Festival fetch %s thất bại sau %d lần: %s",
+                    url, MAX_RETRIES + 1, e,
+                )
+                time.sleep(RATE_LIMIT_SEC)
+    return None
 
 
 def _parse_list_page(html: str) -> list[dict[str, Any]]:
@@ -410,11 +436,27 @@ def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
     if years is None:
         years = [today.year, today.year + 1]
 
-    headers = {"User-Agent": USER_AGENT, "Accept-Language": "vi,en;q=0.9"}
+    # Headers chuẩn browser để tránh WAF
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+    }
     seen_slugs: set[str] = set()
     out: list[dict[str, Any]] = []
 
-    with httpx.Client(headers=headers, follow_redirects=True) as client:
+    # Timeout breakdown: connect=20s + read=60s. Render → VN qua quốc tế có thể
+    # chậm phase TCP connect lẫn TLS handshake; pool_connect riêng tránh kẹt cứng.
+    timeout_config = httpx.Timeout(connect=20.0, read=REQUEST_TIMEOUT_SEC, write=10.0, pool=10.0)
+    with httpx.Client(
+        headers=headers,
+        follow_redirects=True,
+        timeout=timeout_config,
+        # http2=False (default) — tránh negotiation phụ vì site có thể chỉ HTTP/1.1
+    ) as client:
         for year in years:
             for month_idx, month_slug in enumerate(_MONTH_SLUG, start=1):
                 url = f"{EVENT_LIST_URL}?month={month_slug}&year={year}"
