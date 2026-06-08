@@ -1,24 +1,32 @@
-"""Scrape vietnam.travel/event + visitvietnams.com — Sự kiện & Lễ hội VN.
+"""Scrape lehoivietnam.com.vn — Sự kiện & Lễ hội VN (Phase 1.3 — site mới).
 
-3 chế độ fetch (ưu tiên theo thứ tự):
+Lý do đổi source:
+  - vietnam.travel + visitvietnams.com: Render bị Cloudflare block.
+  - lehoivietnam.com.vn: 2,953 lễ nội địa + 152 lễ quốc tế. Robots.txt allow,
+    không có WAF aggressive. Direct fetch nên work từ Render.
 
-  1. GOOGLE APPS SCRIPT PROXY (recommend — luôn work)
-     User deploy file _workspace/google_apps_script_festival_proxy.gs làm
-     Web App. Set env var FESTIVAL_PROXY_URL=https://script.google.com/macros/s/.../exec
-     Backend fetch JSON từ URL này → instant data, không cần parse HTML.
+URL patterns:
+  - Listing domestic: /vi/kham-pha?page=N  (247 pages × ~12 = ~2,953 events)
+  - Listing intl:     /vi/kham-pha?scope=intl&page=N  (13 pages × ~12 = ~152 events)
+  - Detail:           /vi/su-kien/{id}-{slug}-{digits}
 
-  2. JINA READER PROXY (fallback)
-     Free 1M token/tháng. r.jina.ai/{url} trả markdown của trang.
-     Backend parse markdown để extract events.
+CSS selectors (HTML đã verify từ user):
+  article.lh-event-item — wrapper mỗi card
+  a.lh-event-item-media (href=detail, có img + badge)
+    img — src, alt (= name)
+    span.lh-event-item-badge — status ("Sắp diễn ra")
+  div.lh-event-item-body
+    div.lh-event-item-head > h3 > a — title + href detail
+    div.lh-event-item-meta-chip-wrap
+      a.lh-event-chip.lh-loc-link — location (có thể 2: phường + tỉnh)
+      span.lh-event-chip — date text "15/8 - 2/9"
+    p — description snippet
+    div.lh-event-item-stats — "cập nhật X ngày trước"
+    div.lh-event-item-foot > a.lh-btn — CTA
 
-  3. PUBLIC CORS PROXY chain (last resort)
-     allorigins.win, codetabs.com, ... — bất ổn (520, 403).
+Fallback: nếu direct fail, dùng r.jina.ai (đã verify work) trả markdown.
 
-Lý do cần proxy: Render outbound → vietnam.travel/visitvietnams bị
-Cloudflare/WAF block → ConnectTimeout. Google Apps Script chạy trên
-Google IP whitelist nên fetch OK.
-
-Tần suất: weekly cron. Crawl: 24 list page VT + 15 page VV qua proxy.
+Tần suất: weekly cron.
 """
 from __future__ import annotations
 
@@ -33,97 +41,132 @@ from urllib.parse import urljoin
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "https://vietnam.travel"
-EVENT_LIST_URL = f"{BASE_URL}/event"
-DETAIL_PATH_PREFIX = "/things-to-do/festival-event/"
+BASE_URL = "https://lehoivietnam.com.vn"
+LIST_URL_DOMESTIC = f"{BASE_URL}/vi/kham-pha"  # ?page=N
+LIST_URL_INTL = f"{BASE_URL}/vi/kham-pha"      # ?scope=intl&page=N
+DETAIL_PATH_PREFIX = "/vi/su-kien/"
 
-# Secondary source: visitvietnams.com — pagination ?page=N
-# Robots.txt cho /events OK. Detail URL pattern guess: /en/events/{slug}
-VV_BASE_URL = "https://visitvietnams.com"
-VV_EVENT_LIST_URL = f"{VV_BASE_URL}/en/events"
-# Confirmed pattern qua Jina probe: chỉ /en/events/{slug}, không có /en/event/ hay /en/festival/.
-VV_DETAIL_PATH_PREFIXES = ("/en/events/",)
-VV_MAX_PAGES = 15  # 15 page × 20 event = 300 event max
+# Default: scrape 30 page domestic (~360 event) + all 13 page intl (~152 event).
+# Configurable qua env vars FESTIVAL_MAX_DOMESTIC_PAGES / FESTIVAL_MAX_INTL_PAGES.
+DEFAULT_MAX_DOMESTIC_PAGES = 30
+DEFAULT_MAX_INTL_PAGES = 13
 
-# Render free tier outbound → vietnam.travel có thể bị throttle hoặc IP range
-# bị Cloudflare flag. Public CORS proxies như allorigins.win đôi khi cũng down
-# (520 overload, 403). Strategy: fail-fast direct (5s) → thử 4 proxy provider
-# khác nhau (mỗi proxy 10s timeout). Total worst-case ~45s/page thay vì 60s+.
-#
-# Lưu ý: bằng cách probe (WebFetch test), thấy allorigins đôi khi 520; corsproxy
-# đôi khi 403. Vì vậy NHIỀU candidate cần thiết, mỗi cái fail-fast.
-DIRECT_TIMEOUT_SEC = 5.0   # ConnectTimeout < 5s = chắc chắn không reach được
-PROXY_TIMEOUT_SEC = 15.0   # Proxy edge thường nhanh hơn, đặt 15s overhead
-RATE_LIMIT_SEC = 1.0       # Giảm rate limit vì có nhiều proxy candidates
-
-# Proxy chain — sort theo độ tin cậy. r.jina.ai là Jina AI Reader (free 1M
-# token/tháng, KHÔNG bị Cloudflare block vì là AI research tool nổi tiếng).
-# Đặt đầu tiên vì stable hơn public CORS proxies hỗn loạn.
-PROXY_PROVIDERS = [
-    # (name, build_fn) — build_fn(target_url) -> proxy URL
-    ("jina-reader",    lambda u: f"https://r.jina.ai/{u}"),  # path-prefix style
-    ("allorigins-raw", lambda u: f"https://api.allorigins.win/raw?url={_url_encode(u)}"),
-    ("codetabs",       lambda u: f"https://api.codetabs.com/v1/proxy?quest={_url_encode(u)}"),
-    ("corsproxy.io",   lambda u: f"https://corsproxy.io/?{_url_encode(u)}"),
-    ("allorigins-get", lambda u: f"https://api.allorigins.win/get?url={_url_encode(u)}"),  # JSON wrapper
-    ("thingproxy",     lambda u: f"https://thingproxy.freeboard.io/fetch/{u}"),
-]
-
+# User-Agent browser-like (lehoivietnam có vẻ không có WAF aggressive nhưng vẫn safe).
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
+DIRECT_TIMEOUT_SEC = 30.0
+JINA_TIMEOUT_SEC = 45.0
+RATE_LIMIT_SEC = 1.0  # Polite — 1 req/giây
 
+EXPAND_MONTHS_AHEAD = 12
 
-def _url_encode(u: str) -> str:
-    from urllib.parse import quote
-    return quote(u, safe="")
+# ── Province + region map (VN) ───────────────────────────────────────────
 
-# Tháng tiếng Anh → số (vietnam.travel dùng query ?month=jun&year=2026)
-_MONTH_SLUG = [
-    "jan", "feb", "mar", "apr", "may", "jun",
-    "jul", "aug", "sep", "oct", "nov", "dec",
-]
-
-# Map prefix tỉnh → vùng (Phase 1 hardcode; Phase 2 sẽ join provinces table)
+# Map keyword tỉnh/thành lowercase → region (bac/trung/nam).
+# Cover toàn bộ 63 tỉnh (chỉ tên ngắn để match nhanh).
 _REGION_BY_PROVINCE_KEYWORD: dict[str, str] = {
-    # Bắc
+    # Bắc Bộ
     "hà nội": "bac", "ha noi": "bac", "hanoi": "bac",
-    "hải phòng": "bac", "quảng ninh": "bac", "lào cai": "bac", "sapa": "bac",
-    "ninh bình": "bac", "hà giang": "bac", "thái nguyên": "bac",
-    "bắc ninh": "bac", "phú thọ": "bac", "yên bái": "bac",
-    "điện biên": "bac", "lạng sơn": "bac", "tuyên quang": "bac",
-    # Trung
-    "huế": "trung", "thừa thiên": "trung", "đà nẵng": "trung", "da nang": "trung",
-    "hội an": "trung", "hoi an": "trung", "quảng nam": "trung",
-    "quảng bình": "trung", "quảng trị": "trung", "khánh hòa": "trung",
-    "nha trang": "trung", "phú yên": "trung", "bình định": "trung",
-    "ninh thuận": "trung", "bình thuận": "trung", "phan thiết": "trung",
-    "đà lạt": "trung", "lâm đồng": "trung", "kon tum": "trung",
-    "gia lai": "trung", "đắk lắk": "trung", "buôn ma thuột": "trung",
-    # Nam
-    "hồ chí minh": "nam", "ho chi minh": "nam", "sài gòn": "nam", "saigon": "nam",
-    "tp.hcm": "nam", "tphcm": "nam", "hcm": "nam",
-    "cần thơ": "nam", "vũng tàu": "nam", "bà rịa": "nam",
-    "đồng nai": "nam", "bình dương": "nam", "long an": "nam",
-    "tiền giang": "nam", "bến tre": "nam", "vĩnh long": "nam",
-    "an giang": "nam", "kiên giang": "nam", "phú quốc": "nam",
-    "cà mau": "nam", "sóc trăng": "nam", "trà vinh": "nam",
-    "đồng tháp": "nam", "hậu giang": "nam", "bạc liêu": "nam",
+    "hải phòng": "bac", "hai phong": "bac",
+    "quảng ninh": "bac", "quang ninh": "bac", "hạ long": "bac", "ha long": "bac",
+    "lào cai": "bac", "lao cai": "bac", "sapa": "bac", "sa pa": "bac",
+    "ninh bình": "bac", "ninh binh": "bac", "tràng an": "bac", "trang an": "bac",
+    "hà giang": "bac", "ha giang": "bac",
+    "thái nguyên": "bac", "thai nguyen": "bac",
+    "bắc ninh": "bac", "bac ninh": "bac",
+    "phú thọ": "bac", "phu tho": "bac",
+    "yên bái": "bac", "yen bai": "bac", "mù cang chải": "bac", "mu cang chai": "bac",
+    "điện biên": "bac", "dien bien": "bac",
+    "lạng sơn": "bac", "lang son": "bac",
+    "tuyên quang": "bac", "tuyen quang": "bac",
+    "bắc giang": "bac", "bac giang": "bac",
+    "bắc kạn": "bac", "bac kan": "bac",
+    "cao bằng": "bac", "cao bang": "bac",
+    "hòa bình": "bac", "hoa binh": "bac",
+    "hải dương": "bac", "hai duong": "bac",
+    "hưng yên": "bac", "hung yen": "bac",
+    "lai châu": "bac", "lai chau": "bac",
+    "nam định": "bac", "nam dinh": "bac",
+    "nghệ an": "bac", "nghe an": "bac",
+    "sơn la": "bac", "son la": "bac",
+    "thái bình": "bac", "thai binh": "bac",
+    "thanh hóa": "bac", "thanh hoa": "bac",
+    "vĩnh phúc": "bac", "vinh phuc": "bac",
+    "hà nam": "bac", "ha nam": "bac",
+    # Trung Bộ
+    "huế": "trung", "hue": "trung", "thừa thiên": "trung", "thua thien": "trung",
+    "đà nẵng": "trung", "da nang": "trung",
+    "quảng nam": "trung", "quang nam": "trung", "hội an": "trung", "hoi an": "trung",
+    "quảng bình": "trung", "quang binh": "trung", "phong nha": "trung",
+    "quảng trị": "trung", "quang tri": "trung",
+    "khánh hòa": "trung", "khanh hoa": "trung", "nha trang": "trung",
+    "phú yên": "trung", "phu yen": "trung",
+    "bình định": "trung", "binh dinh": "trung", "quy nhơn": "trung", "quy nhon": "trung",
+    "ninh thuận": "trung", "ninh thuan": "trung",
+    "bình thuận": "trung", "binh thuan": "trung", "phan thiết": "trung", "phan thiet": "trung", "mũi né": "trung", "mui ne": "trung",
+    "đà lạt": "trung", "da lat": "trung", "dalat": "trung", "lâm đồng": "trung", "lam dong": "trung",
+    "kon tum": "trung",
+    "gia lai": "trung", "pleiku": "trung",
+    "đắk lắk": "trung", "dak lak": "trung", "buôn ma thuột": "trung", "buon ma thuot": "trung",
+    "đắk nông": "trung", "dak nong": "trung",
+    "quảng ngãi": "trung", "quang ngai": "trung",
+    "hà tĩnh": "trung", "ha tinh": "trung",
+    # Nam Bộ
+    "tp.hcm": "nam", "tphcm": "nam", "tp hcm": "nam", "hồ chí minh": "nam", "ho chi minh": "nam",
+    "saigon": "nam", "sài gòn": "nam", "sg": "nam",
+    "cần thơ": "nam", "can tho": "nam",
+    "vũng tàu": "nam", "vung tau": "nam", "bà rịa": "nam", "ba ria": "nam",
+    "đồng nai": "nam", "dong nai": "nam", "biên hòa": "nam", "bien hoa": "nam",
+    "bình dương": "nam", "binh duong": "nam",
+    "long an": "nam",
+    "tiền giang": "nam", "tien giang": "nam", "mỹ tho": "nam", "my tho": "nam",
+    "bến tre": "nam", "ben tre": "nam",
+    "vĩnh long": "nam", "vinh long": "nam",
+    "an giang": "nam", "châu đốc": "nam", "chau doc": "nam",
+    "kiên giang": "nam", "kien giang": "nam", "phú quốc": "nam", "phu quoc": "nam",
+    "cà mau": "nam", "ca mau": "nam",
+    "sóc trăng": "nam", "soc trang": "nam",
+    "trà vinh": "nam", "tra vinh": "nam",
+    "đồng tháp": "nam", "dong thap": "nam",
+    "hậu giang": "nam", "hau giang": "nam",
+    "bạc liêu": "nam", "bac lieu": "nam",
+    "bình phước": "nam", "binh phuoc": "nam",
+    "tây ninh": "nam", "tay ninh": "nam",
 }
 
-# Map từ khóa → category
+
+def _classify_region(location_text: str) -> str:
+    if not location_text:
+        return ""
+    lt = location_text.lower()
+    for kw, region in _REGION_BY_PROVINCE_KEYWORD.items():
+        if kw in lt:
+            return region
+    return ""
+
+
+# Category keywords (cùng pattern code cũ)
 _CATEGORY_KEYWORDS: dict[str, list[str]] = {
-    "religious": ["chùa", "đền", "phật", "lễ phật", "lễ chùa", "vu lan", "phật đản", "tâm linh"],
-    "cultural":  ["lễ hội", "truyền thống", "văn hóa", "dân gian", "cổ truyền", "hội"],
-    "music":     ["âm nhạc", "festival music", "concert", "âm thanh"],
-    "food":      ["ẩm thực", "food", "trà", "cà phê", "ngon"],
-    "sport":     ["thể thao", "marathon", "đua", "bóng", "ironman"],
+    "religious": ["chùa", "đền", "phật", "lễ phật", "lễ chùa", "vu lan", "phật đản", "tâm linh", "lễ tế", "đình"],
+    "music":     ["âm nhạc", "festival music", "concert", "ca trù", "quan họ", "đờn ca"],
+    "food":      ["ẩm thực", "food", "trà", "cà phê", "ocop", "sầu riêng", "vải", "đặc sản"],
+    "sport":     ["thể thao", "marathon", "đua", "chọi trâu", "đua ghe", "đua thuyền", "ironman"],
+    "cultural":  ["lễ hội", "truyền thống", "văn hóa", "dân gian", "cổ truyền", "hội", "festival", "carnival"],
 }
+
+
+def _classify_category(name: str, description: str = "") -> str:
+    text = f"{name} {description}".lower()
+    for cat, keywords in _CATEGORY_KEYWORDS.items():
+        for kw in keywords:
+            if kw in text:
+                return cat
+    return "other"
 
 
 def _slugify(s: str) -> str:
-    """URL slug an toàn: lower, ascii, dash."""
     s = s.lower().strip()
     s = re.sub(r"[^\w\s-]", "", s, flags=re.UNICODE)
     s = re.sub(r"[\s_]+", "-", s)
@@ -138,28 +181,10 @@ def _compute_hash(*parts: str) -> str:
     return h.hexdigest()[:16]
 
 
-def _classify_region(location_text: str) -> str:
-    if not location_text:
-        return ""
-    lt = location_text.lower()
-    for kw, region in _REGION_BY_PROVINCE_KEYWORD.items():
-        if kw in lt:
-            return region
-    return ""
+# ── Date parser cho format "DD/M - DD/M" hoặc "DD/M - DD/M/YYYY" ─────────
 
-
-def _classify_category(name: str, description: str = "") -> str:
-    text = f"{name} {description}".lower()
-    for cat, keywords in _CATEGORY_KEYWORDS.items():
-        for kw in keywords:
-            if kw in text:
-                return cat
-    return "other"
-
-
-def _resolve_year_for_md(month: int, day: int) -> int:
-    """Suy năm cho date không có year: nếu ngày đã qua trong năm hiện tại → năm sau."""
-    today = date.today()
+def _resolve_year_for_dm(month: int, day: int, today: date) -> int:
+    """Suy năm: chọn current nếu ngày chưa qua, năm sau nếu đã qua."""
     try:
         candidate = date(today.year, month, day)
     except ValueError:
@@ -167,813 +192,450 @@ def _resolve_year_for_md(month: int, day: int) -> int:
     return today.year if candidate >= today else today.year + 1
 
 
-def _parse_date_range(text: str) -> tuple[date | None, date | None]:
-    """Parse các format ngày:
-        "20 May 2026 - 10 Jun 2026"   ← vietnam.travel
-        "01 Jun 2026 - 30 Jun 2026"
-        "6 Mar–9 Mar"                 ← visitvietnams.com (KHÔNG có năm) ⭐
-        "15 Apr–19 Apr"               ← visitvietnams.com
-        "Jun 15, 2026"
-        "2026-06-05 to 2026-06-07"    ← ISO fallback
-        "5 - 7 Jun, 2026"             ← cũ
-    Trả (start, end). Nếu chỉ 1 ngày → start == end.
-    Auto-resolve year nếu không có (chọn current year hoặc next nếu đã qua).
+def _parse_lehoi_date(text: str) -> tuple[date | None, date | None]:
+    """Parse format ngày tháng lehoivietnam.com.vn:
+
+      "15/8 - 2/9"             → DD/M - DD/M (no year)
+      "10 - 15/6"              → DD - DD/M (cùng tháng)
+      "15/8 - 2/9/2026"        → DD/M - DD/M/YYYY
+      "21/7 - 19/9/2027"
+      "19/3-26/9/2027"         → có thể không space
+      "11-14/11"               → DD-DD/M
+      "15/8/2026"              → DD/M/YYYY (single)
+      "15/8"                   → DD/M (single)
+
+    Auto-resolve year nếu không có (theo current vs next year).
     """
     if not text:
         return None, None
     t = text.strip()
+    today = date.today()
 
-    # Format CHÍNH cho VT: "DD MMM YYYY - DD MMM YYYY" (có năm ở cả 2)
+    # Format 1: "DD/M - DD/M/YYYY" (range với year ở cuối)
     m = re.search(
-        r"(\d{1,2})\s+(\w+)\s+(\d{4})\s*[-–to]+\s*(\d{1,2})\s+(\w+)\s+(\d{4})",
-        t, re.IGNORECASE,
-    )
-    if m:
-        try:
-            d1, mo1_str, yr1 = int(m.group(1)), m.group(2), int(m.group(3))
-            d2, mo2_str, yr2 = int(m.group(4)), m.group(5), int(m.group(6))
-            mo1 = _month_to_num(mo1_str)
-            mo2 = _month_to_num(mo2_str)
-            if mo1 and mo2:
-                return date(yr1, mo1, d1), date(yr2, mo2, d2)
-        except ValueError:
-            pass
-
-    # Format CHÍNH cho VV: "DD MMM–DD MMM" (KHÔNG có năm) ⭐
-    # Vd "6 Mar–9 Mar", "15 Apr–19 Apr", "11 Feb–14 Feb"
-    m = re.search(
-        r"(\d{1,2})\s+(\w+)\s*[-–]\s*(\d{1,2})\s+(\w+)(?!\s*\d{4})",
-        t, re.IGNORECASE,
-    )
-    if m:
-        try:
-            d1 = int(m.group(1))
-            mo1 = _month_to_num(m.group(2))
-            d2 = int(m.group(3))
-            mo2 = _month_to_num(m.group(4))
-            if mo1 and mo2:
-                yr = _resolve_year_for_md(mo1, d1)
-                # Nếu month_end < month_start → cross-year (rare)
-                yr2 = yr if mo2 >= mo1 else yr + 1
-                return date(yr, mo1, d1), date(yr2, mo2, d2)
-        except ValueError:
-            pass
-
-    # Format ISO "2026-06-05 to 2026-06-07"
-    m = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})\s*(?:to|–|-)\s*(\d{4})-(\d{1,2})-(\d{1,2})", t)
-    if m:
-        try:
-            return (
-                date(int(m.group(1)), int(m.group(2)), int(m.group(3))),
-                date(int(m.group(4)), int(m.group(5)), int(m.group(6))),
-            )
-        except ValueError:
-            return None, None
-
-    # Format "5 - 7 Jun, 2026" (cùng tháng)
-    m = re.search(
-        r"(\d{1,2})\s*[-–]\s*(\d{1,2})\s+(\w+)[,\s]+(\d{4})",
+        r"(\d{1,2})/(\d{1,2})\s*[-–]\s*(\d{1,2})/(\d{1,2})/(\d{4})",
         t,
     )
     if m:
         try:
-            d1, d2 = int(m.group(1)), int(m.group(2))
-            mo = _month_to_num(m.group(3))
-            yr = int(m.group(4))
-            if mo:
-                return date(yr, mo, d1), date(yr, mo, d2)
+            d1, mo1 = int(m.group(1)), int(m.group(2))
+            d2, mo2, yr2 = int(m.group(3)), int(m.group(4)), int(m.group(5))
+            # Year start: nếu mo1 > mo2, cross-year reverse, vd 19/3 → 26/9/2027
+            yr1 = yr2 if mo1 <= mo2 else yr2 - 1
+            return date(yr1, mo1, d1), date(yr2, mo2, d2)
         except ValueError:
             pass
 
-    # Format đơn ngày "Jun 15, 2026" hoặc "15 Jun 2026"
-    m = re.search(r"(?:(\d{1,2})\s+(\w+)|(\w+)\s+(\d{1,2}))[,\s]+(\d{4})", t)
+    # Format 2: "DD/M/YYYY - DD/M/YYYY" (đầy đủ năm 2 đầu)
+    m = re.search(
+        r"(\d{1,2})/(\d{1,2})/(\d{4})\s*[-–]\s*(\d{1,2})/(\d{1,2})/(\d{4})",
+        t,
+    )
     if m:
         try:
-            if m.group(1):
-                d1, mo_str, yr = int(m.group(1)), m.group(2), int(m.group(5))
-            else:
-                d1, mo_str, yr = int(m.group(4)), m.group(3), int(m.group(5))
-            mo = _month_to_num(mo_str)
-            if mo:
-                d = date(yr, mo, d1)
-                return d, d
+            return (
+                date(int(m.group(3)), int(m.group(2)), int(m.group(1))),
+                date(int(m.group(6)), int(m.group(5)), int(m.group(4))),
+            )
         except ValueError:
             pass
 
-    # Format đơn ngày KHÔNG năm: "15 Apr" hoặc "Apr 15"
-    m = re.search(r"(?:(\d{1,2})\s+(\w{3,9})|(\w{3,9})\s+(\d{1,2}))(?!\s*[,\s]+\d{4})", t)
+    # Format 3: "DD/M - DD/M" (no year)
+    m = re.search(
+        r"(\d{1,2})/(\d{1,2})\s*[-–]\s*(\d{1,2})/(\d{1,2})(?!/?\d)",
+        t,
+    )
     if m:
         try:
-            if m.group(1):
-                d1, mo_str = int(m.group(1)), m.group(2)
-            else:
-                d1, mo_str = int(m.group(4)), m.group(3)
-            mo = _month_to_num(mo_str)
-            if mo:
-                yr = _resolve_year_for_md(mo, d1)
-                d = date(yr, mo, d1)
-                return d, d
+            d1, mo1 = int(m.group(1)), int(m.group(2))
+            d2, mo2 = int(m.group(3)), int(m.group(4))
+            yr = _resolve_year_for_dm(mo1, d1, today)
+            yr2 = yr if mo2 >= mo1 else yr + 1
+            return date(yr, mo1, d1), date(yr2, mo2, d2)
+        except ValueError:
+            pass
+
+    # Format 4: "DD - DD/M" (cùng tháng, vd "10 - 15/6")
+    m = re.search(r"(\d{1,2})\s*[-–]\s*(\d{1,2})/(\d{1,2})(?!/?\d)", t)
+    if m:
+        try:
+            d1, d2, mo = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            yr = _resolve_year_for_dm(mo, d1, today)
+            return date(yr, mo, d1), date(yr, mo, d2)
+        except ValueError:
+            pass
+
+    # Format 5: "DD-DD/M" (no space)
+    m = re.search(r"(\d{1,2})-(\d{1,2})/(\d{1,2})(?!/?\d)", t)
+    if m:
+        try:
+            d1, d2, mo = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            yr = _resolve_year_for_dm(mo, d1, today)
+            return date(yr, mo, d1), date(yr, mo, d2)
+        except ValueError:
+            pass
+
+    # Format 6: "DD/M/YYYY" (single với year)
+    m = re.search(r"(\d{1,2})/(\d{1,2})/(\d{4})", t)
+    if m:
+        try:
+            d = date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+            return d, d
+        except ValueError:
+            pass
+
+    # Format 7: "DD/M" (single no year)
+    m = re.search(r"(\d{1,2})/(\d{1,2})(?!/?\d)", t)
+    if m:
+        try:
+            d1, mo = int(m.group(1)), int(m.group(2))
+            yr = _resolve_year_for_dm(mo, d1, today)
+            d = date(yr, mo, d1)
+            return d, d
         except ValueError:
             pass
 
     return None, None
 
 
-def _month_to_num(s: str) -> int | None:
-    s = s.lower().strip()[:3]
-    for i, name in enumerate(_MONTH_SLUG, start=1):
-        if name == s:
-            return i
-    return None
-
+# ── Fetch ────────────────────────────────────────────────────────────────
 
 def _try_get(url: str, client, timeout: float) -> tuple[str | None, str | None]:
-    """1 lần GET với timeout cụ thể. Trả (html, error_type).
-
-    Jina AI Reader (r.jina.ai) cần header `X-Return-Format: html` nếu muốn raw
-    HTML thay vì markdown — mặc định trả markdown.
-    """
+    """1 lần GET với timeout. Trả (html, err)."""
     try:
-        # r.jina.ai cần X-Return-Format header để trả raw HTML
-        headers_override = None
-        if "r.jina.ai/" in url:
-            headers_override = {"X-Return-Format": "html"}
-        r = client.get(url, timeout=timeout, headers=headers_override)
+        r = client.get(url, timeout=timeout)
         if r.status_code == 200:
-            text = r.text
-            # allorigins-get JSON wrapper: {"contents": "...html..."}
-            if "allorigins.win/get" in url and text.startswith("{"):
-                try:
-                    import json
-                    data = json.loads(text)
-                    text = data.get("contents", "")
-                except Exception:  # noqa: BLE001
-                    pass
-            return text, None
+            return r.text, None
         return None, f"HTTP {r.status_code}"
     except Exception as e:  # noqa: BLE001
         return None, f"{type(e).__name__}: {str(e)[:80]}"
 
 
 def _fetch(url: str, client) -> str | None:
-    """Fail-fast multi-provider fetch.
+    """Fetch URL: direct trước, fallback Jina Reader nếu direct fail.
 
-    Strategy:
-      1. Direct (5s timeout) — nếu network OK, không tốn time.
-      2. Thử lần lượt 5 proxy providers (15s mỗi cái).
-      3. Sleep RATE_LIMIT_SEC chỉ sau khi thành công (không sleep sau fail
-         để không kéo dài chain proxy fail).
-
-    Worst case (cả direct + 5 proxy fail): ~80s/url. Best case: <1s direct.
-    Trung bình khi direct fail: 5 + 1-3 × 15s = ~20-50s/url.
+    Jina returns markdown (cleaner) — parse riêng trong _parse_list_page_markdown.
     """
-    # Pass 1: direct
     html, err = _try_get(url, client, DIRECT_TIMEOUT_SEC)
     if html:
         time.sleep(RATE_LIMIT_SEC)
         return html
-    logger.info("Direct fail (%s) — try %d proxies", err, len(PROXY_PROVIDERS))
+    logger.info("Direct fail (%s) — fallback Jina", err)
 
-    # Pass 2: thử proxy chain
-    for name, build_fn in PROXY_PROVIDERS:
-        proxy_url = build_fn(url)
-        html, err = _try_get(proxy_url, client, PROXY_TIMEOUT_SEC)
-        if html:
-            logger.info("Proxy [%s] OK (HTML %d bytes)", name, len(html))
-            time.sleep(RATE_LIMIT_SEC)
-            return html
-        logger.info("Proxy [%s] fail: %s", name, err)
-
-    logger.warning("All providers fail for %s", url)
+    # Fallback Jina
+    jina_url = f"https://r.jina.ai/{url}"
+    html, err = _try_get(jina_url, client, JINA_TIMEOUT_SEC)
+    if html:
+        logger.info("Jina OK (%d bytes)", len(html))
+        time.sleep(RATE_LIMIT_SEC)
+        return html
+    logger.warning("Cả direct + Jina fail cho %s: %s", url, err)
     return None
 
 
+# ── HTML parser (selectolax với CSS selectors thật) ──────────────────────
+
 def _is_markdown(content: str) -> bool:
-    """Detect Jina Reader markdown output vs raw HTML."""
+    """Detect Jina markdown output vs raw HTML."""
     if not content:
         return False
     head = content[:500].lstrip().lower()
-    # Markdown markers: bullet, link syntax, heading, không có <html> hay <body>
     if "<html" in head or "<body" in head or "<!doctype" in head:
         return False
     return ("](" in content[:2000]) or content.lstrip().startswith(("# ", "* ", "- ", "**"))
 
 
-def _parse_markdown_for_events(content: str, detail_prefix: str, base_url: str) -> list[dict[str, Any]]:
-    """Parse Jina Reader markdown output cho event detail URLs.
+def _parse_list_page(html: str) -> list[dict[str, Any]]:
+    """Parse trang list — auto-detect HTML vs markdown."""
+    if _is_markdown(html):
+        return _parse_list_page_markdown(html)
 
-    Strategy block-based (tránh leak data giữa các event):
-      1. Find all detail links — record (position, name, url).
-      2. Mỗi link i → block = content TỪ link[i-1].end (hoặc 0) ĐẾN link[i+1].start (hoặc end).
-         - Phần TRƯỚC link[i] = image cho event này (layout vietnam.travel: ![img] trước [name])
-         - Phần SAU link[i] = date + location
-      3. Image preference: image gần TRƯỚC link[i] nhất (cùng card).
+    from selectolax.parser import HTMLParser
+
+    tree = HTMLParser(html)
+    events: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    # CSS selector EXACT từ HTML user share: article.lh-event-item
+    cards = tree.css("article.lh-event-item")
+    logger.info("Tìm thấy %d card lh-event-item", len(cards))
+
+    for card in cards:
+        try:
+            ev = _parse_card_html(card)
+            if not ev:
+                continue
+            if ev["slug"] in seen:
+                continue
+            seen.add(ev["slug"])
+            events.append(ev)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Parse 1 card lỗi: %s", e)
+            continue
+
+    return events
+
+
+def _parse_card_html(card) -> dict[str, Any] | None:
+    """Parse 1 article.lh-event-item card → dict."""
+    # Title + detail URL
+    title_node = card.css_first("div.lh-event-item-head h3 a")
+    if not title_node:
+        title_node = card.css_first("h3 a")
+    if not title_node:
+        return None
+    name = (title_node.text(strip=True) or "").strip()
+    href = title_node.attributes.get("href", "")
+    if not name or not href or DETAIL_PATH_PREFIX not in href:
+        return None
+    # Slug = phần sau /vi/su-kien/
+    path_after = href.split(DETAIL_PATH_PREFIX, 1)[1]
+    slug = path_after.split("?")[0].split("/")[0].strip()
+    if not slug:
+        return None
+    source_url = urljoin(BASE_URL, href)
+
+    # Image — a.lh-event-item-media > img
+    image_url = ""
+    img_node = card.css_first("a.lh-event-item-media img") or card.css_first("img")
+    if img_node:
+        src = (
+            img_node.attributes.get("src")
+            or img_node.attributes.get("data-src")
+            or ""
+        )
+        if src:
+            if src.startswith("//"):
+                image_url = "https:" + src
+            elif src.startswith("/"):
+                image_url = urljoin(BASE_URL, src)
+            else:
+                image_url = src
+
+    # Meta chips: location + date
+    # a.lh-event-chip.lh-loc-link → location anchors (có thể 1-2: phường + tỉnh)
+    # span.lh-event-chip (không phải link) → date text
+    location_chips = card.css("a.lh-event-chip.lh-loc-link")
+    locations = [(c.text(strip=True) or "").strip() for c in location_chips if c.text(strip=True)]
+    location_text = ", ".join(locations) if locations else ""
+
+    date_text = ""
+    span_chips = card.css("span.lh-event-chip")
+    for span in span_chips:
+        txt = (span.text(strip=True) or "").strip()
+        # Heuristic: span chứa "/" và số = date chip
+        if re.search(r"\d{1,2}/\d{1,2}", txt):
+            date_text = txt
+            break
+
+    # Description (p ngay trong lh-event-item-body)
+    desc_node = card.css_first("div.lh-event-item-body > p")
+    description = (desc_node.text(strip=True) if desc_node else "")[:2000]
+
+    return {
+        "slug": slug,
+        "name": name[:512],
+        "date_text": date_text,
+        "location": location_text[:256],
+        "description": description,
+        "image_url": image_url[:1024],
+        "source_url": source_url[:1024],
+    }
+
+
+# ── Markdown parser (Jina fallback) ──────────────────────────────────────
+
+def _parse_list_page_markdown(content: str) -> list[dict[str, Any]]:
+    """Parse Jina markdown output cho lehoivietnam list page.
+
+    Strategy block-based: tìm tất cả link [name](/vi/su-kien/...) → mỗi link
+    là 1 event. Block = từ link[i-1].end đến link[i+1].start.
     """
     events: list[dict[str, Any]] = []
     seen: set[str] = set()
 
-    # Step 1: collect all detail link positions
     link_pattern = re.compile(
-        r"\[([^\]\n]+?)\]\((" + re.escape(detail_prefix) + r"[^\s)]+?)\)",
+        r"\[([^\]\n]+?)\]\((" + re.escape(DETAIL_PATH_PREFIX) + r"[^\s)]+?)\)",
     )
     matches = list(link_pattern.finditer(content))
     if not matches:
         return events
 
-    # Step 2: cho mỗi link, define block boundary
+    # Dedupe: same slug có thể appear 2 lần (anchor image + anchor title)
     for i, m in enumerate(matches):
         name = m.group(1).strip()
         url_path = m.group(2).strip()
-        path_clean = url_path.split("?", 1)[0]
-        slug = path_clean.split(detail_prefix, 1)[1].split("/")[0].strip()
+        slug = url_path.split(DETAIL_PATH_PREFIX, 1)[1].split("?")[0].split("/")[0].strip()
         if not slug or slug in seen:
             continue
         if not name or len(name) < 3:
             continue
+        # Skip nếu name là image alt rỗng hoặc URL-like
+        if name.startswith("!") or name.startswith("http"):
+            continue
         seen.add(slug)
 
-        # Block bound: từ end của link trước (hoặc 0) đến start của link kế (hoặc end)
         block_start = matches[i - 1].end() if i > 0 else 0
         block_end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
         block = content[block_start:block_end]
 
-        # Image: ![alt](url) trong block, ưu tiên cái gần TRƯỚC link[i] (trên cùng card).
-        # Đa số layout: image → name → date → location.
-        # Lấy image cuối cùng XẢY RA TRƯỚC link[i] trong block.
+        # Image: ![](url) cuối cùng TRƯỚC link, hoặc đầu tiên SAU link
         image_url = ""
-        before_link_in_block = content[block_start:m.start()]
-        img_matches = re.findall(r"!\[[^\]]*?\]\((https?://[^\s)]+?)\)", before_link_in_block)
+        before = content[block_start:m.start()]
+        img_matches = re.findall(r"!\[[^\]]*?\]\((https?://[^\s)]+?)\)", before)
         if img_matches:
             image_url = img_matches[-1]
-        else:
-            # Fallback: image đầu tiên SAU link (layout name → image)
-            after_link_in_block = content[m.end():block_end]
-            img_matches = re.findall(r"!\[[^\]]*?\]\((https?://[^\s)]+?)\)", after_link_in_block)
-            if img_matches:
-                image_url = img_matches[0]
 
-        # Date text: scan trong block (ưu tiên SAU link)
-        date_text = ""
-        after_link_in_block = content[m.end():block_end]
+        # Date text
         date_match = re.search(
-            r"\d{1,2}\s+\w{3,9}(?:\s+\d{4})?\s*[-–to]+\s*\d{1,2}\s+\w{3,9}(?:\s+\d{4})?",
-            after_link_in_block, re.IGNORECASE,
+            r"\d{1,2}/\d{1,2}(?:/\d{4})?\s*[-–]\s*\d{1,2}/\d{1,2}(?:/\d{4})?",
+            block,
         )
         if not date_match:
-            date_match = re.search(
-                r"\d{1,2}\s+\w{3,9}(?:\s+\d{4})?\s*[-–to]+\s*\d{1,2}\s+\w{3,9}(?:\s+\d{4})?",
-                block, re.IGNORECASE,
-            )
-        if date_match:
-            date_text = date_match.group(0).strip()
-        else:
-            single = re.search(r"\d{1,2}\s+\w{3,9}(?:\s+\d{4})?", after_link_in_block, re.IGNORECASE)
-            if not single:
-                single = re.search(r"\d{1,2}\s+\w{3,9}(?:\s+\d{4})?", block, re.IGNORECASE)
-            if single:
-                date_text = single.group(0).strip()
+            date_match = re.search(r"\d{1,2}/\d{1,2}(?:/\d{4})?", block)
+        date_text = date_match.group(0) if date_match else ""
 
-        # Location: trong block (sau link ưu tiên)
+        # Location: trong block sau link, tìm địa danh
+        after = content[m.end():block_end]
         location_text = ""
-        for area in (after_link_in_block, block):
-            area_low = area.lower()
-            best_idx = -1
-            best_kw = ""
-            for kw in _VN_PROVINCE_KEYWORDS:
-                idx = area_low.find(kw)
-                if idx >= 0 and (best_idx < 0 or idx < best_idx):
-                    best_idx = idx
-                    best_kw = area[idx:idx + len(kw)]
-            if best_kw:
-                location_text = best_kw.title()
-                break
+        # Markdown location link: [Đắk Lắk](/vi/dia-diem/...)
+        loc_link_match = re.search(r"\[([^\]\n]+?)\]\(/vi/dia-diem/[^)]+?\)", after)
+        if loc_link_match:
+            location_text = loc_link_match.group(1).strip()
+        else:
+            # Fallback: tìm tỉnh trong text
+            for kw in _REGION_BY_PROVINCE_KEYWORD.keys():
+                if kw in after.lower():
+                    idx = after.lower().find(kw)
+                    location_text = after[idx:idx + len(kw)].title()
+                    break
 
-        url = urljoin(base_url, url_path)
+        # Description: 200 chars sau link đầu (cắt tại newline đôi hoặc link kế)
+        desc = re.split(r"\n{2,}|\[[^\]]+?\]\(/vi/", after)[0][:500].strip()
+
         events.append({
             "slug": slug,
-            "name": name,
+            "name": name[:512],
             "date_text": date_text,
-            "location": location_text,
-            "image_url": image_url,
-            "source_url": url,
+            "location": location_text[:256],
+            "description": desc,
+            "image_url": image_url[:1024],
+            "source_url": urljoin(BASE_URL, url_path)[:1024],
         })
 
+    logger.info("Parsed markdown: %d event", len(events))
     return events
 
 
-def _parse_list_page(html: str) -> list[dict[str, Any]]:
-    """Parse listing page — auto-detect HTML vs markdown (Jina Reader output).
+# ── Enrichment ───────────────────────────────────────────────────────────
 
-    Pipeline:
-      1. Markdown? → _parse_markdown_for_events
-      2. HTML → selectolax với link-based extraction
-    """
-    if _is_markdown(html):
-        events = _parse_markdown_for_events(html, DETAIL_PATH_PREFIX, BASE_URL)
-        logger.info("Parsed (markdown mode): %d event", len(events))
-        return events
-
-    from selectolax.parser import HTMLParser
-
-    tree = HTMLParser(html)
-    events: list[dict[str, Any]] = []
-    seen_slugs: set[str] = set()
-
-    # Tìm mọi link tới festival detail page
-    detail_links = tree.css(f'a[href*="{DETAIL_PATH_PREFIX}"]')
-    logger.info("Parsed (html mode): %d detail link trên trang", len(detail_links))
-
-    for link in detail_links:
-        try:
-            href = link.attributes.get("href", "")
-            if not href or DETAIL_PATH_PREFIX not in href:
-                continue
-            # Extract slug từ URL (giữa /festival-event/ và ?param/end)
-            path = href.split(DETAIL_PATH_PREFIX, 1)[1]
-            slug = path.split("?")[0].split("/")[0].strip()
-            if not slug or slug in seen_slugs:
-                continue
-
-            # Name = text của anchor (đã filter link không có text trống)
-            name = (link.text(strip=True) or "").strip()
-            if not name:
-                # Có thể anchor chỉ wrap image, lấy alt của img bên trong
-                img_inside = link.css_first("img")
-                if img_inside:
-                    name = (img_inside.attributes.get("alt") or "").strip()
-            if not name:
-                continue
-
-            url = urljoin(BASE_URL, href)
-
-            # Traverse parent (max 5 levels) để tìm container chứa info bổ sung
-            parent = link.parent
-            depth = 0
-            container = parent
-            while parent is not None and depth < 5:
-                container = parent
-                parent = parent.parent
-                depth += 1
-
-            # Date text: tìm text node match "DD MMM YYYY" hoặc range
-            date_text = _extract_date_text_near(container, name)
-
-            # Location: tìm trong container các từ tỉnh VN ngắn (Ninh Binh, Hue, ...)
-            location_text = _extract_location_near(container, name, date_text)
-
-            # Image: img gần link nhất (anchor chính nó nếu wrap, không thì sibling)
-            image_url = ""
-            img_node = link.css_first("img") or (container.css_first("img") if container else None)
-            if img_node:
-                src = (
-                    img_node.attributes.get("src")
-                    or img_node.attributes.get("data-src")
-                    or img_node.attributes.get("srcset", "").split()[0] if img_node.attributes.get("srcset") else ""
-                )
-                if src:
-                    # Một số URL bắt đầu bằng "//image.vietnam.travel/..." → cần "https:" prefix
-                    if src.startswith("//"):
-                        image_url = "https:" + src
-                    elif src.startswith("/"):
-                        image_url = urljoin(BASE_URL, src)
-                    else:
-                        image_url = src
-
-            seen_slugs.add(slug)
-            events.append({
-                "slug": slug,
-                "name": name,
-                "date_text": date_text,
-                "location": location_text,
-                "image_url": image_url,
-                "source_url": url,
-            })
-        except Exception as e:  # noqa: BLE001
-            logger.debug("Parse 1 link lỗi: %s", e)
-            continue
-
-    return events
-
-
-def _extract_date_text_near(container, exclude_text: str) -> str:
-    """Tìm text trong container chứa pattern ngày tháng.
-
-    Pattern phổ biến: "DD MMM YYYY - DD MMM YYYY" hoặc "DD MMM YYYY".
-    """
-    if not container:
-        return ""
-    # Lấy tất cả text node (không phải text con thẻ a — vì đó là name)
-    text = container.text(separator=" ", strip=True)
-    if not text:
-        return ""
-    # Bỏ exclude_text khỏi text để regex không match tên event
-    if exclude_text:
-        text = text.replace(exclude_text, " ")
-    # Match "20 May 2026 - 10 Jun 2026" hoặc đơn ngày "20 May 2026"
-    m = re.search(
-        r"\d{1,2}\s+\w{3,9}\s+\d{4}\s*[-–to]+\s*\d{1,2}\s+\w{3,9}\s+\d{4}",
-        text, re.IGNORECASE,
-    )
-    if m:
-        return m.group(0).strip()
-    m = re.search(r"\d{1,2}\s+\w{3,9}\s+\d{4}", text, re.IGNORECASE)
-    if m:
-        return m.group(0).strip()
-    return ""
-
-
-# Danh sách tỉnh VN viết tắt + có dấu (lowercase) để extract location.
-# Match theo substring trong text container.
-_VN_PROVINCE_KEYWORDS = [
-    "ninh binh", "hue", "da nang", "hanoi", "ha noi", "ho chi minh", "saigon",
-    "nha trang", "khanh hoa", "phu quoc", "kien giang", "vung tau", "can tho",
-    "hoi an", "quang nam", "sapa", "lao cai", "ha long", "quang ninh",
-    "phong nha", "quang binh", "buon ma thuot", "dak lak", "da lat", "lam dong",
-    "phu yen", "binh thuan", "phan thiet", "mui ne", "ca mau", "bac lieu",
-    "hai phong", "nam dinh", "ninh thuan", "binh dinh", "quy nhon",
-    "vietnam", "viet nam", "northern", "central", "southern", "north", "south",
-]
-
-
-def _extract_location_near(container, exclude_text: str, exclude_date: str) -> str:
-    """Tìm tỉnh/thành VN xuất hiện trong text container, không trùng tên event/ngày."""
-    if not container:
-        return ""
-    text = container.text(separator=" ", strip=True)
-    if not text:
-        return ""
-    if exclude_text:
-        text = text.replace(exclude_text, " ")
-    if exclude_date:
-        text = text.replace(exclude_date, " ")
-    low = text.lower()
-    # Match keyword đầu tiên xuất hiện
-    found = []
-    for kw in _VN_PROVINCE_KEYWORDS:
-        if kw in low:
-            # Trả về dạng đúng case từ text gốc
-            idx = low.find(kw)
-            found.append((idx, text[idx:idx + len(kw)]))
-    if not found:
-        return ""
-    # Chọn keyword xuất hiện đầu tiên (gần card hơn)
-    found.sort(key=lambda x: x[0])
-    return found[0][1].title()
-
-
-def _parse_detail_page(html: str) -> dict[str, str]:
-    """Parse trang detail → description chi tiết (Phase 1 chỉ lấy mô tả).
-
-    Vietnam.travel detail page không có class CSS đặc trưng — lấy text
-    body chính bằng cách find paragraphs trong main content. Heuristic:
-    paragraph dài nhất là description.
-    """
-    from selectolax.parser import HTMLParser
-
-    tree = HTMLParser(html)
-    # Thử các selector phổ biến trước
-    desc_node = (
-        tree.css_first("div.field--name-body")
-        or tree.css_first("div.event-description")
-        or tree.css_first("article .content")
-        or tree.css_first("main p")
-    )
-    if desc_node:
-        description = desc_node.text(separator=" ", strip=True)
-    else:
-        # Fallback: lấy paragraph dài nhất trong main
-        paragraphs = tree.css("main p, article p, div p")
-        if paragraphs:
-            best = max(paragraphs, key=lambda p: len(p.text() or ""))
-            description = (best.text(separator=" ", strip=True) or "")
-        else:
-            description = ""
-    return {"description": description[:4000]}
-
-
-def _fetch_from_gas_proxy(proxy_url: str, years: list[int]) -> list[dict[str, Any]]:
-    """Fetch events từ Google Apps Script Web App proxy.
-
-    Apps Script trả JSON:
-      {
-        "fetched_at": "...",
-        "source": "all",
-        "years": [2026, 2027],
-        "total": 123,
-        "events": [
-          {
-            "source": "vietnam-travel" | "visitvietnams",
-            "slug": "ninh-binh-tourism-week-2026",
-            "name": "Ninh Binh Tourism Week 2026",
-            "date_text": "20 May 2026 - 10 Jun 2026",
-            "location": "Ninh Binh",
-            "description": "...",
-            "image_url": "https://...",
-            "source_url": "https://..."
-          }, ...
-        ],
-        "errors": [...]
-      }
-    """
-    import httpx
-
-    years_str = ",".join(str(y) for y in years)
-    url = f"{proxy_url}?source=all&years={years_str}"
-    logger.info("GAS proxy fetch: %s", url)
-
-    # Apps Script có thể redirect → follow
-    # Timeout dài vì script có thể chạy 30-60s
-    with httpx.Client(follow_redirects=True, timeout=180.0) as client:
-        r = client.get(url)
-        if r.status_code != 200:
-            logger.warning("GAS proxy HTTP %d: %s", r.status_code, r.text[:200])
-            return []
-        import json
-        try:
-            data = json.loads(r.text)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("GAS proxy JSON parse fail: %s", e)
-            return []
-        raw_events = data.get("events", [])
-        errors = data.get("errors", [])
-        if errors:
-            logger.info("GAS proxy reported errors: %s", errors)
-
-        out: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        for ev in raw_events:
-            slug = ev.get("slug", "")
-            if not slug or slug in seen:
-                continue
-            seen.add(slug)
-            # Parse date_text → date_start/end
-            today = datetime.now()
-            d_start, d_end = _parse_date_range(ev.get("date_text", ""))
-            if not d_start:
-                # Fallback: ngày đầu năm hiện tại
-                d_start = date(today.year, 1, 1)
-                d_end = d_start
-            enriched = {
-                "slug": slug,
-                "name": ev.get("name", "")[:512],
-                "date_text": ev.get("date_text", ""),
-                "date_start": d_start,
-                "date_end": d_end or d_start,
-                "location": ev.get("location", "")[:256],
-                "description": ev.get("description", "")[:4000],
-                "image_url": ev.get("image_url", "")[:1024],
-                "source_url": ev.get("source_url", "")[:1024],
-                "region": _classify_region(ev.get("location", "")),
-                "category": _classify_category(ev.get("name", ""), ev.get("description", "")),
-            }
-            out.append(enriched)
-        return out
-
-
-def _build_http_client(httpx_):
-    """Build httpx Client với headers + per-call timeout (override mỗi GET)."""
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-    }
-    # Timeout per-call (override trong _try_get). Default đặt 30s phòng hờ.
-    return httpx_.Client(
-        headers=headers,
-        follow_redirects=True,
-        timeout=httpx_.Timeout(30.0),
-    )
-
-
-def _enrich_event(ev: dict[str, Any], fallback_year: int, fallback_month: int, client) -> dict[str, Any] | None:
-    """Parse date_text → date_start/end, classify region+category, fetch detail.
-    Trả None nếu không suy được date.
-    """
-    d_start, d_end = _parse_date_range(ev.get("date_text", ""))
+def _enrich_event(ev: dict[str, Any]) -> dict[str, Any] | None:
+    """Add date_start, date_end, region, category."""
+    today = date.today()
+    d_start, d_end = _parse_lehoi_date(ev.get("date_text", ""))
     if not d_start:
-        try:
-            d_start = date(fallback_year, fallback_month, 1)
-            d_end = d_start
-        except ValueError:
-            return None
+        # Fallback: ngày hiện tại + 30 ngày (placeholder)
+        from datetime import timedelta
+        d_start = today
+        d_end = today + timedelta(days=1)
     ev["date_start"] = d_start
     ev["date_end"] = d_end or d_start
     ev["region"] = _classify_region(ev.get("location", ""))
-    ev["category"] = _classify_category(ev.get("name", ""))
-
-    # Detail page (best effort, không block nếu fail)
-    detail_html = _fetch(ev["source_url"], client)
-    if detail_html:
-        try:
-            detail = _parse_detail_page(detail_html)
-            ev["description"] = detail.get("description", "")
-        except Exception:  # noqa: BLE001
-            ev["description"] = ""
-    else:
-        ev["description"] = ""
+    ev["category"] = _classify_category(ev.get("name", ""), ev.get("description", ""))
     return ev
 
 
-def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
-    """Crawl 2 nguồn vietnam.travel + visitvietnams.com.
+# ── Top-level ────────────────────────────────────────────────────────────
 
-    Priority 1: FESTIVAL_PROXY_URL env var (Google Apps Script Web App).
-       Nếu set, fetch JSON từ URL này → instant data, không cần parse HTML.
-    Priority 2: Direct + proxy chain (Jina, allorigins, ...).
+def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
+    """Scrape lehoivietnam.com.vn — cả domestic + intl.
+
+    Args:
+        years: (compat only, không dùng trong source này vì pagination không
+            theo năm). Site list theo page chronological.
     """
     import httpx
 
-    today = datetime.now()
-    if years is None:
-        years = [today.year, today.year + 1]
+    max_domestic = int(os.environ.get("FESTIVAL_MAX_DOMESTIC_PAGES", DEFAULT_MAX_DOMESTIC_PAGES))
+    max_intl = int(os.environ.get("FESTIVAL_MAX_INTL_PAGES", DEFAULT_MAX_INTL_PAGES))
 
-    # ── Priority 1: Google Apps Script Proxy ────────────────────────────
-    proxy_url = (os.environ.get("FESTIVAL_PROXY_URL") or "").strip()
-    if proxy_url:
-        logger.info("FESTIVAL_PROXY_URL set → dùng Google Apps Script proxy")
-        try:
-            events = _fetch_from_gas_proxy(proxy_url, years)
-            if events:
-                logger.info("[GAS Proxy] xong: %d event", len(events))
-                return events
-            logger.warning("[GAS Proxy] trả 0 event — fallback HTML scrape")
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[GAS Proxy] lỗi: %s — fallback HTML scrape", e)
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+    }
 
-    # ── Priority 2: HTML scrape qua proxy chain ─────────────────────────
     seen_slugs: set[str] = set()
     out: list[dict[str, Any]] = []
 
-    with _build_http_client(httpx) as client:
-        # ── Source 1: vietnam.travel ────────────────────────────────────
-        vt_ok = 0
-        vt_fail = 0
-        for year in years:
-            for month_idx, month_slug in enumerate(_MONTH_SLUG, start=1):
-                url = f"{EVENT_LIST_URL}?month={month_slug}&year={year}"
-                html = _fetch(url, client)
-                if not html:
-                    vt_fail += 1
+    with httpx.Client(headers=headers, follow_redirects=True, timeout=httpx.Timeout(30.0)) as client:
+        # ── Domestic ────────────────────────────────────────────────────
+        ok_pages = 0
+        empty_pages = 0
+        for page in range(1, max_domestic + 1):
+            url = f"{LIST_URL_DOMESTIC}?page={page}"
+            html = _fetch(url, client)
+            if not html:
+                logger.warning("[domestic] page %d: fetch fail", page)
+                continue
+            events = _parse_list_page(html)
+            logger.info("[domestic] page %d: %d event", page, len(events))
+            if not events:
+                empty_pages += 1
+                if empty_pages >= 2:
+                    logger.info("[domestic] 2 page empty liên tiếp → dừng pagination")
+                    break
+                continue
+            empty_pages = 0
+            ok_pages += 1
+            for ev in events:
+                if ev["slug"] in seen_slugs:
                     continue
-                events = _parse_list_page(html)
-                logger.info(
-                    "[VT] %s/%s: %d event (HTML %d bytes)",
-                    month_slug, year, len(events), len(html),
-                )
-                vt_ok += 1
-                for ev in events:
-                    if ev["slug"] in seen_slugs:
-                        continue
-                    seen_slugs.add(ev["slug"])
-                    enriched = _enrich_event(ev, year, month_idx, client)
-                    if enriched:
-                        out.append(enriched)
-        logger.info("[VT] xong: %d list page OK, %d fail, %d event mới", vt_ok, vt_fail, len(out))
+                seen_slugs.add(ev["slug"])
+                enriched = _enrich_event(ev)
+                if enriched:
+                    out.append(enriched)
+        logger.info("[domestic] xong: %d page OK, %d event", ok_pages, len(out))
 
-        # ── Source 2: visitvietnams.com ─────────────────────────────────
-        # LUÔN chạy (không conditional) — vietnam.travel rất khó reach từ Render.
-        # VV có thể bổ sung event mà VT không có hoặc reverse.
-        logger.info("[VV] Bắt đầu scrape visitvietnams.com (VT đã được: %d event, %d/%d page OK)", len(out), vt_ok, vt_ok + vt_fail)
-        vv_count = _scrape_visitvietnams(client, seen_slugs, out, years[0])
-        logger.info("[VV] xong: thêm %d event", vv_count)
+        # ── International ───────────────────────────────────────────────
+        intl_count_before = len(out)
+        empty_pages = 0
+        for page in range(1, max_intl + 1):
+            url = f"{LIST_URL_INTL}?scope=intl&page={page}"
+            html = _fetch(url, client)
+            if not html:
+                logger.warning("[intl] page %d: fetch fail", page)
+                continue
+            events = _parse_list_page(html)
+            logger.info("[intl] page %d: %d event", page, len(events))
+            if not events:
+                empty_pages += 1
+                if empty_pages >= 2:
+                    break
+                continue
+            empty_pages = 0
+            for ev in events:
+                # Intl: prefix slug "intl-" để không đụng domestic
+                ev["slug"] = f"intl-{ev['slug']}"
+                if ev["slug"] in seen_slugs:
+                    continue
+                seen_slugs.add(ev["slug"])
+                enriched = _enrich_event(ev)
+                if enriched:
+                    out.append(enriched)
+        intl_added = len(out) - intl_count_before
+        logger.info("[intl] xong: thêm %d event", intl_added)
 
     logger.info("Festival scrape xong: %d event tổng", len(out))
     return out
 
 
-def _scrape_visitvietnams(client, seen_slugs: set[str], out: list[dict[str, Any]], default_year: int) -> int:
-    """Scrape visitvietnams.com /en/events. Trả số event mới thêm vào out.
-
-    VV thường là SPA — direct fetch trả skeleton HTML không có content. Force
-    qua Jina Reader để get server-side rendered content (markdown).
-    """
-    added = 0
-    for page in range(1, VV_MAX_PAGES + 1):
-        target = f"{VV_EVENT_LIST_URL}?page={page}&keyword="
-        # Force qua Jina Reader (skip direct cho VV vì SPA)
-        url = f"https://r.jina.ai/{target}"
-        html = _fetch(url, client)
-        if not html:
-            logger.info("[VV] page %d: fetch fail, dừng pagination", page)
-            break
-        events = _parse_visitvietnams_list(html)
-        logger.info("[VV] page %d: %d event (HTML %d bytes)", page, len(events), len(html))
-        if not events:
-            # Empty page = hết, dừng
-            break
-        page_added = 0
-        for ev in events:
-            slug = ev.get("slug")
-            if not slug or slug in seen_slugs:
-                continue
-            seen_slugs.add(slug)
-            # Default fallback: tháng hiện tại của default_year
-            enriched = _enrich_event(ev, default_year, datetime.now().month, client)
-            if enriched:
-                out.append(enriched)
-                added += 1
-                page_added += 1
-        if page_added == 0:
-            # Page không thêm event mới (toàn dup) → có thể đến cuối, dừng
-            break
-    return added
-
-
-def _parse_visitvietnams_list(html: str) -> list[dict[str, Any]]:
-    """Parse VV listing — auto-detect markdown (Jina) vs HTML."""
-    if _is_markdown(html):
-        events = _parse_markdown_for_events(html, VV_DETAIL_PATH_PREFIXES[0], VV_BASE_URL)
-        # Slug prefix "vv-" để không đụng VT
-        for ev in events:
-            ev["slug"] = f"vv-{ev['slug']}"
-        logger.info("[VV] Parsed (markdown mode): %d event", len(events))
-        return events
-
-    from selectolax.parser import HTMLParser
-
-    tree = HTMLParser(html)
-    events: list[dict[str, Any]] = []
-    seen: set[str] = set()
-
-    # Tìm mọi link tới detail (thử nhiều prefix vì không chắc structure)
-    detail_links = []
-    for prefix in VV_DETAIL_PATH_PREFIXES:
-        detail_links.extend(tree.css(f'a[href*="{prefix}"]'))
-
-    for link in detail_links:
-        try:
-            href = link.attributes.get("href", "")
-            if not href:
-                continue
-            # Skip nếu href là chính path prefix (listing page link, không phải detail)
-            is_detail = False
-            slug = ""
-            for prefix in VV_DETAIL_PATH_PREFIXES:
-                if prefix in href:
-                    path = href.split(prefix, 1)[1]
-                    candidate = path.split("?")[0].split("/")[0].strip()
-                    if candidate:
-                        is_detail = True
-                        slug = candidate
-                        break
-            if not is_detail or not slug or slug in seen:
-                continue
-
-            name = (link.text(strip=True) or "").strip()
-            if not name:
-                img_inside = link.css_first("img")
-                if img_inside:
-                    name = (img_inside.attributes.get("alt") or "").strip()
-            if not name or len(name) < 3:
-                continue
-
-            url = urljoin(VV_BASE_URL, href)
-
-            # Traverse parent để tìm date + image
-            parent = link.parent
-            depth = 0
-            container = parent
-            while parent is not None and depth < 5:
-                container = parent
-                parent = parent.parent
-                depth += 1
-
-            date_text = _extract_date_text_near(container, name)
-            location_text = _extract_location_near(container, name, date_text)
-
-            image_url = ""
-            img_node = link.css_first("img") or (container.css_first("img") if container else None)
-            if img_node:
-                src = img_node.attributes.get("src") or img_node.attributes.get("data-src", "")
-                if src:
-                    if src.startswith("//"):
-                        image_url = "https:" + src
-                    elif src.startswith("/"):
-                        image_url = urljoin(VV_BASE_URL, src)
-                    else:
-                        image_url = src
-
-            seen.add(slug)
-            events.append({
-                "slug": f"vv-{slug}",  # prefix để tránh đụng vietnam.travel slug
-                "name": name,
-                "date_text": date_text,
-                "location": location_text,
-                "image_url": image_url,
-                "source_url": url,
-            })
-        except Exception as e:  # noqa: BLE001
-            logger.debug("[VV] parse 1 link lỗi: %s", e)
-            continue
-
-    return events
-
+# ── Save DB ──────────────────────────────────────────────────────────────
 
 def save_festivals_to_db(db, events: list[dict[str, Any]]) -> dict[str, int]:
-    """Upsert events vào DB. Hash-based skip nếu content không đổi."""
+    """Upsert events vào DB. Hash-based diff."""
     from models import Festival
 
     inserted = 0
@@ -1036,6 +698,6 @@ def save_festivals_to_db(db, events: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def run_festival_scrape(db) -> dict[str, int]:
-    """Top-level: scrape + save. Dùng cho cron weekly + manual trigger."""
+    """Top-level: scrape + save."""
     events = scrape_festivals()
     return save_festivals_to_db(db, events)
