@@ -76,9 +76,31 @@ _PLACEHOLDER_TO_REGEX: dict[str, str] = {
     # {dd_list}: 1 hoặc nhiều DD ngăn cách bởi comma, semicolon, slash, hoặc space.
     # Dùng cho "Tháng 6: 08, 09, 10, ..., 30" hay "13; 20; 27"
     "dd_list": r"((?:\d{1,2})(?:\s*[,;/]\s*\d{1,2})*)",
+    # {month_block}: "Tháng X: D1, D2, ..., Dn" — 1 cụm tháng + dd_list.
+    # Dùng khi pattern lặp lại: "Tháng {mm}: {dd_list}" tự gấp thành block, có thể
+    # xuất hiện nhiều lần trong cùng text. Capture 2 group (mm, dd_list).
+    "month_block": r"Th[áa]ng\s*(\d{1,2})\s*[:\-]\s*((?:\d{1,2})(?:\s*[,;/]\s*\d{1,2})*)",
     # {...}: wildcard, có thể chứa | cho multi-section
     "...": r".*?",
 }
+
+
+# Normalize input text trước khi match: en-dash → hyphen, em-dash → hyphen,
+# normalize space đa dạng. Quan trọng vì DSL chỉ có literal `-`; nguồn web hay
+# dùng `–` (U+2013) hoặc `—` (U+2014) cho range.
+_DASH_VARIANTS = str.maketrans({
+    "–": "-",  # en-dash U+2013
+    "—": "-",  # em-dash U+2014
+    "−": "-",  # minus U+2212
+    "‐": "-",  # hyphen U+2010
+    "‑": "-",  # non-breaking hyphen U+2011
+    " ": " ",  # non-breaking space → space
+})
+
+
+def _normalize_text(text: str) -> str:
+    """Normalize dash + non-breaking space cho match nhất quán."""
+    return (text or "").translate(_DASH_VARIANTS)
 
 # Vietnamese ordinal words → weekday number (2-7 hoặc 6 cho CN)
 _VI_WEEKDAY_WORD: dict[str, int] = {
@@ -119,9 +141,11 @@ def _compile_pattern_impl(pattern: str) -> tuple[re.Pattern, list[str]]:
                 parts.append(re.escape(ch))
                 i += 1
 
-    # Wrap full match: anchor 2 đầu để tránh partial match nuốt phần text khác.
-    # Cho phép whitespace 2 bên — text gốc có thể có space thừa.
-    regex_str = r"^\s*" + "".join(parts) + r"\s*$"
+    # KHÔNG full-anchor: text gốc thường có prefix rác như "[Lễ]", "Đặc biệt:",
+    # hoặc multi-block "Tháng 5: ... Tháng 6: ...". `re.search` + non-greedy prefix
+    # `.*?` cho phép match block đầu tiên match được, các block khác lo bởi pass 2.
+    # Vẫn cho whitespace ở giữa flex (\s* thay space DSL).
+    regex_str = "".join(parts)
     try:
         return re.compile(regex_str, re.IGNORECASE), placeholder_order
     except re.error as e:
@@ -495,21 +519,28 @@ def match_text(
 ) -> tuple[list[datetime], str | None, int | None]:
     """Thử mọi active rule theo priority. Trả (dates, output_type, rule_id).
 
-    - (dates, "dates"|"weekly"|"monthly_recurring", id): rule match + có dates
+    - (dates, "dates"|"weekly"|"monthly_recurring"|"explicit_dates", id): match + có dates
     - ([], "skip"|"verbatim", id): rule match nhưng bỏ qua tour
     - ([], None, None): không có rule nào match
 
-    Multi-section: nếu text có dấu `|` (vd "Tháng 6: ... | Tháng 7: ..."), thử
-    match nguyên text trước; nếu fail → split theo `|` và match từng section,
-    gộp dates. Cho phép user chỉ định pattern đơn lẻ "Tháng {mm}: {dd_list}" mà
-    vẫn handle được chuỗi liệt kê nhiều tháng.
+    Pipeline 3 pass:
+      Pass 1: scan toàn text — finditer cho mỗi rule, gộp mọi non-overlapping match.
+              Thay vì 1 lần `re.match` → cho phép pattern lặp (vd "Tháng X: ..." xuất hiện
+              nhiều lần) match được nhiều block.
+      Pass 2: nếu pass 1 không match → split theo `|` hoặc `\n` (KHÔNG split theo `;` vì
+              `;` nằm bên trong dd_list của "Tháng X: 05; 12; 19").
+      Pass 3: nếu pass 2 cũng fail → trả empty (caller có thể dùng panel "Chưa khớp").
+
+    Text được normalize en-dash → hyphen + nbsp → space trước khi match.
     """
     if not text or not text.strip():
         return [], None, None
+    text = _normalize_text(text)
     rules = _get_active_rules_cached(_cache_token)
     today = today or _today()
 
-    # Pass 1: thử match nguyên text
+    # Pass 1a: thử match TOÀN text với mỗi rule (priority asc) qua re.match.
+    # Áp dụng cho rule kiểu DD/MM/YYYY ngắn gọn — text chỉ có 1 ngày duy nhất.
     for rd in rules:
         proxy = _RuleProxy(rd)
         result = apply_rule(proxy, text, today)
@@ -517,11 +548,44 @@ def match_text(
             continue
         return result, proxy.output_type.lower(), proxy.id
 
-    # Pass 2: nếu có separator (| ; newline), split + match từng section, gộp dates.
-    # Format thường gặp: "DD-MM-YYYY; DD-MM-YYYY; ..." hoặc "Tháng X: ... | Tháng Y: ..."
-    if not re.search(r"[|;\n]", text):
+    # Pass 1b: scan finditer GỘP MỌI rule "dates" cùng lúc, với greedy
+    # non-overlapping span selection. Cho phép 1 text dài có nhiều block khác
+    # nhau cùng được parse:
+    #   "[Lễ] 28/04 – 02/05 Tháng 05: 05; 12; 19 Tháng 06: 02; 09"
+    #   Rule "Tháng {mm}: {dd_list}" cover "Tháng 05: ..." + "Tháng 06: ..."
+    #   Rule "{dd}/{mm}" cover các DD/MM rời nằm ngoài (28/04, 02/05)
+    # Greedy: rule priority thấp được ưu tiên — chiếm span trước, rule sau chỉ
+    # scan vào span CHƯA bị chiếm.
+    spans: list[tuple[int, int]] = []  # (start, end) đã chiếm
+    aggregated_dates: list[datetime] = []
+    matched_rule_id: int | None = None
+    matched_ot: str | None = None
+    for rd in rules:
+        proxy = _RuleProxy(rd)
+        ot = (proxy.output_type or "").lower()
+        if ot in {"skip", "verbatim", "explicit_dates"}:
+            continue
+        fresh = _apply_rule_finditer_spans(proxy, text, today, spans)
+        if fresh:
+            aggregated_dates.extend(fresh)
+            if matched_rule_id is None:
+                matched_rule_id = proxy.id
+                matched_ot = ot
+    if aggregated_dates:
+        # Sort + dedupe trên tất cả ngày từ mọi rule
+        seen = set()
+        uniq: list[datetime] = []
+        for d in sorted(aggregated_dates):
+            key = (d.year, d.month, d.day)
+            if key not in seen:
+                seen.add(key)
+                uniq.append(d)
+        return uniq, matched_ot or "dates", matched_rule_id
+
+    # Pass 2: split theo `|` hoặc newline (KHÔNG dùng `;` vì xung đột dd_list).
+    if not re.search(r"[|\n]", text):
         return [], None, None
-    sections = [s.strip() for s in re.split(r"[|;\n]", text) if s.strip()]
+    sections = [s.strip() for s in re.split(r"[|\n]", text) if s.strip()]
     if len(sections) < 2:
         return [], None, None
     all_dates: list[datetime] = []
@@ -531,11 +595,19 @@ def match_text(
     for section in sections:
         for rd in rules:
             proxy = _RuleProxy(rd)
+            # Section có thể có nhiều block "Tháng X: ..." → dùng finditer trước
+            ot = (proxy.output_type or "").lower()
+            if ot not in {"skip", "verbatim", "explicit_dates"}:
+                agg = _apply_rule_finditer(proxy, section, today)
+                if agg:
+                    all_dates.extend(agg)
+                    any_matched = True
+                    if matched_type is None or matched_type == "skip":
+                        matched_type, matched_id = ot, proxy.id
+                    break
             result = apply_rule(proxy, section, today)
             if result is None:
                 continue
-            # Sửa output_type là "dates" cho gộp; skip/verbatim sẽ bỏ qua section đó
-            ot = proxy.output_type.lower()
             if ot in {"skip", "verbatim"}:
                 any_matched = True
                 if matched_type is None:
@@ -557,6 +629,149 @@ def match_text(
             seen.add(key)
             uniq.append(d)
     return uniq, matched_type or "dates", matched_id
+
+
+def _apply_rule_finditer_spans(
+    proxy: "_RuleProxy",
+    text: str,
+    today: datetime,
+    occupied: list[tuple[int, int]],
+) -> list[datetime]:
+    """Scan finditer + bỏ qua match overlap với spans đã chiếm.
+
+    Mutates `occupied` (append span của match được giữ). Trả list dates từ những
+    match KHÔNG overlap với span trước (rule priority thấp đã chiếm trước).
+    """
+    if not text or not text.strip():
+        return []
+    try:
+        regex, order = _compile_with_order(proxy.pattern)
+    except ValueError:
+        return []
+
+    def _overlaps(s: int, e: int) -> bool:
+        for (os_, oe_) in occupied:
+            if s < oe_ and e > os_:
+                return True
+        return False
+
+    ot = (proxy.output_type or "").lower()
+    out: list[datetime] = []
+    for m in regex.finditer(text):
+        s, e = m.start(), m.end()
+        if _overlaps(s, e):
+            continue
+        groups = list(m.groups())
+        captured = list(zip(order, groups))
+        if ot == "dates":
+            ext = _extract_dates_from_captured(captured, today)
+            if ext:
+                out.extend(ext)
+                occupied.append((s, e))
+        elif ot == "weekly":
+            weekdays: set[int] = set()
+            for name, val in captured:
+                if name == "weekday":
+                    idx = _weekday_index_from_token(val)
+                    if idx is not None:
+                        weekdays.add(idx)
+            if weekdays:
+                cur = today.replace(hour=0, minute=0, second=0, microsecond=0)
+                end = cur + timedelta(days=EXPAND_MONTHS_AHEAD * 31)
+                d = cur
+                while d <= end:
+                    if d.weekday() in weekdays:
+                        out.append(d)
+                    d += timedelta(days=1)
+                occupied.append((s, e))
+        elif ot == "monthly_recurring":
+            for name, val in captured:
+                if name == "dd":
+                    try:
+                        day_val = int(val)
+                    except ValueError:
+                        continue
+                    if 1 <= day_val <= 31:
+                        for offset in range(EXPAND_MONTHS_AHEAD):
+                            y = today.year + ((today.month - 1 + offset) // 12)
+                            mo = ((today.month - 1 + offset) % 12) + 1
+                            try:
+                                cand = datetime(y, mo, day_val)
+                                if cand.date() >= today.date():
+                                    out.append(cand)
+                            except ValueError:
+                                continue
+                        occupied.append((s, e))
+                    break
+    return out
+
+
+def _apply_rule_finditer(
+    proxy: "_RuleProxy",
+    text: str,
+    today: datetime,
+) -> list[datetime]:
+    """Scan text bằng finditer cho rule.pattern, gộp mọi non-overlapping match.
+
+    Áp dụng cho rule kiểu "Tháng {mm}: {dd_list}" hoặc "{dd}/{mm}/{yyyy}" có thể
+    xuất hiện nhiều lần trong text dài. Trả empty list nếu không match nào.
+    """
+    if not text or not text.strip():
+        return []
+    try:
+        regex, order = _compile_with_order(proxy.pattern)
+    except ValueError:
+        return []
+    ot = (proxy.output_type or "").lower()
+    out: list[datetime] = []
+    for m in regex.finditer(text):
+        groups = list(m.groups())
+        captured = list(zip(order, groups))
+        if ot == "weekly":
+            weekdays: set[int] = set()
+            for name, val in captured:
+                if name == "weekday":
+                    idx = _weekday_index_from_token(val)
+                    if idx is not None:
+                        weekdays.add(idx)
+            if weekdays:
+                cur = today.replace(hour=0, minute=0, second=0, microsecond=0)
+                end = cur + timedelta(days=EXPAND_MONTHS_AHEAD * 31)
+                d = cur
+                while d <= end:
+                    if d.weekday() in weekdays:
+                        out.append(d)
+                    d += timedelta(days=1)
+        elif ot == "monthly_recurring":
+            for name, val in captured:
+                if name == "dd":
+                    try:
+                        day_val = int(val)
+                    except ValueError:
+                        continue
+                    if 1 <= day_val <= 31:
+                        for offset in range(EXPAND_MONTHS_AHEAD):
+                            y = today.year + ((today.month - 1 + offset) // 12)
+                            mo = ((today.month - 1 + offset) % 12) + 1
+                            try:
+                                cand = datetime(y, mo, day_val)
+                                if cand.date() >= today.date():
+                                    out.append(cand)
+                            except ValueError:
+                                continue
+                    break
+        else:  # dates (default cho finditer)
+            ext = _extract_dates_from_captured(captured, today)
+            out.extend(ext)
+    # Sort + dedupe
+    seen = set()
+    uniq: list[datetime] = []
+    for d in sorted(out):
+        key = (d.year, d.month, d.day)
+        if key not in seen:
+            seen.add(key)
+            uniq.append(d)
+    return uniq
 
 
 # ── Seed defaults ────────────────────────────────────────────────────────────

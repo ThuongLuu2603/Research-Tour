@@ -828,13 +828,20 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
             key = raw_tg_for_alias or (f"so_ngay={t.so_ngay}" if t.so_ngay else "—")
             thoi_gian[key] = thoi_gian.get(key, 0) + 1
 
-        # Ngày KH (lich_kh): chỉ gom giá trị "toàn text lạ" — không parse được ngày
-        # cụ thể nào VÀ chưa map alias. Ví dụ: "Theo yêu cầu", "Liên hệ", "Hàng tháng"…
-        # Giá trị chuẩn "18/06/2026, 25/06/2026" sẽ parse được → không vào panel.
+        # Ngày KH (lich_kh): gom giá trị chưa được DSL DateFormatRule match.
+        # Trước đây gate bằng parse_departure_dates() (hardcoded fallback) → bị "cứu"
+        # bởi parser cũ, panel "Chưa khớp" luôn rỗng dù DSL không match.
+        # Giờ gate bằng match_text() từ DSL — chuỗi nào DSL không match sẽ vào panel,
+        # admin có thể viết rule mới cho chúng.
         raw_lkh = (t.lich_kh or "").strip()
         if raw_lkh:
-            parsed = parse_departure_dates(raw_lkh)
-            if not parsed and not is_schedule_alias_matched(raw_lkh):
+            try:
+                from date_format_rules import match_text as _dfr_match_text
+                _dfr_dates, _dfr_ot, _dfr_rid = _dfr_match_text(raw_lkh)
+                dsl_matched = _dfr_ot is not None
+            except Exception:
+                dsl_matched = False
+            if not dsl_matched and not is_schedule_alias_matched(raw_lkh):
                 lich_kh[raw_lkh] = lich_kh.get(raw_lkh, 0) + 1
 
         # Classify (market/route) chỉ áp dụng cho Main+Vietravel — FTG dùng sheet riêng

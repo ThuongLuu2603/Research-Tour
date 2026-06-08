@@ -418,11 +418,19 @@ def _apply_fields_to_tour(
         tour.dong_tour = new_dong_tour[:64]
     if not locked:
         tour.so_ngay = parse_ngay(fields["thoi_gian"])
-    if phan_khuc_dirty:
+    # Vietravel: phân_khuc = dòng tour. STICKY khi không có dòng_tour mới — tránh
+    # tour bị mất nhãn nếu 1 lần scrape không parse được tourLineId (vd HTML đổi).
+    # Trước đây: phan_khuc_dirty=True → phan_khuc="" rồi mới gán lại nếu có dong_tour
+    # mới; nếu không có thì rỗng vĩnh viễn. Giờ: chỉ reset rồi GÁN khi có giá trị
+    # mới — không có → giữ nguyên giá trị cũ. Áp dụng cho mọi nguồn.
+    if nguon == "Vietravel":
+        if (tour.dong_tour or "").strip():
+            tour.phan_khuc = (tour.dong_tour or "").strip()[:64]
+        # else: giữ phan_khuc cũ (sticky)
+    elif phan_khuc_dirty:
+        # Non-VTR: gía/thị trường/tuyến đổi → cần recompute giá. Đánh dấu rỗng để
+        # recompute_segments_for_sync() fill lại sau.
         tour.phan_khuc = ""
-    # Vietravel: Dòng tour CHÍNH LÀ phân khúc → gán thẳng, KHÔNG tính lại theo giá.
-    if nguon == "Vietravel" and (tour.dong_tour or "").strip():
-        tour.phan_khuc = (tour.dong_tour or "").strip()[:64]
     if not preserve_nguon:
         tour.nguon = nguon
     if external_id:
@@ -1009,14 +1017,17 @@ def merge_all_sheets_to_db(db) -> dict:
             results.append({"nguon": nguon, "error": str(e)})
     phan_khuc: dict = {}
     try:
-        from pricing_segments import recompute_segments_for_sync
+        from pricing_segments import recompute_segments_for_sync, recompute_missing_phan_khuc
 
         if all_affected:
             phan_khuc = recompute_segments_for_sync(db, all_affected)
         else:
-            from pricing_segments import recompute_missing_phan_khuc
-
-            phan_khuc = {"missing_filled": recompute_missing_phan_khuc(db), "targeted_updated": 0}
+            phan_khuc = {"targeted_updated": 0}
+        # LUÔN chạy recompute_missing_phan_khuc sau full sync — không chỉ khi
+        # all_affected rỗng. Bắt các tour cũ bị mất phan_khuc do scrape lỗi /
+        # mới insert / group baseline thay đổi sau khi recompute_segments_for_sync.
+        # recompute_missing_phan_khuc tự skip VTR (theo design) nên không đụng VTR.
+        phan_khuc["missing_filled"] = recompute_missing_phan_khuc(db)
     except Exception as e:
         logger.warning("recompute phan_khuc after full sheet sync failed: %s", e)
         phan_khuc = {"error": str(e)}

@@ -82,8 +82,13 @@ export default function RulesAdminPage() {
   const { data: unmatchedSummary } = useQuery({ queryKey: ["rules-unmatched-summary"], queryFn: getRulesUnmatchedSummary, enabled: isAdmin, staleTime: 120_000 });
   const { data: routeStats } = useQuery({ queryKey: ["rules-route-stats"], queryFn: getRuleRouteStats, enabled: isAdmin && tab === "classify", staleTime: 120_000 });
   const { data: quality } = useQuery({ queryKey: ["data-quality"], queryFn: getDataQuality, enabled: isAdmin, staleTime: 120_000 });
-  // Tab "schedule" giờ là Định dạng Ngày KH (pattern-based) — không dùng unmatched alias list.
-  const unmatchedScope = tab === "classify" || tab === "company" || tab === "departure" || tab === "duration" ? tab : null;
+  // Tab "schedule" = Định dạng Ngày KH (DSL pattern). Vẫn fetch unmatched scope=schedule
+  // để hiện text chưa khớp rule nào → admin biết cần viết thêm rule.
+  // (Backend đã sửa: gate bằng match_text DSL thay parse_departure_dates hardcoded.)
+  const unmatchedScope = (
+    tab === "classify" || tab === "company" || tab === "departure"
+    || tab === "duration" || tab === "schedule"
+  ) ? tab : null;
   const [hiddenGapValues, setHiddenGapValues] = useState<Set<string>>(() => new Set());
   const { data: unmatched, isLoading: unmatchedLoading } = useQuery({
     queryKey: ["rules-unmatched", unmatchedScope],
