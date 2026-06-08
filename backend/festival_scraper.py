@@ -20,11 +20,11 @@ Google IP whitelist nên fetch OK.
 
 Tần suất: weekly cron. Crawl: 24 list page VT + 15 page VV qua proxy.
 """
-import os
 from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 import time
 from datetime import date, datetime
