@@ -153,7 +153,7 @@ export default function ResearchGrid() {
   const [onlyFlagged, setOnlyFlagged] = useState(false);
   const [pageInput, setPageInput] = useState("");
   const [toast, setToast] = useState("");
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkMarket, setBulkMarket] = useState("");
   const [bulkRoute, setBulkRoute] = useState("");
   const [workspaceId, setWorkspaceId] = useState<number | null>(null);
@@ -229,7 +229,7 @@ export default function ResearchGrid() {
   });
 
   const mutation = useMutation({
-    mutationFn: ({ id, patch }: { id: number; patch: Partial<Tour> }) =>
+    mutationFn: ({ id, patch }: { id: string; patch: Partial<Tour> }) =>
       patchWorkspaceTour(workspaceId!, id, patch),
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ["workspace-tours"] });
@@ -245,7 +245,7 @@ export default function ResearchGrid() {
   });
 
   const bulkMutation = useMutation({
-    mutationFn: (body: { tour_ids: number[]; thi_truong?: string; tuyen_tour?: string; flagged?: boolean }) =>
+    mutationFn: (body: { tour_ids: string[]; thi_truong?: string; tuyen_tour?: string; flagged?: boolean }) =>
       bulkPatchWorkspaceTours(workspaceId!, body),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ["workspace-tours"] });
@@ -311,7 +311,7 @@ export default function ResearchGrid() {
     setPage(1);
   }, []);
 
-  const toggleSelect = (id: number) => {
+  const toggleSelect = (id: string) => {
     setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   };
 

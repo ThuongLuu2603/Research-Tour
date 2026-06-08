@@ -47,7 +47,9 @@ class TourOverridePatch(BaseModel):
 
 
 class BulkOverridePatch(BaseModel):
-    tour_ids: list[int]
+    # Accept string OR int; convert to int trong handler.
+    # Lý do: CockroachDB unique_rowid() > 2^53, JS round → frontend gửi string.
+    tour_ids: list[str | int]
     thi_truong: str | None = None
     tuyen_tour: str | None = None
     thoi_gian: str | None = None
@@ -241,16 +243,21 @@ def list_workspace_tours(
 @router.patch("/{workspace_id}/tours/{tour_id}")
 def patch_workspace_tour(
     workspace_id: int,
-    tour_id: int,
+    tour_id: str,  # CockroachDB unique_rowid() > 2^53 → nhận string từ URL
     patch: TourOverridePatch,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     ws = get_workspace_or_404(db, workspace_id)
     require_permission(db, ws, user, "edit")
-    tour = db.query(Tour).filter(Tour.id == tour_id).first()
+    try:
+        tour_id_int = int(tour_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"tour_id không hợp lệ: {tour_id}") from e
+    tour = db.query(Tour).filter(Tour.id == tour_id_int).first()
     if not tour:
-        raise HTTPException(status_code=404, detail="Tour không tồn tại")
+        raise HTTPException(status_code=404, detail=f"Tour {tour_id} không tồn tại")
+    tour_id = tour_id_int  # gán lại cho code dưới dùng int
 
     data = build_override_patch(patch.model_dump(exclude_none=True))
     if not data:
@@ -295,7 +302,11 @@ def bulk_patch_workspace_tours(
         patch["cong_ty"] = resolve_company_name(patch["cong_ty"])
     updated = 0
     wrote_ids: list[int] = []
-    for tour_id in body.tour_ids:
+    for raw_tid in body.tour_ids:
+        try:
+            tour_id = int(raw_tid)
+        except (ValueError, TypeError):
+            continue
         tour = db.query(Tour).filter(Tour.id == tour_id).first()
         if not tour:
             continue

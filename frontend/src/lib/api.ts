@@ -110,7 +110,9 @@ export const updateUser = async (id: number, patch: Partial<{ display_name: stri
 // ── Tours ─────────────────────────────────────────────────────────────────────
 
 export interface Tour {
-  id: number; external_id?: string; cong_ty: string; thi_truong: string; tuyen_tour: string;
+  // id là string vì CockroachDB unique_rowid() > 2^53 (JS MAX_SAFE_INTEGER).
+  // Number sẽ round mất last digits → PATCH bị 404 "Tour không tồn tại".
+  id: string; external_id?: string; cong_ty: string; thi_truong: string; tuyen_tour: string;
   ten_tour: string; lich_trinh: string; diem_kh: string; thoi_gian: string;
   gia: number | null; gia_raw: string; lich_kh: string; link_url: string;
   ma_tour: string; khach_san: string; hang_khong: string; so_ngay: number | null;
@@ -155,7 +157,7 @@ export const getFilterOptions = async (): Promise<TourFilterOptions> => {
   return data;
 };
 
-export const patchTour = async (id: number, patch: Partial<Tour>): Promise<Tour> => {
+export const patchTour = async (id: string, patch: Partial<Tour>): Promise<Tour> => {
   const { data } = await api.patch(`/tours/${id}`, patch);
   return data;
 };
@@ -1189,14 +1191,14 @@ export const downloadWorkspaceCsv = async (workspaceId: number, filters: Workspa
   window.URL.revokeObjectURL(url);
 };
 
-export const patchWorkspaceTour = async (workspaceId: number, tourId: number, patch: Partial<Tour>) => {
+export const patchWorkspaceTour = async (workspaceId: number, tourId: string | number, patch: Partial<Tour>) => {
   const { data } = await api.patch(`/workspaces/${workspaceId}/tours/${tourId}`, patch);
   return data as Tour;
 };
 
 export const bulkPatchWorkspaceTours = async (
   workspaceId: number,
-  body: { tour_ids: number[]; thi_truong?: string; tuyen_tour?: string; flagged?: boolean; analyst_note?: string },
+  body: { tour_ids: (string | number)[]; thi_truong?: string; tuyen_tour?: string; flagged?: boolean; analyst_note?: string },
 ) => {
   const { data } = await api.post(`/workspaces/${workspaceId}/tours/bulk-patch`, body);
   return data;
