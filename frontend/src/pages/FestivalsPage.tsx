@@ -29,12 +29,13 @@ import {
 } from "lucide-react";
 
 const REGION_LABEL: Record<FestivalRegion, string> = {
-  bac: "Bắc", trung: "Trung", nam: "Nam", "": "Chưa rõ",
+  bac: "Bắc", trung: "Trung", nam: "Nam", intl: "Quốc tế", "": "Chưa rõ",
 };
 const REGION_COLOR: Record<FestivalRegion, string> = {
   bac: "bg-blue-100 text-blue-800 border-blue-200",
   trung: "bg-amber-100 text-amber-800 border-amber-200",
   nam: "bg-emerald-100 text-emerald-800 border-emerald-200",
+  intl: "bg-purple-100 text-purple-800 border-purple-200",
   "": "bg-gray-100 text-gray-700 border-gray-200",
 };
 const CATEGORY_META: Record<FestivalCategory, { label: string; Icon: LucideIcon }> = {
@@ -208,6 +209,7 @@ function TimelineTab({ onPickFestival }: { onPickFestival: (slug: string) => voi
           options={[
             { value: "", label: "Tất cả vùng" }, { value: "bac", label: "Miền Bắc" },
             { value: "trung", label: "Miền Trung" }, { value: "nam", label: "Miền Nam" },
+            { value: "intl", label: "Quốc tế" },
           ]} />
         <FilterSelect label="Loại lễ" value={filters.category ?? ""}
           onChange={(v) => setFilters((f) => ({ ...f, category: (v || undefined) as FestivalCategory | undefined }))}

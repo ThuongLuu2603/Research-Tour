@@ -1246,7 +1246,7 @@ export const fetchReportHtml = async (): Promise<string> => {
 
 // ── Festivals (T3 Phase 1) ────────────────────────────────────────────────────
 
-export type FestivalRegion = "bac" | "trung" | "nam" | "";
+export type FestivalRegion = "bac" | "trung" | "nam" | "intl" | "";
 export type FestivalCategory = "cultural" | "religious" | "music" | "food" | "sport" | "other";
 
 export interface Festival {

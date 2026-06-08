@@ -34,7 +34,10 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://lehoivietnam.com.vn"
 API_URL = f"{BASE_URL}/api/events"
-DEFAULT_MAX_PAGES = 30  # ~600 events. Tối đa 148 pages = 2,953 events.
+# Tăng từ 30 → 75 pages = 1,500 events. Bao phủ cả domestic + intl events.
+# Intl events nằm interleaved trong dataset, classify qua loc2.name (không
+# có prefix "T."/"TP." → intl). Full dataset = 148 pages = 2,953 events.
+DEFAULT_MAX_PAGES = 75
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -120,14 +123,74 @@ _REGION_BY_PROVINCE_KEYWORD: dict[str, str] = {
 }
 
 
+# Intl country keywords — classify event là intl khi loc2.name không có prefix VN.
+_INTL_COUNTRY_KEYWORDS = {
+    "hàn quốc", "han quoc", "korea", "south korea", "kr",
+    "nhật bản", "nhat ban", "japan", "jp",
+    "trung quốc", "trung quoc", "china", "cn",
+    "thái lan", "thai lan", "thailand", "th",
+    "lào", "lao", "laos",
+    "campuchia", "cambodia", "kh",
+    "singapore", "sg",
+    "malaysia", "my",
+    "indonesia", "id",
+    "philippines", "ph",
+    "đài loan", "dai loan", "taiwan", "tw",
+    "ấn độ", "an do", "india", "in",
+    "úc", "uc", "australia", "au",
+    "mỹ", "my", "usa", "united states", "america", "us",
+    "anh", "uk", "england", "britain", "united kingdom",
+    "pháp", "phap", "france", "fr",
+    "đức", "duc", "germany", "de",
+    "ý", "italy", "italia", "it",
+    "tây ban nha", "spain", "es",
+    "nga", "russia", "ru",
+    "canada", "ca",
+    "brazil", "br",
+    "thụy điển", "sweden", "se",
+    "thụy sĩ", "switzerland", "ch",
+    "hà lan", "ha lan", "netherlands", "nl",
+    "bỉ", "belgium", "be",
+    "áo", "austria", "at",
+    "ba lan", "poland", "pl",
+}
+
+
 def _classify_region(location_text: str) -> str:
+    """Region: bac/trung/nam cho VN; 'intl' cho quốc tế."""
     if not location_text:
         return ""
     lt = location_text.lower()
+    # Check VN province trước (cụ thể hơn)
     for kw, region in _REGION_BY_PROVINCE_KEYWORD.items():
         if kw in lt:
             return region
+    # Check intl country
+    for kw in _INTL_COUNTRY_KEYWORDS:
+        if kw in lt:
+            return "intl"
     return ""
+
+
+def _is_intl_event(item: dict) -> bool:
+    """Detect intl event qua loc2.name pattern.
+
+    Domestic VN: "T. Ninh Bình", "TP. Hà Nội", "TP. Đà Nẵng" (có prefix "T."/"TP.")
+    Intl:       "Hàn Quốc", "Nhật Bản", "USA" (không có prefix)
+    """
+    loc2 = item.get("loc2") or {}
+    name = (loc2.get("name") if isinstance(loc2, dict) else "") or ""
+    if not name:
+        return False
+    name_clean = name.strip().lower()
+    # Có prefix VN → domestic
+    if name_clean.startswith(("t.", "tp.", "t ", "tp ")):
+        return False
+    # Khác có thể intl — verify bằng keyword
+    for kw in _INTL_COUNTRY_KEYWORDS:
+        if kw in name_clean:
+            return True
+    return False
 
 
 # Category map từ tags_grouped (nếu API trả) hoặc heuristic
@@ -299,6 +362,8 @@ def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
 
     seen_slugs: set[str] = set()
     out: list[dict[str, Any]] = []
+    intl_count = 0
+    domestic_count = 0
 
     with httpx.Client(headers=headers, follow_redirects=True, timeout=REQUEST_TIMEOUT_SEC) as client:
         total_pages = None
@@ -307,7 +372,7 @@ def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
             data = _fetch_json_page(url, client)
             if not data:
                 logger.warning("Page %d: fetch fail", page)
-                if page >= 3:  # Sau 3 page fail liên tiếp đầu, give up
+                if page >= 3:
                     break
                 continue
 
@@ -318,12 +383,12 @@ def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
                 logger.info("API meta: %d events / %d pages", total_events or 0, total_pages or 0)
 
             items = data.get("items") or []
-            logger.info("Page %d: %d items", page, len(items))
             if not items:
                 logger.info("Page %d empty → dừng pagination", page)
                 break
 
             added_this_page = 0
+            page_intl = 0
             for item in items:
                 ev = _build_event_from_api_item(item)
                 if not ev:
@@ -331,17 +396,30 @@ def scrape_festivals(years: list[int] | None = None) -> list[dict[str, Any]]:
                 if ev["slug"] in seen_slugs:
                     continue
                 seen_slugs.add(ev["slug"])
+                # Mark intl events: prefix slug + override region
+                if _is_intl_event(item):
+                    ev["slug"] = f"intl-{ev['slug']}"
+                    ev["region"] = "intl"
+                    intl_count += 1
+                    page_intl += 1
+                else:
+                    domestic_count += 1
                 out.append(ev)
                 added_this_page += 1
-            logger.info("Page %d: thêm %d event mới (tổng %d)", page, added_this_page, len(out))
+            logger.info(
+                "Page %d: %d items → +%d (intl=%d, domestic=%d, tổng=%d)",
+                page, len(items), added_this_page, page_intl, added_this_page - page_intl, len(out),
+            )
 
-            # Đến trang cuối thì dừng
             if total_pages and page >= total_pages:
                 break
 
             time.sleep(RATE_LIMIT_SEC)
 
-    logger.info("Festival API scrape xong: %d event tổng", len(out))
+    logger.info(
+        "Festival API scrape xong: %d event tổng (domestic=%d, intl=%d)",
+        len(out), domestic_count, intl_count,
+    )
     return out
 
 
