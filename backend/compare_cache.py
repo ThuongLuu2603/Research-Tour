@@ -264,14 +264,10 @@ def get_compare_context(
                 filtered = _filter_context(base_hit[1], thi_truong, tuyen_tour, diem_kh)
                 _cache[key] = (now, filtered)
                 return filtered
-        # In-memory MISS — thử Redis trước khi rebuild từ DB.
-        # Chỉ áp dụng cho lookup không filter (base context) — filter caller có thể tự
-        # filter trên rows nhưng rebuild trên DB ở đây cũng nhanh nếu base có sẵn.
-        if not _has_filters(thi_truong, tuyen_tour, diem_kh):
-            restored = _load_from_redis(key)
-            if restored is not None:
-                _cache[key] = (now, restored)
-                return restored
+        # NOTE: Redis chỉ dùng để LƯU segment_rows (cho API response cache layer khác),
+        # KHÔNG restore vào _cache vì CompareContext lightweight (empty tours/segments)
+        # sẽ phá callers cần ctx.tours/segments (vd summarize_context, home_brief).
+        # Sự kiện cache cold start sau restart → rely vào prewarm background.
         if key in _inflight:
             waiter = _inflight[key]
             is_owner = False
