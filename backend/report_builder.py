@@ -87,33 +87,28 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
             .first()
         )
 
-    # COLD START: nếu compare cache chưa warm, trả simplified report từ snapshot.
-    # Tránh user đợi 40s prewarm khi vào Báo cáo BGĐ lần đầu.
+    # COLD START: nếu cache cold, trả disk version (full report từ lần compute trước, < 24h)
     from compare_cache import _cache as _compare_in_mem
     if not _compare_in_mem:
+        from persistent_cache import load_text
+        disk_html = load_text(f"report_{report_type}", max_age_hours=24)
+        if disk_html:
+            return disk_html
+        # First-time chưa có disk → tạm trả simplified
         from datetime import date as _date
         snap_date = daily.snapshot_date.isoformat() if daily else _date.today().isoformat()
         title = "Báo cáo CI Vietravel — Hàng ngày" if report_type == "daily" else "Báo cáo CI Vietravel — Tuần"
-        html = f"""<!DOCTYPE html>
-<html lang="vi"><head><meta charset="utf-8"><title>{title}</title>
+        return f"""<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"><title>{title}</title>
 <style>body{{font-family:system-ui,sans-serif;padding:32px;max-width:900px;margin:auto;}}
+.notice{{padding:14px 18px;border-radius:8px;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;}}
 .kpi{{display:inline-block;padding:12px 18px;margin:4px;border-radius:8px;background:#f3f4f6;}}
-.kpi b{{display:block;font-size:24px;color:#1d4ed8;}}
-.notice{{padding:14px 18px;border-radius:8px;background:#fef3c7;color:#92400e;margin-bottom:24px;border:1px solid #fcd34d;}}
-</style></head><body>
-<h1>{title}</h1>
-<p style="color:#666">Snapshot: {snap_date}</p>
-<div class="notice">⏳ Hệ thống đang warm up cache (live data chuẩn bị sẵn ~30-40s). Báo cáo này dùng snapshot precomputed. F5 reload sau 1 phút để xem full report với chi tiết segments.</div>
-<div>
-  <div class="kpi"><b>{daily.total_tours if daily else 0}</b>Tổng tour</div>
-  <div class="kpi"><b>{daily.vtr_tours if daily else 0}</b>VTR tour</div>
-  <div class="kpi"><b>{daily.segment_count if daily else 0}</b>Phân khúc</div>
-  <div class="kpi"><b>{daily.avg_gap_pct if daily else 'N/A'}%</b>Chênh giá TB</div>
-  <div class="kpi"><b>{daily.expensive_segments if daily else 0}</b>Đắt hơn TT</div>
-  <div class="kpi"><b>{daily.cheaper_segments if daily else 0}</b>Rẻ hơn TT</div>
-</div>
+.kpi b{{display:block;font-size:24px;color:#1d4ed8;}}</style></head><body>
+<h1>{title}</h1><p>Snapshot: {snap_date}</p>
+<div class="notice">⏳ Lần đầu khởi tạo — đang build full report (~40s). F5 reload sau 1 phút.</div>
+<div><div class="kpi"><b>{daily.total_tours if daily else 0}</b>Tổng tour</div>
+<div class="kpi"><b>{daily.vtr_tours if daily else 0}</b>VTR tour</div>
+<div class="kpi"><b>{daily.segment_count if daily else 0}</b>Phân khúc</div></div>
 </body></html>"""
-        return html  # KHÔNG cache version cold-start (đợi full report cache)
 
     from compare_cache import get_compare_context
 
@@ -409,9 +404,11 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
 </div>
 
 </div></body></html>"""
-    # Cache final report 5 phút (Redis) — lần kế tiếp instant
+    # Cache final report: Redis 5 phút + Disk 24h (survive restart)
     try:
         redis_set(cache_key, final_html, ttl=300)
+        from persistent_cache import save_text
+        save_text(f"report_{report_type}", final_html, ttl_hours=24)
     except Exception:  # noqa: BLE001
         pass
     return final_html

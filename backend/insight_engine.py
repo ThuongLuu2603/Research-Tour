@@ -141,18 +141,42 @@ def generate_alerts(db: Session, tours: list[Tour], daily: DailySnapshot, insigh
 def get_home_brief(db: Session) -> dict:
     """Trang chủ KPIs + insights + alerts + trend.
 
-    Cache layer: Redis TTL 5 phút. Sync hoặc snapshot sẽ invalidate.
-    Trước đây mỗi request rebuild → 10-15s. Sau cache → < 200ms (Redis hit).
+    Cache layers (LIFO):
+      1. Redis TTL 5 phút (instant hit khi cache hot)
+      2. Disk persistent 24h (survive restart — đọc tức thì)
+      3. Live compute (40s nếu cache cold + disk empty)
+
+    Strategy: lần đầu sau backend restart, disk có data từ lần compute trước
+    → trả ngay, không đợi prewarm 40s. Background prewarm chạy → live compute
+    mới được save lên disk cho lần restart tiếp theo.
     """
     from redis_cache import make_key, redis_get, redis_set
+    from persistent_cache import save_json, load_json
 
     cache_key = make_key("home_brief", v=1)
     cached = redis_get(cache_key)
     if cached is not None:
         return cached
+
+    # Cache cold (in-memory + Redis miss). Check compare_cache warmth.
+    try:
+        from compare_cache import _cache as _compare_in_mem
+        cache_warm = bool(_compare_in_mem)
+    except Exception:  # noqa: BLE001
+        cache_warm = False
+
+    # Nếu cache cold → trả disk version ngay (data từ lần compute trước, < 24h),
+    # KHÔNG đợi 40s prewarm. Background prewarm sẽ refresh disk sau.
+    if not cache_warm:
+        disk_data = load_json("home_brief", max_age_hours=24)
+        if disk_data:
+            return disk_data
+
+    # Cache warm hoặc disk empty (first run ever) → compute live
     result = _compute_home_brief(db)
     try:
-        redis_set(cache_key, result, ttl=300)  # 5 min — vẫn fresh nhưng đỡ rebuild
+        redis_set(cache_key, result, ttl=300)
+        save_json("home_brief", result, ttl_hours=24)  # survive restart
     except Exception:  # noqa: BLE001
         pass
     return result

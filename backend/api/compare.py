@@ -177,32 +177,17 @@ def compare_summary(
     if cached is not None:
         return CompareSummary(**cached)
 
-    # CRITICAL: KHÔNG block đợi compare_cache build (~40s) khi cache cold.
-    # Fallback nhanh từ DailySnapshot (precomputed daily) để first-login instant.
+    # Cache cold → check disk persistence trước khi đợi 40s prewarm
     from compare_cache import _cache as _compare_in_mem
-    if not _compare_in_mem and not (thi_truong or tuyen_tour or diem_kh):
-        # No filter + cache cold → trả KPI snapshot, KHÔNG đợi 40s.
-        # Prewarm chạy background sẽ làm warm cho lần kế tiếp.
-        from models import DailySnapshot
-        daily = db.query(DailySnapshot).order_by(DailySnapshot.snapshot_date.desc()).first()
-        if daily:
-            return CompareSummary(
-                company=settings.company_name,
-                total_vietravel_tours=daily.vtr_tours or 0,
-                vietravel_tab_tours=daily.vtr_tours or 0,
-                total_market_tours=(daily.total_tours or 0) - (daily.vtr_tours or 0),
-                segments_with_vietravel=daily.segment_count or 0,
-                cheaper_count=daily.cheaper_segments or 0,
-                expensive_count=daily.expensive_segments or 0,
-                similar_count=max(0, (daily.segment_count or 0) - (daily.cheaper_segments or 0) - (daily.expensive_segments or 0)),
-                avg_gap_pct=daily.avg_gap_pct,
-                vtr_freq_monthly_total=0,
-                vtr_avg_departures_per_month=None,
-                market_freq_monthly_total=0,
-                freq_leading_segments=daily.freq_leading_segments or 0,
-                freq_lagging_segments=daily.freq_lagging_segments or 0,
-                methodology=METHODOLOGY,
-            )
+    cache_warm = bool(_compare_in_mem)
+    no_filter = not (thi_truong or tuyen_tour or diem_kh)
+
+    if not cache_warm and no_filter:
+        # Trả disk version (data từ lần compute trước, < 24h) — instant
+        from persistent_cache import load_json
+        disk_data = load_json("compare_summary_default", max_age_hours=24)
+        if disk_data:
+            return CompareSummary(**disk_data)
 
     ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh)
     from compare_engine import summarize_context
@@ -230,6 +215,10 @@ def compare_summary(
     )
     try:
         redis_set(cache_key, result.model_dump(), ttl=300)
+        # Persist default (no filter) to disk for next restart
+        if no_filter:
+            from persistent_cache import save_json
+            save_json("compare_summary_default", result.model_dump(), ttl_hours=24)
     except Exception:  # noqa: BLE001
         pass
     return result
