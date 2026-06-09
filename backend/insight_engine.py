@@ -154,29 +154,28 @@ def get_home_brief(db: Session) -> dict:
     from persistent_cache import save_json, load_json
 
     cache_key = make_key("home_brief", v=1)
+
+    # Layer 1: Redis (5min)
     cached = redis_get(cache_key)
     if cached is not None:
         return cached
 
-    # Cache cold (in-memory + Redis miss). Check compare_cache warmth.
-    try:
-        from compare_cache import _cache as _compare_in_mem
-        cache_warm = bool(_compare_in_mem)
-    except Exception:  # noqa: BLE001
-        cache_warm = False
+    # Layer 2: Disk (24h) — ƯU TIÊN dùng disk thay vì compute live 14s.
+    # Background prewarm sẽ refresh disk định kỳ → data luôn fresh.
+    disk_data = load_json("home_brief", max_age_hours=24)
+    if disk_data:
+        # Populate Redis từ disk để lần sau hit Redis instant
+        try:
+            redis_set(cache_key, disk_data, ttl=300)
+        except Exception:  # noqa: BLE001
+            pass
+        return disk_data
 
-    # Nếu cache cold → trả disk version ngay (data từ lần compute trước, < 24h),
-    # KHÔNG đợi 40s prewarm. Background prewarm sẽ refresh disk sau.
-    if not cache_warm:
-        disk_data = load_json("home_brief", max_age_hours=24)
-        if disk_data:
-            return disk_data
-
-    # Cache warm hoặc disk empty (first run ever) → compute live
+    # Layer 3: Compute live (chỉ khi cả Redis lẫn disk đều rỗng — first run ever)
     result = _compute_home_brief(db)
     try:
         redis_set(cache_key, result, ttl=300)
-        save_json("home_brief", result, ttl_hours=24)  # survive restart
+        save_json("home_brief", result, ttl_hours=24)
     except Exception:  # noqa: BLE001
         pass
     return result

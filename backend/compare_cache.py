@@ -389,7 +389,15 @@ def _populate_disk_cache_from_prewarm(db: Session, ctx) -> None:
     except Exception as e:  # noqa: BLE001
         logger.warning("Disk cache compare_summary failed: %s", e)
 
-    # 3. report_html daily: build và save
+    # 3. segment_rows: save trực tiếp từ ctx — dùng cho /api/compare/segments
+    try:
+        if ctx.segment_rows:
+            save_json("compare_segments_default", list(ctx.segment_rows), ttl_hours=24)
+            logger.info("Disk cache: segments saved (%d rows)", len(ctx.segment_rows))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Disk cache segments failed: %s", e)
+
+    # 4. report_html daily: build và save
     try:
         from report_builder import build_report_html
 

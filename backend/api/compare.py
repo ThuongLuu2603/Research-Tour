@@ -177,16 +177,16 @@ def compare_summary(
     if cached is not None:
         return CompareSummary(**cached)
 
-    # Cache cold → check disk persistence trước khi đợi 40s prewarm
-    from compare_cache import _cache as _compare_in_mem
-    cache_warm = bool(_compare_in_mem)
+    # Layer 2: Disk (24h) — ưu tiên dùng disk thay vì compute live 6s
     no_filter = not (thi_truong or tuyen_tour or diem_kh)
-
-    if not cache_warm and no_filter:
-        # Trả disk version (data từ lần compute trước, < 24h) — instant
+    if no_filter:
         from persistent_cache import load_json
         disk_data = load_json("compare_summary_default", max_age_hours=24)
         if disk_data:
+            try:
+                redis_set(cache_key, disk_data, ttl=300)
+            except Exception:  # noqa: BLE001
+                pass
             return CompareSummary(**disk_data)
 
     ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh)
@@ -235,8 +235,24 @@ def compare_segments(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh)
-    rows = list(ctx.segment_rows)
+    # Disk fast-path cho default (no filter) — tránh đợi 40s prewarm
+    no_filter = not (thi_truong or tuyen_tour or diem_kh)
+    rows: list[dict] | None = None
+    if no_filter:
+        from persistent_cache import load_json
+        disk_rows = load_json("compare_segments_default", max_age_hours=24)
+        if disk_rows:
+            rows = list(disk_rows)
+
+    if rows is None:
+        ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh)
+        rows = list(ctx.segment_rows)
+        if no_filter:
+            try:
+                from persistent_cache import save_json
+                save_json("compare_segments_default", rows, ttl_hours=24)
+            except Exception:  # noqa: BLE001
+                pass
 
     sort_key = {
         "gap_pct": lambda r: r.get("gap_pct") if r.get("gap_pct") is not None else -999,
