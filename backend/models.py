@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, date
 
-from sqlalchemy import Boolean, Date, DateTime, Float, Integer, String, Text, ForeignKey, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Float, Integer, String, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -416,8 +416,11 @@ class RouteRuleToken(Base):
     __tablename__ = "route_rule_tokens"
     __table_args__ = (UniqueConstraint("rule_id", "token", name="uq_rule_token"),)
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    rule_id: Mapped[int] = mapped_column(Integer, ForeignKey("route_keyword_rules.id", ondelete="CASCADE"), index=True)
+    # BigInteger vì rule_id reference route_keyword_rules.id có thể > 2^31
+    # (CRDB unique_rowid sinh ~1.18e18). SQLAlchemy Integer cast INSERT thành
+    # INTEGER → NumericValueOutOfRange. BigInteger map sang BIGINT correct.
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    rule_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("route_keyword_rules.id", ondelete="CASCADE"), index=True)
     token: Mapped[str] = mapped_column(String(128), index=True)
 
 
