@@ -14,6 +14,9 @@ import {
   listDateFormatRules, createDateFormatRule, updateDateFormatRule,
   deleteDateFormatRule, seedDateFormatDefaults, testDateFormat,
   applyClassificationToTours,
+  applyCompanyRulesToTours,
+  applyDepartureRulesToTours,
+  applyDurationRulesToTours,
   getApplyClassificationStatus,
   getRulesUnmatched,
   getRulesUnmatchedSummary,
@@ -280,6 +283,64 @@ export default function RulesAdminPage() {
       .catch((e) => { showErr(e); setApplying(false); });
   };
 
+  /**
+   * Per-tab refresh — chỉ re-apply rules của tab hiện tại.
+   * - classify (Tuyến tour): re-apply market + route → BG job, có polling
+   * - company / departure / duration: chạy đồng bộ, trả ngay
+   * - schedule / festival / compare: invalidate cache, không có endpoint apply riêng
+   */
+  const onRefreshCurrentTab = async () => {
+    setApplying(true);
+    try {
+      if (tab === "classify") {
+        setSyncMsg(fullScanApply
+          ? "Đang quét lại toàn bộ tour (TT + Tuyến tour)…"
+          : "Đang quét tour cần cập nhật (TT + Tuyến tour)…");
+        const r = await applyClassificationToTours({ fullScan: fullScanApply });
+        setSyncMsg(r.message || "Đang áp dụng quy tắc tuyến (chạy nền)…");
+        pollApplyStatus();
+      } else if (tab === "company") {
+        setSyncMsg("Đang re-apply alias công ty…");
+        const r = await applyCompanyRulesToTours();
+        setSyncMsg(r.message || `Đã cập nhật ${r.updated ?? "?"} tour (công ty)`);
+        invalidate();
+        void refreshUnmatchedList();
+        setApplying(false);
+      } else if (tab === "departure") {
+        setSyncMsg("Đang re-apply alias điểm KH…");
+        const r = await applyDepartureRulesToTours();
+        setSyncMsg(r.message || `Đã cập nhật ${r.updated ?? "?"} tour (điểm KH)`);
+        invalidate();
+        void refreshUnmatchedList();
+        setApplying(false);
+      } else if (tab === "duration") {
+        setSyncMsg("Đang re-apply alias thời gian…");
+        const r = await applyDurationRulesToTours();
+        setSyncMsg(r.message || `Đã cập nhật ${r.updated ?? "?"} tour (thời gian)`);
+        invalidate();
+        void refreshUnmatchedList();
+        setApplying(false);
+      } else {
+        setSyncMsg("Tab này không có rule áp dụng trực tiếp lên tour (chỉ invalidate cache).");
+        invalidate();
+        setApplying(false);
+      }
+    } catch (e) {
+      showErr(e);
+      setApplying(false);
+    }
+  };
+
+  const refreshTabLabel = useMemo(() => {
+    if (tab === "classify") return "Re-apply Tuyến tour";
+    if (tab === "company") return "Re-apply Công ty";
+    if (tab === "departure") return "Re-apply Điểm KH";
+    if (tab === "duration") return "Re-apply Thời gian";
+    if (tab === "schedule") return "Refresh cache Ngày KH";
+    if (tab === "festival") return "Refresh cache Lễ hội";
+    return "Refresh cache";
+  }, [tab]);
+
   const afterRuleSaved = (label: string, opts?: { gapValues?: string[]; skipPoll?: boolean }) => {
     if (opts?.gapValues?.length) markGapsHandled(opts.gapValues);
     invalidate();
@@ -472,6 +533,28 @@ export default function RulesAdminPage() {
             }
           />
         </div>
+        {/* Per-tab refresh button — Issue #2: mỗi tab có nút Refresh riêng biệt,
+            chỉ trigger logic của tab đó. Sticky bar global vẫn giữ cho "Áp dụng tất cả". */}
+        {(tab === "classify" || tab === "company" || tab === "departure" || tab === "duration") && (
+          <button
+            type="button"
+            onClick={onRefreshCurrentTab}
+            disabled={applying}
+            className="btn-secondary text-sm flex items-center gap-1.5 shrink-0 disabled:opacity-60"
+            title={
+              tab === "classify"
+                ? "Re-apply chỉ rules tuyến tour cho tab này (không động đến công ty / điểm KH / thời gian)"
+                : tab === "company"
+                ? "Re-apply chỉ alias công ty (không động đến tuyến tour / điểm KH / thời gian)"
+                : tab === "departure"
+                ? "Re-apply chỉ alias điểm khởi hành (không động đến tuyến tour / công ty / thời gian)"
+                : "Re-apply chỉ alias thời gian (không động đến tuyến tour / công ty / điểm KH)"
+            }
+          >
+            <RefreshCw size={14} className={applying ? "animate-spin" : ""} />
+            {refreshTabLabel}
+          </button>
+        )}
       </div>
 
       {tab === "classify" && (

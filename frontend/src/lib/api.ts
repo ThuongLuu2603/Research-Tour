@@ -1233,6 +1233,24 @@ export const applyClassificationToTours = async (opts?: { fullScan?: boolean; re
   return data as { started?: boolean; running?: boolean; message?: string };
 };
 
+/**
+ * Re-apply TẤT CẢ classification rules lên tour (TT, tuyến, ngày KH, số ngày, phân khúc).
+ * KHÔNG scrape, KHÔNG import data. Tương đương: applyClassificationToTours({ recomputePhanKhuc: true }).
+ *
+ * NOTE for backend coord: nếu sau này backend muốn tách hẳn endpoint
+ *   POST /api/admin/recompute-all-classifications
+ * thì sửa URL bên dưới. Hiện đang reuse apply-classification-to-tours + recompute_phan_khuc=true
+ * (đã cover full scope theo backend logic — xem api/rules.py: _start_apply_all_rules_background).
+ */
+export const recomputeAllClassifications = async () => {
+  const params = new URLSearchParams();
+  params.set("recompute_phan_khuc", "true");
+  // full_scan=true để re-apply tất cả tour, không chỉ tour mới
+  params.set("full_scan", "true");
+  const { data } = await api.post(`/admin/rules/apply-classification-to-tours?${params.toString()}`);
+  return data as { started?: boolean; running?: boolean; message?: string };
+};
+
 export const getApplyClassificationStatus = async () => {
   const { data } = await api.get("/admin/rules/apply-classification-status");
   return data as {

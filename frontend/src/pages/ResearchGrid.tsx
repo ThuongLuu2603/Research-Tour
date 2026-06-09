@@ -4,12 +4,14 @@ import {
   getFilterOptions, Tour,
   listWorkspaces, getWorkspaceTours, downloadWorkspaceCsv, patchWorkspaceTour, bulkPatchWorkspaceTours,
   shareWorkspace, listWorkspaceMembers, revokeWorkspaceShare, copyWorkspaceOverrides,
+  recomputeAllClassifications,
+  getApplyClassificationStatus,
   WorkspaceInfo,
 } from "@/lib/api";
 import { fmtVND, formatPhanKhuc, segmentColor, cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { COL } from "@/lib/glossary";
-import { Search, Download, Flag, FlagOff, ChevronLeft, ChevronRight, ExternalLink, Pencil, Check, X, Users, Copy, ArrowUpDown } from "lucide-react";
+import { Search, Download, Flag, FlagOff, ChevronLeft, ChevronRight, ExternalLink, Pencil, Check, X, Users, Copy, ArrowUpDown, RefreshCw } from "lucide-react";
 
 const PAGE_SIZE = 50;
 
@@ -164,6 +166,10 @@ export default function ResearchGrid() {
   const [exporting, setExporting] = useState(false);
   const [sortBy, setSortBy] = useState<GridSortCol>("id");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  // Issue #4: Refresh / Re-apply rules — chỉ trigger classification, KHÔNG scrape, KHÔNG import.
+  const [recomputing, setRecomputing] = useState(false);
+  // Issue #7: Số ngày filter (dropdown options từ existing values)
+  const [selDays, setSelDays] = useState<string[]>([]);
 
   const handleSort = (col: GridSortCol) => {
     if (sortBy === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -196,6 +202,19 @@ export default function ResearchGrid() {
     return [...routes].sort((a, b) => a.localeCompare(b, "vi"));
   }, [opts, selMarkets]);
 
+  // Issue #7: Reverse mapping route → market (auto-fill TT khi user chọn Tuyến tour trước).
+  const marketByRoute = useMemo(() => {
+    const map: Record<string, string> = {};
+    const byMarket = (opts?.routes_by_market ?? {}) as Record<string, string[]>;
+    Object.entries(byMarket).forEach(([mk, routes]) => {
+      routes.forEach((r) => {
+        // Nếu 1 tuyến tour thuộc nhiều TT (hiếm), giữ TT đầu tiên gặp.
+        if (!(r in map)) map[r] = mk;
+      });
+    });
+    return map;
+  }, [opts]);
+
   useEffect(() => {
     setSelRoutes((prev) => {
       if (!prev.length) return prev;
@@ -221,6 +240,16 @@ export default function ResearchGrid() {
     refetchInterval: 120_000,
     refetchOnWindowFocus: true,
   });
+
+  // Issue #7: Số ngày dropdown options — distinct so_ngay từ trang hiện tại (workspace data).
+  // Backend filter-options không trả so_ngay → derive client-side. Tooltip note coord.
+  const dayOptions = useMemo(() => {
+    const set = new Set<number>();
+    (data?.items ?? []).forEach((t) => {
+      if (t.so_ngay != null && t.so_ngay > 0) set.add(t.so_ngay);
+    });
+    return [...set].sort((a, b) => a - b);
+  }, [data]);
 
   const { data: members, refetch: refetchMembers } = useQuery({
     queryKey: ["workspace-members", workspaceId],
@@ -306,6 +335,66 @@ export default function ResearchGrid() {
     }
   };
 
+  /**
+   * Issue #4: Refresh / Re-apply rules — KHÔNG scrape, KHÔNG import.
+   * Trigger re-apply: TT, tuyến tour, ngày KH, số ngày, phân khúc.
+   * Endpoint reuse: POST /admin/rules/apply-classification-to-tours?full_scan=true&recompute_phan_khuc=true
+   *   → backend chạy nền: apply_all_rules_to_tours (TT, tuyến, ngày, công ty, điểm KH, thời gian) + recompute phân khúc.
+   *
+   * NOTE for backend coord: nếu muốn UX nhanh hơn (skip company/departure scope vì
+   * tab Sản phẩm & Data không cần re-apply alias), tạo endpoint mới
+   *   POST /api/admin/recompute-all-classifications
+   * gói chỉ market+route+phan_khuc+date. Hiện reuse endpoint full scope.
+   */
+  const handleRecomputeRules = async () => {
+    if (recomputing) return;
+    if (!isAdmin) {
+      setToast("Chỉ admin mới có quyền re-apply rules.");
+      return;
+    }
+    setRecomputing(true);
+    setToast("Đang re-apply rules (chạy nền) — không scrape, không import…");
+    try {
+      const r = await recomputeAllClassifications();
+      setToast(r.message || "Đã bắt đầu re-apply rules (chạy nền)…");
+      // Poll status để báo xong
+      const poll = async (attempt = 0) => {
+        try {
+          const st = await getApplyClassificationStatus();
+          if (st.running && attempt < 120) {
+            const prog = st.progress != null && st.total
+              ? `Đang re-apply rules: ${st.progress}/${st.total} tour…`
+              : st.message || "Đang re-apply rules…";
+            setToast(prog);
+            window.setTimeout(() => poll(attempt + 1), 2000);
+            return;
+          }
+          setRecomputing(false);
+          if (st.error) {
+            setToast(`Lỗi: ${st.error}`);
+            return;
+          }
+          const msg = st.message
+            || (st.last_result && typeof (st.last_result as { message?: string }).message === "string"
+              ? (st.last_result as { message: string }).message
+              : "Đã re-apply rules xong");
+          setToast(msg);
+          // Refresh data + filter-options
+          qc.invalidateQueries({ queryKey: ["workspace-tours"] });
+          qc.invalidateQueries({ queryKey: ["filter-options"] });
+        } catch {
+          setRecomputing(false);
+        }
+      };
+      poll();
+    } catch (e) {
+      setRecomputing(false);
+      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        || (e instanceof Error ? e.message : "Lỗi re-apply rules");
+      setToast(msg);
+    }
+  };
+
   const toggleFilter = useCallback((arr: string[], set: (v: string[]) => void, val: string) => {
     set(arr.includes(val) ? arr.filter((x) => x !== val) : [...arr, val]);
     setPage(1);
@@ -315,7 +404,16 @@ export default function ResearchGrid() {
     setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   };
 
-  const pageIds = (data?.items ?? []).map((t) => t.id);
+  // Issue #7: client-side post-filter cho selDays (backend chưa support so_ngay filter).
+  // Áp dụng trên page hiện tại — note coord backend nếu cần cross-page filter chính xác.
+  const visibleItems = useMemo(() => {
+    const items = data?.items ?? [];
+    if (!selDays.length) return items;
+    const set = new Set(selDays.map((d) => parseFloat(d)));
+    return items.filter((t) => t.so_ngay != null && set.has(t.so_ngay));
+  }, [data, selDays]);
+
+  const pageIds = visibleItems.map((t) => t.id);
   const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.includes(id));
 
   return (
@@ -342,6 +440,17 @@ export default function ResearchGrid() {
           {activeWs?.is_owner && (
             <button onClick={() => setShowShare((v) => !v)} className="btn-secondary text-xs flex items-center gap-1">
               <Users size={14} /> Chia sẻ
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              onClick={handleRecomputeRules}
+              disabled={recomputing}
+              className="btn-secondary text-xs flex items-center gap-1 disabled:opacity-60"
+              title="Re-apply rules: thị trường, tuyến tour, ngày KH, số ngày, phân khúc. KHÔNG scrape, KHÔNG import."
+            >
+              <RefreshCw size={14} className={recomputing ? "animate-spin" : ""} />
+              {recomputing ? "Đang re-apply…" : "Refresh rules"}
             </button>
           )}
           <button onClick={handleExport} disabled={!workspaceId || exporting} className="btn-secondary text-xs">
@@ -442,7 +551,20 @@ export default function ResearchGrid() {
         <select
           className="input text-xs py-1.5 max-w-[160px]"
           value=""
-          onChange={(e) => { if (e.target.value) toggleFilter(selRoutes, setSelRoutes, e.target.value); e.target.value = ""; }}
+          onChange={(e) => {
+            const route = e.target.value;
+            if (!route) return;
+            // Issue #7: Cascading reverse — nếu user chọn Tuyến tour mà chưa có TT nào,
+            // auto-fill TT tương ứng (tuyến → market lookup).
+            if (!selMarkets.length) {
+              const autoMarket = marketByRoute[route];
+              if (autoMarket) {
+                setSelMarkets([autoMarket]);
+              }
+            }
+            toggleFilter(selRoutes, setSelRoutes, route);
+            e.target.value = "";
+          }}
         >
           <option value="">{COL.tuyenTour}{selRoutes.length ? ` (${selRoutes.length})` : ""}{selMarkets.length ? " — theo TT" : ""}</option>
           {availableRoutes.filter((r: string) => !selRoutes.includes(r)).map((r: string) => (
@@ -452,6 +574,27 @@ export default function ResearchGrid() {
         {selRoutes.map((r) => (
           <button key={r} onClick={() => toggleFilter(selRoutes, setSelRoutes, r)} className="text-xs px-2 py-1 rounded-full bg-teal-100 text-teal-800 flex items-center gap-1">
             {r}<X size={10} />
+          </button>
+        ))}
+
+        {/* Issue #7: Số ngày dropdown — options từ existing values (so_ngay của tour hiện tại).
+            Backend không filter theo so_ngay → filter client-side ở render bên dưới.
+            NOTE coord backend: nếu cần filter chính xác cross-page, thêm
+              GET /workspaces/{id}/tours?so_ngay=3&so_ngay=5
+            trong WorkspaceTourFilters + backend api/workspaces.py. */}
+        <select
+          className="input text-xs py-1.5 max-w-[140px]"
+          value=""
+          onChange={(e) => { if (e.target.value) toggleFilter(selDays, setSelDays, e.target.value); e.target.value = ""; }}
+        >
+          <option value="">Số ngày{selDays.length ? ` (${selDays.length})` : ""}</option>
+          {dayOptions.filter((d) => !selDays.includes(String(d))).map((d) => (
+            <option key={d} value={String(d)}>{d} ngày</option>
+          ))}
+        </select>
+        {selDays.map((d) => (
+          <button key={d} onClick={() => toggleFilter(selDays, setSelDays, d)} className="text-xs px-2 py-1 rounded-full bg-cyan-100 text-cyan-800 flex items-center gap-1">
+            {d} ngày<X size={10} />
           </button>
         ))}
 
@@ -494,9 +637,9 @@ export default function ResearchGrid() {
           <Flag size={12} /> Flagged
         </button>
 
-        {(selMarkets.length > 0 || selRoutes.length > 0 || selCompanies.length > 0 || selPhanKhuc.length > 0 || selNguon.length > 0 || onlyFlagged || search) && (
+        {(selMarkets.length > 0 || selRoutes.length > 0 || selCompanies.length > 0 || selPhanKhuc.length > 0 || selNguon.length > 0 || selDays.length > 0 || onlyFlagged || search) && (
           <button
-            onClick={() => { setSelMarkets([]); setSelRoutes([]); setSelCompanies([]); setSelPhanKhuc([]); setSelNguon([]); setOnlyFlagged(false); setSearch(""); setPage(1); }}
+            onClick={() => { setSelMarkets([]); setSelRoutes([]); setSelCompanies([]); setSelPhanKhuc([]); setSelNguon([]); setSelDays([]); setOnlyFlagged(false); setSearch(""); setPage(1); }}
             className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1"
           >
             <X size={12} /> Xoá bộ lọc
@@ -550,7 +693,7 @@ export default function ResearchGrid() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {(data?.items ?? []).map((tour, i) => (
+            {visibleItems.map((tour, i) => (
               <tr key={tour.id} className={cn("hover:bg-blue-50 transition-colors", tour.flagged && "bg-amber-50", tour.has_override && "ring-1 ring-inset ring-blue-200", selectedIds.includes(tour.id) && "bg-blue-50/60")}>
                 <td className="px-3 py-2">
                   <input type="checkbox" disabled={!canEdit} checked={selectedIds.includes(tour.id)} onChange={() => toggleSelect(tour.id)} />

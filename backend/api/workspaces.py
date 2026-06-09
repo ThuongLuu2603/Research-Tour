@@ -90,15 +90,34 @@ def _admin_write_classification(db, tour, data: dict, user) -> tuple[dict, bool]
     return remaining, wrote
 
 
-def _recompute_phan_khuc_safe(db, tour_ids: list[int]) -> None:
-    """Tính lại phân khúc giá cho tour vừa sửa (để So sánh phản ánh ngay). Best-effort."""
+def _recompute_phan_khuc_background(tour_ids: list[int]) -> None:
+    """Defer phân khúc recompute to background thread — KHÔNG block PATCH response.
+    Tự mở Session riêng (Session caller đã close khi request return)."""
     if not tour_ids:
         return
-    try:
-        from pricing_segments import recompute_phan_khuc_for_tour_ids
-        recompute_phan_khuc_for_tour_ids(db, tour_ids)
-    except Exception:  # noqa: BLE001
-        pass
+    import logging
+    import threading
+
+    log = logging.getLogger(__name__)
+
+    def _run() -> None:
+        from database import SessionLocal
+        bg = SessionLocal()
+        try:
+            from pricing_segments import recompute_phan_khuc_for_tour_ids
+            recompute_phan_khuc_for_tour_ids(bg, list(tour_ids))
+            bg.commit()
+        except Exception as e:  # noqa: BLE001
+            log.warning("Background phân khúc recompute failed for %d tours: %s", len(tour_ids), e)
+            try:
+                bg.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+        finally:
+            bg.close()
+
+    t = threading.Thread(target=_run, daemon=True, name="phan-khuc-recompute")
+    t.start()
 
 
 class ShareWorkspaceRequest(BaseModel):
@@ -275,12 +294,14 @@ def patch_workspace_tour(
     if data:
         _upsert_override(db, workspace_id, tour_id, user.id, data)
     db.commit()
-    if wrote_db:
-        _recompute_phan_khuc_safe(db, [tour_id])
     override = db.query(TourOverride).filter(
         TourOverride.workspace_id == workspace_id, TourOverride.tour_id == tour_id
     ).first()
-    return merge_tour(tour, override).to_dict()
+    result = merge_tour(tour, override).to_dict()
+    # Defer recompute phân khúc sau khi response — KHÔNG block user "Lưu" (full scan ~vài giây).
+    if wrote_db:
+        _recompute_phan_khuc_background([tour_id])
+    return result
 
 
 @router.post("/{workspace_id}/tours/bulk-patch")
@@ -318,8 +339,9 @@ def bulk_patch_workspace_tours(
             wrote_ids.append(tour_id)
         updated += 1
     db.commit()
+    # Defer phân khúc recompute → bulk save trả về ngay; recompute chạy nền.
     if wrote_ids:
-        _recompute_phan_khuc_safe(db, wrote_ids)
+        _recompute_phan_khuc_background(wrote_ids)
     return {"updated": updated, "workspace_id": workspace_id}
 
 

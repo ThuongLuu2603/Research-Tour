@@ -1785,9 +1785,17 @@ def _load_route_rules() -> tuple[tuple[int, str, str, tuple[str, ...]], ...]:
         def _row_key(r: RouteKeywordRule) -> tuple:
             kws = tuple(k.strip().lower() for k in r.keywords.split(",") if k.strip())
             mk = r.thi_truong.strip()
-            # priority=True → 0 (kiểm tra TRƯỚC), priority=False → 1
-            prio = 0 if getattr(r, "priority", False) else 1
-            return (prio, ranks.get(mk, 99999), -len(kws), r.sort_order, r.id)
+            # Hierarchy ưu tiên (thấp = chạy trước):
+            #   1) Admin manual_locked tour → KHÔNG bị override (check ở _apply_rule_result_to_tour).
+            #   2) System rule (base rules).
+            #   3) Priority rule (priority=True) → apply BẤT KỂ thị trường có khớp hay không
+            #      → KHÔNG sort theo market_rank, chỉ theo keyword count + sort_order.
+            #   4) Other rules.
+            # priority=True → bucket 0 (chạy trước), market_rank=0 (bỏ qua market).
+            # priority=False → bucket 1, market_rank theo market order như cũ.
+            if getattr(r, "priority", False):
+                return (0, 0, -len(kws), r.sort_order, r.id)
+            return (1, ranks.get(mk, 99999), -len(kws), r.sort_order, r.id)
 
         sorted_rows = sorted(rows, key=_row_key)
         out = []
