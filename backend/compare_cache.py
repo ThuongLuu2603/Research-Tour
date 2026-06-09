@@ -321,12 +321,81 @@ def invalidate_compare_cache() -> None:
 
 
 def prewarm_compare_cache(db: Session) -> None:
-    """Build default compare context after sync/scrape to avoid cold-request timeouts."""
+    """Build default compare context after sync/scrape to avoid cold-request timeouts.
+
+    Sau khi compute xong → AUTO populate disk cache cho 3 endpoints nặng:
+    home_brief, compare_summary, report_html. Restart kế tiếp = load disk
+    instant, không cần user trigger.
+    """
     logger.info("Pre-warming compare cache...")
-    get_compare_context(db, [], "", "")
+    ctx = get_compare_context(db, [], "", "")
     logger.info("Compare cache pre-warm complete")
+    # Auto-populate disk cache cho cac endpoints nặng — chạy ngầm tránh block prewarm
+    try:
+        _populate_disk_cache_from_prewarm(db, ctx)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Disk cache populate failed: %s", e)
     try:
         from market_lab_cache import prewarm_market_lab_cache
         prewarm_market_lab_cache(db)
     except Exception as e:
         logger.warning("Market Lab prewarm after compare: %s", e)
+
+
+def _populate_disk_cache_from_prewarm(db: Session, ctx) -> None:
+    """Sau khi compare cache warm, populate disk cho 3 endpoints chính.
+    User restart sau sẽ thấy disk có data → load instant."""
+    from persistent_cache import save_json, save_text
+
+    # 1. home_brief: compute và save disk
+    try:
+        from insight_engine import _compute_home_brief
+
+        hb = _compute_home_brief(db)
+        save_json("home_brief", hb, ttl_hours=24)
+        logger.info("Disk cache: home_brief saved (%d keys)", len(hb))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Disk cache home_brief failed: %s", e)
+
+    # 2. compare_summary (no filter): compute và save
+    try:
+        from compare_engine import summarize_context
+        from config import settings
+        from api.compare import METHODOLOGY
+        from api.compare import CompareSummary
+
+        k = summarize_context(ctx.tours, ctx.segments)
+        vtr_count = k["vtr_count"]
+        vtr_freq = k["vtr_freq_monthly"]
+        summary = CompareSummary(
+            company=settings.company_name,
+            total_vietravel_tours=vtr_count,
+            vietravel_tab_tours=vtr_count,
+            total_market_tours=k["market_count"],
+            segments_with_vietravel=k["segment_count"],
+            cheaper_count=k["cheaper"],
+            expensive_count=k["expensive"],
+            similar_count=k["similar"],
+            avg_gap_pct=k["avg_gap_pct"],
+            vtr_freq_monthly_total=vtr_freq,
+            vtr_avg_departures_per_month=round(vtr_freq / vtr_count, 1) if vtr_count else None,
+            market_freq_monthly_total=k["market_freq_monthly"],
+            freq_leading_segments=k["freq_leading"],
+            freq_lagging_segments=k["freq_lagging"],
+            methodology=METHODOLOGY,
+        )
+        save_json("compare_summary_default", summary.model_dump(), ttl_hours=24)
+        logger.info("Disk cache: compare_summary saved")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Disk cache compare_summary failed: %s", e)
+
+    # 3. report_html daily: build và save
+    try:
+        from report_builder import build_report_html
+
+        html = build_report_html(db, "daily")
+        if html and len(html) > 1000:  # full report (không phải simplified ~500 chars)
+            save_text("report_daily", html, ttl_hours=24)
+            logger.info("Disk cache: report_daily saved (%d bytes)", len(html))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Disk cache report_daily failed: %s", e)
