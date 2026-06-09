@@ -210,11 +210,19 @@ def main() -> int:
         tables = get_existing_tables(src_engine, TABLE_ORDER)
         log.info("▸ Tables to copy: %d", len(tables))
 
-        # Disable triggers/constraints tạm thời (giúp INSERT nhanh + tránh FK race)
+        # Disable triggers/constraints tạm thời (giúp INSERT nhanh + tránh FK race).
+        # Cần SUPERUSER → skip nếu insufficient privilege (TABLE_ORDER đảm bảo parent-first).
+        deferred = False
         if not args.dry_run:
-            log.info("▸ Defer constraints…")
-            dst.execute(text("SET session_replication_role = replica;"))
-            dst.commit()
+            try:
+                dst.execute(text("SET session_replication_role = replica;"))
+                dst.commit()
+                log.info("▸ Defer constraints… OK")
+                deferred = True
+            except Exception as e:  # noqa: BLE001
+                dst.rollback()
+                log.warning("▸ Defer constraints… SKIP (cần SUPERUSER): %s", str(e)[:80])
+                log.info("  Fallback: rely on TABLE_ORDER (parent-first) — vẫn an toàn")
 
         total_src, total_dst = 0, 0
         for t in tables:
@@ -222,10 +230,14 @@ def main() -> int:
             total_src += s
             total_dst += d
 
-        # Re-enable constraints
+        # Re-enable constraints (chỉ khi đã defer thành công)
         if not args.dry_run:
-            dst.execute(text("SET session_replication_role = DEFAULT;"))
-            dst.commit()
+            if deferred:
+                try:
+                    dst.execute(text("SET session_replication_role = DEFAULT;"))
+                    dst.commit()
+                except Exception:  # noqa: BLE001
+                    dst.rollback()
             # Resync sequences
             resync_sequences(dst)
 
