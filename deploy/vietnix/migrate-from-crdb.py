@@ -168,6 +168,13 @@ def main() -> int:
     ap.add_argument("--skip-schema", action="store_true", help="Bỏ qua bước init_db schema")
     args = ap.parse_args()
 
+    # Auto-detect CockroachDB và dùng dialect cockroachdb+psycopg2 — SQLAlchemy
+    # postgresql dialect không parse được CRDB version string "CockroachDB CCL v25.4..."
+    # → AssertionError. CRDB dialect dùng cùng psycopg2 driver, không strict version check.
+    if "cockroachlabs.cloud" in args.source and args.source.startswith("postgresql://"):
+        args.source = "cockroachdb+psycopg2://" + args.source[len("postgresql://"):]
+        log.info("Auto-converted source URL: postgresql:// → cockroachdb+psycopg2://")
+
     log.info("Source: %s", args.source[:60] + "…")
     log.info("Target: %s", args.target[:60] + "…")
     log.info("Dry run: %s", args.dry_run)
