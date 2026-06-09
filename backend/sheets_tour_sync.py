@@ -401,9 +401,18 @@ def _apply_fields_to_tour(
     else:
         tour.thi_truong = fields["thi_truong"][:128]
         tour.tuyen_tour = fields["tuyen_tour"][:256]
-    tour.diem_kh = resolve_departure_point(fields["diem_kh"])[:256]
+    # STICKY: chỉ overwrite khi scrape extract được giá trị mới.
+    # Nếu rỗng/scrape lỗi → giữ value cũ (tránh xóa data quý của user).
+    new_diem_kh = resolve_departure_point(fields.get("diem_kh") or "")
+    if new_diem_kh.strip():
+        tour.diem_kh = new_diem_kh[:256]
+    # else: giữ tour.diem_kh hiện tại
+
     if not locked:
-        tour.thoi_gian = fields["thoi_gian"][:64]
+        new_thoi_gian = (fields.get("thoi_gian") or "").strip()
+        if new_thoi_gian:
+            tour.thoi_gian = new_thoi_gian[:64]
+        # else: giữ tour.thoi_gian hiện tại
     tour.gia_raw = fields["gia_raw"][:64]
     tour.gia = fields["gia"]
     tour.lich_kh = fields["lich_kh"]

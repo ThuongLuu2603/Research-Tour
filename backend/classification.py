@@ -1633,7 +1633,7 @@ def _apply_classification_rules_to_tours_locked(
     *,
     keyword_filter: list[str] | None = None,
     route_state: str | None = None,
-    clear_unmatched: bool = True,
+    clear_unmatched: bool = False,  # đổi từ True → False: tuyệt đối KHÔNG xóa giá trị unmatch.
     progress_cb: callable | None = None,
 ) -> dict:
     """
@@ -1684,7 +1684,7 @@ def apply_classification_rules_to_tours(
     *,
     keyword_filter: list[str] | None = None,
     route_state: str | None = None,
-    clear_unmatched: bool = True,
+    clear_unmatched: bool = False,  # PRESERVE RAW khi unmatch — KHÔNG xóa giá trị.
     progress_cb: callable | None = None,
 ) -> dict:
     from db_job_lock import tours_write_lock
