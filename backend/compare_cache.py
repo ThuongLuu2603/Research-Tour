@@ -167,38 +167,16 @@ def load_tours(
     tuyen_tour: str = "",
     diem_kh: str = "",
 ) -> list[Tour]:
-    """Load chỉ cột cần cho compare engine — giảm Egress đáng kể.
-    Các cột dùng bởi compare_engine: id, cong_ty, ten_tour, lich_trinh, thi_truong,
-    tuyen_tour, diem_kh, gia, gia_raw, thoi_gian, so_ngay, lich_kh, link_url,
-    ma_tour, nguon, updated_at.
-    """
-    from sqlalchemy.orm import load_only
+    """Load TẤT CẢ cột Tour — Postgres self-host không tốn egress.
 
+    Trước đây dùng load_only(specific cols) trên CRDB Serverless để giảm RU. Nhưng
+    khi code access cột không có trong load_only (vd festival_slug, province_code,
+    created_at, classification_rule_id), SQLAlchemy fire SELECT WHERE id=$1 per
+    tour = 7568 N+1 queries × 2-3ms Python overhead = 15-25 giây slow load.
+    Trên Postgres self-host, 1 query lấy hết ~5MB là vô tư.
+    """
     q = apply_market_compare_source_filter(
         db.query(Tour)
-        .options(load_only(
-            Tour.id,
-            Tour.cong_ty,
-            Tour.ten_tour,
-            Tour.lich_trinh,
-            Tour.thi_truong,
-            Tour.tuyen_tour,
-            Tour.diem_kh,
-            Tour.gia,
-            Tour.gia_raw,
-            Tour.thoi_gian,
-            Tour.so_ngay,
-            Tour.lich_kh,
-            Tour.link_url,
-            Tour.ma_tour,
-            Tour.nguon,
-            Tour.updated_at,
-            Tour.sheet_source,  # cần cho is_vietravel_tab() — thiếu gây lazy-load 8000+ lần
-            Tour.phan_khuc,     # cần cho segment stats (phía thị trường: Premium)
-            Tour.dong_tour,     # Dòng tour VTR (Tiết kiệm/Giá Tốt…) — lọc giá phía Vietravel
-            Tour.flagged,       # cần cho compute_data_quality() trong Báo cáo BGĐ —
-                                # thiếu gây DetachedInstanceError khi cache trả tour cho session khác
-        ))
         .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
     )
     # System-wide rule: loại trừ market "Không xác định" khỏi mọi calculation.

@@ -26,28 +26,11 @@ _INTELLIGENCE_CACHE_SEC = 300
 
 
 def _market_compare_tour_query(db: Session):
+    # KHÔNG dùng load_only: callers truy cập nhiều cột (festival_slug, province_code,
+    # classification_rule_id, flagged...) → SQLAlchemy lazy-load per tour → N+1.
+    # Postgres self-host: 1 query load full row ~5MB là vô tư, tránh 7000+ lookups.
     return apply_market_compare_source_filter(
         db.query(Tour)
-        .options(load_only(
-            Tour.id,
-            Tour.ten_tour,
-            Tour.ma_tour,
-            Tour.link_url,
-            Tour.gia_raw,
-            Tour.lich_trinh,
-            Tour.updated_at,
-            Tour.created_at,
-            Tour.cong_ty,
-            Tour.thi_truong,
-            Tour.tuyen_tour,
-            Tour.diem_kh,
-            Tour.thoi_gian,
-            Tour.so_ngay,
-            Tour.gia,
-            Tour.lich_kh,
-            Tour.nguon,
-            Tour.sheet_source,
-        ))
         .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
     )
 
