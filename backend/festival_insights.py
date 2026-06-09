@@ -27,6 +27,10 @@ TOUR_PRICE_MAX_VND = 500_000_000
 PREMIUM_PCT_CAP = 500.0
 
 
+from redis_cache import cached_json
+
+
+@cached_json("festival.pricing_premium", ttl=3600)
 def get_pricing_premium(db, top_n: int = 20) -> dict[str, Any]:
     """UC#2 — So giá tour gắn lễ vs không gắn lễ cùng tuyến.
 
@@ -127,6 +131,7 @@ def get_pricing_premium(db, top_n: int = 20) -> dict[str, Any]:
     }
 
 
+@cached_json("festival.dashboard", ttl=3600)
 def get_dashboard_summary(db) -> dict[str, Any]:
     """Smart dashboard summary cho landing tab Festival module.
 
@@ -304,6 +309,7 @@ def get_dashboard_summary(db) -> dict[str, Any]:
     }
 
 
+@cached_json("festival.demand_forecast", ttl=3600)
 def get_demand_forecast(db, months_ahead: int = 6) -> dict[str, Any]:
     """UC#3 — Forecast tháng peak lễ → suggest tăng inventory.
 
@@ -392,6 +398,7 @@ def get_demand_forecast(db, months_ahead: int = 6) -> dict[str, Any]:
     return {"forecast": out}
 
 
+@cached_json("festival.marketing", ttl=3600)
 def get_marketing_calendar(db, months_ahead: int = 12) -> list[dict[str, Any]]:
     """UC#5 — Marketing calendar: lễ hội cho 12 tháng + suggested tour push.
 
@@ -494,6 +501,7 @@ def _campaign_hint(f) -> str:
     return "Tour văn hóa địa phương kết hợp festival"
 
 
+@cached_json("festival.heatmap", ttl=3600)
 def get_region_heatmap(db) -> dict[str, Any]:
     """UC#6 — Heatmap mật độ lễ × mật độ tour.
 

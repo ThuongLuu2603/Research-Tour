@@ -142,6 +142,49 @@ def make_key(namespace: str, **kwargs) -> str:
     return f"ota:{namespace}:{digest}"
 
 
+def cached_json(namespace: str, ttl: int | None = None):
+    """Decorator cache function result vào Redis dưới namespace.
+
+    Function args được hash thành cache key. Function result phải JSON-serializable.
+    Bỏ qua args không hashable (vd db: Session) — chỉ hash str/int/list/dict.
+
+    Usage:
+        @cached_json("festival.dashboard", ttl=3600)
+        def get_dashboard_summary(db, region: str = "all"):
+            ...
+    """
+    from functools import wraps
+
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            # Hash chỉ những args/kwargs JSON-able. Skip db/session-like (first positional thường là db).
+            hashable = {}
+            for i, a in enumerate(args[1:], start=1):
+                if isinstance(a, (str, int, float, bool, list, tuple, dict, type(None))):
+                    hashable[f"a{i}"] = a
+            for k, v in kwargs.items():
+                if isinstance(v, (str, int, float, bool, list, tuple, dict, type(None))):
+                    hashable[k] = v
+
+            key = make_key(namespace, **hashable)
+            cached = redis_get(key)
+            if cached is not None:
+                return cached
+            result = fn(*args, **kwargs)
+            try:
+                # Test serialize trước khi cache (tránh lưu invalid data)
+                json.dumps(result, default=str, ensure_ascii=False)
+                redis_set(key, result, ttl)
+            except (TypeError, ValueError) as e:
+                logger.debug("Skip cache (not JSON-serializable): %s %s", namespace, e)
+            return result
+
+        return wrapper
+
+    return decorator
+
+
 def stats() -> dict:
     """Trả Redis stats để monitor: used_memory, hit_rate, keys count."""
     if not _enabled:

@@ -405,10 +405,31 @@ def get_coverage_gap(db, limit: int = 30) -> list[dict[str, Any]]:
 
     "Cover" = tour có festival_slug match VÀ tour location match festival location.
     Sort theo gap_score desc → festival VTR thiếu nhất ở đầu.
+
+    Performance: refactored từ N+1 query (200 festivals × 1 query/festival = 200 queries,
+    ~10s tổng) → 1 query lấy tất cả tour có festival_slug + group in-memory.
+    Redis cache TTL 1h (key = "ota:festival.coverage_gap:<hash(limit)>").
     """
-    import re
+    from redis_cache import make_key, redis_get, redis_set
+
+    cache_key = make_key("festival.coverage_gap", limit=limit)
+    cached = redis_get(cache_key)
+    if cached is not None:
+        return cached
+    result = _compute_coverage_gap(db, limit)
+    try:
+        redis_set(cache_key, result, ttl=3600)
+    except Exception:  # noqa: BLE001
+        pass
+    return result
+
+
+def _compute_coverage_gap(db, limit: int) -> list[dict[str, Any]]:
+    from collections import defaultdict
+
     from models import Festival, Tour
-    from sqlalchemy import func
+    from sqlalchemy.orm import load_only
+    from tour_filters import market_filter_clause
 
     today = date.today()
     festivals = (
@@ -418,32 +439,52 @@ def get_coverage_gap(db, limit: int = 30) -> list[dict[str, Any]]:
         .limit(200)
         .all()
     )
+    if not festivals:
+        return []
+
+    # 1 query lấy tất cả tour có festival_slug (chỉ cột cần)
+    fest_slugs = {f.slug for f in festivals}
+    tour_rows = (
+        db.query(Tour)
+        .options(load_only(
+            Tour.id, Tour.cong_ty, Tour.festival_slug,
+            Tour.province_code, Tour.thi_truong, Tour.tuyen_tour,
+        ))
+        .filter(Tour.festival_slug.in_(fest_slugs))
+        .filter(market_filter_clause(Tour))
+        .all()
+    )
+
+    # Build location matcher cho mỗi festival (vẫn cần per-festival vì location_text khác nhau)
+    # Group tours theo festival_slug trước, rồi filter location in-memory.
+    tours_by_slug: dict[str, list[Tour]] = defaultdict(list)
+    for t in tour_rows:
+        if t.festival_slug:
+            tours_by_slug[t.festival_slug].append(t)
 
     out: list[dict[str, Any]] = []
-    from tour_filters import market_filter_clause
-
     for f in festivals:
-        # Apply location filter: chỉ count tour ở cùng vùng với festival
-        loc_filter = _location_match_filter(f, Tour)
-        rows_q = (
-            db.query(Tour.cong_ty, func.count(Tour.id))
-            .filter(Tour.festival_slug == f.slug)
-            .filter(market_filter_clause(Tour))
-        )
-        if loc_filter is not None:
-            rows_q = rows_q.filter(loc_filter)
-        rows = rows_q.group_by(Tour.cong_ty).all()
+        tours = tours_by_slug.get(f.slug, [])
+        if not tours:
+            continue
+
+        # Apply location filter in-memory
+        loc_filter_fn = _location_match_filter_fn(f)
+        if loc_filter_fn is not None:
+            tours = [t for t in tours if loc_filter_fn(t)]
 
         vtr_count = 0
         comp_count = 0
-        comp_companies: dict[str, int] = {}
-        for co, cnt in rows:
-            if "vietravel" in (co or "").lower():
-                vtr_count += cnt
+        comp_companies: dict[str, int] = defaultdict(int)
+        for t in tours:
+            co = t.cong_ty or ""
+            if "vietravel" in co.lower():
+                vtr_count += 1
             else:
-                comp_count += cnt
+                comp_count += 1
                 if co:
-                    comp_companies[co] = cnt
+                    comp_companies[co] += 1
+
         if comp_count == 0 and vtr_count == 0:
             continue
         out.append({
@@ -460,3 +501,36 @@ def get_coverage_gap(db, limit: int = 30) -> list[dict[str, Any]]:
         })
     out.sort(key=lambda x: -x["gap_score"])
     return out[:limit]
+
+
+def _location_match_filter_fn(festival):
+    """Trả về function(tour) → bool — version in-memory của _location_match_filter (SQL).
+    Logic: tour.province_code match festival.province_code hoặc fallback substring match
+    location_text trong tuyen_tour/thi_truong."""
+    fest_prov = (getattr(festival, "province_code", "") or "").strip().upper()
+    fest_loc = (getattr(festival, "location_text", "") or "").strip().lower()
+    if not fest_prov and not fest_loc:
+        return None
+
+    # Substring keywords từ location_text
+    keywords = []
+    if fest_loc:
+        # Lấy phần đầu (province name) - vd "Hà Nội, Việt Nam" → "hà nội"
+        first_part = fest_loc.split(",")[0].strip()
+        if first_part:
+            keywords.append(first_part)
+
+    def matcher(tour) -> bool:
+        if fest_prov:
+            tour_prov = (tour.province_code or "").strip().upper()
+            if tour_prov and tour_prov == fest_prov:
+                return True
+        if keywords:
+            tuyen = (tour.tuyen_tour or "").lower()
+            tt = (tour.thi_truong or "").lower()
+            for kw in keywords:
+                if kw in tuyen or kw in tt:
+                    return True
+        return False
+
+    return matcher
