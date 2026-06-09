@@ -1,0 +1,62 @@
+[Unit]
+Description=OTA Platform FastAPI backend (gunicorn + uvicorn)
+Documentation=https://github.com/<user>/ota-platform
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=notify
+User=ota
+Group=ota
+WorkingDirectory=/var/www/ota/backend
+
+# Env
+EnvironmentFile=/var/www/ota/backend/.env
+Environment="PATH=/var/www/ota/backend/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+Environment="PYTHONDONTWRITEBYTECODE=1"
+
+# 1 worker — RAM cap 2GB. Tăng lên 2 nếu upgrade NVMe 2 (4GB RAM).
+# uvicorn worker class hỗ trợ ASGI (FastAPI) + lifespan
+ExecStart=/var/www/ota/backend/venv/bin/gunicorn main:app \
+    --workers 1 \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --bind unix:/var/www/ota/backend/ota.sock \
+    --timeout 180 \
+    --graceful-timeout 30 \
+    --keep-alive 5 \
+    --access-logfile - \
+    --error-logfile - \
+    --log-level info
+
+# Cleanup socket khi stop
+ExecStopPost=/bin/rm -f /var/www/ota/backend/ota.sock
+
+# Restart policy
+Restart=always
+RestartSec=5
+StartLimitInterval=60s
+StartLimitBurst=5
+
+# Graceful shutdown — chờ APScheduler/sync flush
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+# Resource limits
+LimitNOFILE=65535
+# OOM protection — ưu tiên giết tour scraper process trước backend chính
+OOMScoreAdjust=-100
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/www/ota/backend
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

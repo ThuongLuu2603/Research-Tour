@@ -1,0 +1,112 @@
+name: Deploy to Vietnix VPS
+
+# Manual-only cho đến khi VPS ready + GitHub Secrets đã set
+# (VIETNIX_HOST, VIETNIX_SSH_KEY). Sau khi setup xong, đổi sang:
+#   on:
+#     push:
+#       branches: [main]
+#     workflow_dispatch:
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: vietnix-deploy
+  cancel-in-progress: false  # KHÔNG cancel deploy giữa chừng
+
+jobs:
+  build-frontend:
+    name: Build frontend artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install + build
+        run: |
+          cd frontend
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Upload dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 3
+
+  deploy:
+    name: Deploy to Vietnix
+    needs: build-frontend
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VIETNIX_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.VIETNIX_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Rsync frontend dist to VPS
+        run: |
+          rsync -az --delete \
+            -e "ssh -i ~/.ssh/id_ed25519" \
+            frontend/dist/ \
+            deploy@${{ secrets.VIETNIX_HOST }}:/var/www/ota/frontend/dist/
+
+      - name: SSH deploy (backend + service)
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VIETNIX_HOST }}
+          username: deploy
+          key: ${{ secrets.VIETNIX_SSH_KEY }}
+          timeout: 5m
+          command_timeout: 10m
+          script: |
+            set -euo pipefail
+            cd /var/www/ota
+
+            # Pull code (chỉ backend — frontend đã rsync sẵn)
+            git fetch --depth=1 origin main
+            git reset --hard origin/main
+
+            # Backend deps
+            backend/venv/bin/pip install -r backend/requirements.txt --quiet
+
+            # Run migrations (database.init_db sẽ chạy khi backend khởi động)
+
+            # Reload service (graceful)
+            sudo systemctl reload-or-restart ota-backend
+
+            # Reload Nginx (nhẹ — pickup file frontend mới nếu có)
+            sudo systemctl reload nginx
+
+            # Wait + verify
+            sleep 5
+            curl -sf --unix-socket /var/www/ota/backend/ota.sock \
+              http://localhost/api/health || {
+              echo "✗ Health check FAIL — kiểm tra journalctl -u ota-backend"
+              exit 1
+            }
+            echo "✓ Deploy success"
+
+      - name: Notify deploy result
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          echo "Deploy status: $STATUS"
+          # Optional: gửi tới Telegram/Slack
+          # curl -X POST ... -d "Deploy $STATUS for ${{ github.sha }}"
