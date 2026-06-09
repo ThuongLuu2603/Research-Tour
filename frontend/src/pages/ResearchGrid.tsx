@@ -143,6 +143,85 @@ function EditableCell({ value, onSave, disabled }: { value: string; onSave: (v: 
   );
 }
 
+/**
+ * EditableSelectCell — chỉ cho phép chọn từ dropdown (không free typing) → tránh typo.
+ * Có search box bên trong để filter options khi list dài.
+ */
+function EditableSelectCell({
+  value, options, onSave, disabled, placeholder = "— chọn —",
+}: {
+  value: string;
+  options: string[];
+  onSave: (v: string) => void;
+  disabled?: boolean;
+  placeholder?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [search, setSearch] = useState("");
+  if (disabled) {
+    return <span className="truncate max-w-[140px]">{value || "—"}</span>;
+  }
+  if (!editing) {
+    return (
+      <span className="group flex items-center gap-1">
+        <span className="truncate max-w-[140px]">{value || "—"}</span>
+        <button onClick={() => { setSearch(""); setEditing(true); }} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-primary-600">
+          <Pencil size={12} />
+        </button>
+      </span>
+    );
+  }
+  const filtered = search.trim()
+    ? options.filter((o) => o.toLowerCase().includes(search.toLowerCase()))
+    : options;
+  return (
+    <span className="relative inline-block">
+      <input
+        autoFocus
+        type="search"
+        placeholder={placeholder}
+        className="input text-xs py-0.5 px-1 w-40"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setEditing(false);
+          if (e.key === "Enter" && filtered.length === 1) {
+            onSave(filtered[0]);
+            setEditing(false);
+          }
+        }}
+      />
+      <div className="absolute top-full left-0 z-20 mt-0.5 max-h-48 min-w-[180px] overflow-y-auto rounded border border-gray-200 bg-white shadow-lg">
+        {filtered.length === 0 && (
+          <div className="px-2 py-1.5 text-xs text-gray-400">Không có option</div>
+        )}
+        {filtered.slice(0, 100).map((opt) => (
+          <button
+            key={opt}
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => { onSave(opt); setEditing(false); }}
+            className={cn(
+              "block w-full px-2 py-1 text-left text-xs hover:bg-primary-50",
+              opt === value && "bg-primary-100 font-semibold"
+            )}
+          >
+            {opt}
+          </button>
+        ))}
+        <button
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => setEditing(false)}
+          className="block w-full border-t border-gray-100 px-2 py-1 text-left text-xs text-red-600 hover:bg-red-50"
+        >
+          ✕ Huỷ
+        </button>
+      </div>
+    </span>
+  );
+}
+
 export default function ResearchGrid() {
   const qc = useQueryClient();
   const [page, setPage] = useState(1);
@@ -262,11 +341,14 @@ export default function ResearchGrid() {
       patchWorkspaceTour(workspaceId!, id, patch),
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ["workspace-tours"] });
-      // Admin sửa Thị trường/Tuyến/Thời gian → ghi vào DB chung; còn lại → riêng workspace.
-      const wroteShared = isAdmin && ["thi_truong", "tuyen_tour", "thoi_gian"].some((k) => k in variables.patch);
-      setToast(wroteShared
-        ? "Đã ghi vào dữ liệu chung (áp dụng cho So sánh VTR; quy tắc sẽ không ghi đè khi tour update)"
-        : "Đã lưu vào workspace của bạn (không ảnh hưởng dữ liệu chung / user khác)");
+      setToast("Cập nhật thành công");
+      // Phân khúc recompute background ~1-2s sau commit. Refetch để UI show value mới.
+      const touchedClassFields = ["thi_truong", "tuyen_tour", "thoi_gian"].some((k) => k in variables.patch);
+      if (touchedClassFields) {
+        setTimeout(() => {
+          qc.invalidateQueries({ queryKey: ["workspace-tours"] });
+        }, 2000);
+      }
     },
     onError: (e: { response?: { data?: { detail?: string } } }) => {
       setToast(e.response?.data?.detail || "Lỗi lưu tour");
@@ -711,10 +793,45 @@ export default function ResearchGrid() {
                   <span className="truncate block max-w-[140px]">{tour.cong_ty}</span>
                 </td>
                 <td className="px-3 py-2">
-                  <EditableCell disabled={!canEdit} value={tour.thi_truong} onSave={(v) => mutation.mutate({ id: tour.id, patch: { thi_truong: v } })} />
+                  <EditableSelectCell
+                    disabled={!canEdit}
+                    value={tour.thi_truong}
+                    options={(opts?.thi_truong ?? []) as string[]}
+                    placeholder="Tìm thị trường…"
+                    onSave={(v) => {
+                      // Issue #3: Đổi TT → tuyến tour cũ có thể không thuộc TT mới
+                      // → clear tuyen_tour để user buộc phải chọn lại.
+                      const currentRoutes = (opts?.routes_by_market?.[v] ?? []) as string[];
+                      const keepRoute = currentRoutes.includes(tour.tuyen_tour);
+                      mutation.mutate({
+                        id: tour.id,
+                        patch: keepRoute ? { thi_truong: v } : { thi_truong: v, tuyen_tour: "" },
+                      });
+                    }}
+                  />
                 </td>
                 <td className="px-3 py-2">
-                  <EditableCell disabled={!canEdit} value={tour.tuyen_tour} onSave={(v) => mutation.mutate({ id: tour.id, patch: { tuyen_tour: v } })} />
+                  <EditableSelectCell
+                    disabled={!canEdit}
+                    value={tour.tuyen_tour}
+                    options={
+                      // Filter routes theo TT hiện tại của tour (chứ không phải selMarkets).
+                      // Nếu tour chưa có TT → show all routes.
+                      tour.thi_truong
+                        ? ((opts?.routes_by_market?.[tour.thi_truong] ?? []) as string[])
+                        : ((opts?.tuyen_tour ?? []) as string[])
+                    }
+                    placeholder="Tìm tuyến tour…"
+                    onSave={(v) => {
+                      // Issue #3: Chọn tuyến tour → auto-fill TT tương ứng (reverse cascade)
+                      const inferredMarket = marketByRoute[v];
+                      const patch: Partial<Tour> = { tuyen_tour: v };
+                      if (inferredMarket && inferredMarket !== tour.thi_truong) {
+                        patch.thi_truong = inferredMarket;
+                      }
+                      mutation.mutate({ id: tour.id, patch });
+                    }}
+                  />
                 </td>
                 <td className="px-3 py-2">
                   <EditableCell disabled={!canEdit} value={tour.thoi_gian} onSave={(v) => mutation.mutate({ id: tour.id, patch: { thoi_gian: v } })} />
