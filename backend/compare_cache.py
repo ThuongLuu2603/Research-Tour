@@ -48,6 +48,48 @@ _fingerprint_cache: tuple[float, tuple[int, str | None]] | None = None
 _inflight: dict[tuple, threading.Event] = {}
 
 
+def _redis_key_for(key: tuple) -> str:
+    """Convert in-memory cache key tuple → Redis key string."""
+    from redis_cache import make_key
+    markets, tuyen, diem, fp = key
+    return make_key("compare", markets=list(markets), tuyen=tuyen, diem=diem, fp_count=fp[0], fp_updated=fp[1])
+
+
+def _save_to_redis(key: tuple, ctx: CompareContext) -> None:
+    """Persist segment_rows ra Redis. Tour/Segment ORM không serialize được, chỉ rows."""
+    try:
+        from redis_cache import redis_set
+
+        redis_set(_redis_key_for(key), {"segment_rows": ctx.segment_rows}, ttl=TTL_SECONDS)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("Redis persist skipped: %s", e)
+
+
+def _load_from_redis(key: tuple) -> CompareContext | None:
+    """Khôi phục lightweight CompareContext từ Redis (chỉ segment_rows).
+    Caller nào cần tours/segments/segment_by_key phải rebuild — trả về None segments để force rebuild.
+    Caller dùng segment_rows (vd API /compare/segments) sẽ hit ngay."""
+    try:
+        from redis_cache import redis_get
+
+        data = redis_get(_redis_key_for(key))
+        if not data or "segment_rows" not in data:
+            return None
+        rows = data["segment_rows"]
+        if not isinstance(rows, list):
+            return None
+        logger.info("Compare cache: restored %d segment_rows from Redis", len(rows))
+        return CompareContext(
+            tours=[],
+            segments=[],
+            segment_by_key={},
+            segment_rows=rows,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("Redis load skipped: %s", e)
+        return None
+
+
 def _db_fingerprint(db: Session) -> tuple[int, str | None]:
     global _fingerprint_cache
     now = time.time()
@@ -222,6 +264,14 @@ def get_compare_context(
                 filtered = _filter_context(base_hit[1], thi_truong, tuyen_tour, diem_kh)
                 _cache[key] = (now, filtered)
                 return filtered
+        # In-memory MISS — thử Redis trước khi rebuild từ DB.
+        # Chỉ áp dụng cho lookup không filter (base context) — filter caller có thể tự
+        # filter trên rows nhưng rebuild trên DB ở đây cũng nhanh nếu base có sẵn.
+        if not _has_filters(thi_truong, tuyen_tour, diem_kh):
+            restored = _load_from_redis(key)
+            if restored is not None:
+                _cache[key] = (now, restored)
+                return restored
         if key in _inflight:
             waiter = _inflight[key]
             is_owner = False
@@ -252,6 +302,8 @@ def get_compare_context(
             if len(_cache) > 32:
                 oldest = min(_cache.items(), key=lambda x: x[1][0])[0]
                 _cache.pop(oldest, None)
+        # Persist segment_rows ra Redis — survive backend restart.
+        _save_to_redis(key, ctx)
         return ctx
     finally:
         with _lock:
@@ -273,6 +325,15 @@ def invalidate_compare_cache() -> None:
             ev.set()
         _inflight.clear()
     _fingerprint_cache = None
+    # Cũng xoá Redis — tránh trả data cũ sau khi sync.
+    try:
+        from redis_cache import redis_invalidate_pattern
+
+        n = redis_invalidate_pattern("ota:compare:*")
+        if n > 0:
+            logger.info("Compare cache: invalidated %d Redis keys", n)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("Redis invalidate skipped: %s", e)
     try:
         from api_cache import invalidate_api_read_cache
         invalidate_api_read_cache()
