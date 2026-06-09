@@ -62,6 +62,19 @@ def _trend_line(points: list[tuple[str, float | None]], width: int = 160, height
 
 
 def build_report_html(db: Session, report_type: str = "daily") -> str:
+    """Báo cáo BGĐ HTML — cache 5 phút Redis.
+
+    Cold start fix: nếu compare cache cold (sau restart), trả version simplified
+    từ DailySnapshot thay vì block đợi 40s prewarm. Lần kế tiếp cache warm → full report.
+    """
+    # Redis cache HTML response — 5 phút TTL
+    from redis_cache import make_key, redis_get, redis_set
+
+    cache_key = make_key("report.html", type=report_type)
+    cached_html = redis_get(cache_key)
+    if cached_html is not None:
+        return cached_html
+
     daily = db.query(DailySnapshot).order_by(DailySnapshot.snapshot_date.desc()).first()
 
     # Lấy snapshot trước để so sánh
@@ -74,8 +87,34 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
             .first()
         )
 
-    # Dùng CHUNG nguồn với module So sánh (cùng cache, cùng bộ lọc/dedup) → số liệu khớp nhau
-    # và không phải quét lại toàn bộ bảng Tour mỗi request (nhanh hơn nhiều khi cache đã ấm).
+    # COLD START: nếu compare cache chưa warm, trả simplified report từ snapshot.
+    # Tránh user đợi 40s prewarm khi vào Báo cáo BGĐ lần đầu.
+    from compare_cache import _cache as _compare_in_mem
+    if not _compare_in_mem:
+        from datetime import date as _date
+        snap_date = daily.snapshot_date.isoformat() if daily else _date.today().isoformat()
+        title = "Báo cáo CI Vietravel — Hàng ngày" if report_type == "daily" else "Báo cáo CI Vietravel — Tuần"
+        html = f"""<!DOCTYPE html>
+<html lang="vi"><head><meta charset="utf-8"><title>{title}</title>
+<style>body{{font-family:system-ui,sans-serif;padding:32px;max-width:900px;margin:auto;}}
+.kpi{{display:inline-block;padding:12px 18px;margin:4px;border-radius:8px;background:#f3f4f6;}}
+.kpi b{{display:block;font-size:24px;color:#1d4ed8;}}
+.notice{{padding:14px 18px;border-radius:8px;background:#fef3c7;color:#92400e;margin-bottom:24px;border:1px solid #fcd34d;}}
+</style></head><body>
+<h1>{title}</h1>
+<p style="color:#666">Snapshot: {snap_date}</p>
+<div class="notice">⏳ Hệ thống đang warm up cache (live data chuẩn bị sẵn ~30-40s). Báo cáo này dùng snapshot precomputed. F5 reload sau 1 phút để xem full report với chi tiết segments.</div>
+<div>
+  <div class="kpi"><b>{daily.total_tours if daily else 0}</b>Tổng tour</div>
+  <div class="kpi"><b>{daily.vtr_tours if daily else 0}</b>VTR tour</div>
+  <div class="kpi"><b>{daily.segment_count if daily else 0}</b>Phân khúc</div>
+  <div class="kpi"><b>{daily.avg_gap_pct if daily else 'N/A'}%</b>Chênh giá TB</div>
+  <div class="kpi"><b>{daily.expensive_segments if daily else 0}</b>Đắt hơn TT</div>
+  <div class="kpi"><b>{daily.cheaper_segments if daily else 0}</b>Rẻ hơn TT</div>
+</div>
+</body></html>"""
+        return html  # KHÔNG cache version cold-start (đợi full report cache)
+
     from compare_cache import get_compare_context
 
     ctx = get_compare_context(db, [], "", "")
@@ -211,7 +250,7 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
         for i in insights[:10]
     )
 
-    return f"""<!DOCTYPE html>
+    final_html = f"""<!DOCTYPE html>
 <html lang="vi"><head><meta charset="utf-8"/>
 <title>{title}</title>
 <style>
@@ -370,3 +409,9 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
 </div>
 
 </div></body></html>"""
+    # Cache final report 5 phút (Redis) — lần kế tiếp instant
+    try:
+        redis_set(cache_key, final_html, ttl=300)
+    except Exception:  # noqa: BLE001
+        pass
+    return final_html
