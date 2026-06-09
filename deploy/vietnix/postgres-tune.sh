@@ -53,15 +53,15 @@ cp "${PG_CONF}" "${PG_CONF}.bak-$(date +%Y%m%d-%H%M%S)"
 sed -i '/# === OTA TUNING START ===/,/# === OTA TUNING END ===/d' "${PG_CONF}"
 cat >> "${PG_CONF}" <<'EOF'
 
-# === OTA TUNING START === (Vietnix CHEAP 1: 2GB RAM)
+# === OTA TUNING START === (Vietnix CHEAP 2: 4GB RAM, 2vCPU)
 listen_addresses = 'localhost'
 port = 5432
-max_connections = 20                  # tight: app pool 3+2=5, +buffer
-shared_buffers = 128MB                # ~6% RAM
-effective_cache_size = 512MB          # OS+PG cache
-work_mem = 8MB                        # per-sort/hash op (× max_connections risk)
-maintenance_work_mem = 64MB           # VACUUM / CREATE INDEX
-wal_buffers = 8MB
+max_connections = 30                  # app pool 5+10=15, +buffer cho job background
+shared_buffers = 256MB                # ~6% RAM
+effective_cache_size = 1024MB         # OS+PG cache
+work_mem = 16MB                       # per-sort/hash op
+maintenance_work_mem = 128MB          # VACUUM / CREATE INDEX
+wal_buffers = 16MB
 checkpoint_completion_target = 0.9
 random_page_cost = 1.1                # SSD
 effective_io_concurrency = 200        # SSD

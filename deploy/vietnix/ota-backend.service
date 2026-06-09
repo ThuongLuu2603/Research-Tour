@@ -16,10 +16,10 @@ Environment="PATH=/var/www/ota/backend/venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PYTHONUNBUFFERED=1"
 Environment="PYTHONDONTWRITEBYTECODE=1"
 
-# 1 worker — RAM cap 2GB. Tăng lên 2 nếu upgrade NVMe 2 (4GB RAM).
+# 2 workers — Vietnix CHEAP 2 (4GB RAM, 2vCPU). Mỗi worker ~250MB.
 # uvicorn worker class hỗ trợ ASGI (FastAPI) + lifespan
 ExecStart=/var/www/ota/backend/venv/bin/gunicorn main:app \
-    --workers 1 \
+    --workers 2 \
     --worker-class uvicorn.workers.UvicornWorker \
     --bind unix:/var/www/ota/backend/ota.sock \
     --timeout 180 \
