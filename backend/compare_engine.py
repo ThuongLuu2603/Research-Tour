@@ -199,10 +199,22 @@ class TourEntry:
 
 
 # ── Quy tắc lọc khi SO SÁNH GIÁ (tần suất vẫn dùng toàn bộ tour) ──────────────
-# Phía Vietravel: chỉ tính tour thuộc các Dòng tour này.
-VTR_PRICE_TIERS = {"tiết kiệm", "giá tốt"}
-# Phía thị trường (giá so sánh): chỉ tính tour có phân khúc giá này.
-MARKET_PRICE_PHAN_KHUC = {"premium"}
+# Trước đây hardcoded VTR(Tiết kiệm/Giá Tốt) vs Market(Premium). Giờ admin config
+# qua AppKv key="compare_segment_rule" — xem compare_rule_config.py.
+# Hai constant dưới chỉ là FALLBACK (compatibility) — runtime dùng compare_rule_config.
+
+
+def _get_vtr_tiers() -> set[str]:
+    """Lazy load để không import vòng circular khi module compare_engine init."""
+    from compare_rule_config import get_vtr_tier_set
+
+    return get_vtr_tier_set()
+
+
+def _get_market_phan_khuc() -> set[str]:
+    from compare_rule_config import get_market_phan_khuc_set
+
+    return get_market_phan_khuc_set()
 
 
 def _norm_tier(s: str) -> str:
@@ -350,21 +362,27 @@ class SegmentStats:
 
     @property
     def vtr_price_entries(self) -> list[TourEntry]:
-        """Tour VTR dùng để TÍNH GIÁ: chỉ Dòng tour Tiết kiệm/Giá Tốt.
+        """Tour VTR dùng để TÍNH GIÁ: filter theo Dòng tour cấu hình bởi admin.
         Rollout-safe: nếu segment chưa có dữ liệu Dòng tour nào (chưa scrape lại) → dùng tất cả."""
         ents = self.vtr_entries
         if not any((e.dong_tour or "").strip() for e in ents):
             return ents
-        return [e for e in ents if _norm_tier(e.dong_tour) in VTR_PRICE_TIERS]
+        allowed = _get_vtr_tiers()
+        if not allowed:
+            return ents
+        return [e for e in ents if _norm_tier(e.dong_tour) in allowed]
 
     @property
     def market_price_entries(self) -> list[TourEntry]:
-        """Tour thị trường dùng để TÍNH GIÁ SO SÁNH: chỉ phân khúc Premium (≈ TB tuyến).
+        """Tour thị trường dùng để TÍNH GIÁ SO SÁNH: filter theo phân khúc cấu hình bởi admin.
         Rollout-safe: nếu chưa tour nào có phân khúc → dùng tất cả."""
         ents = self.market_entries_in_period
         if not any((e.phan_khuc or "").strip() for e in ents):
             return ents
-        return [e for e in ents if _norm_tier(e.phan_khuc) in MARKET_PRICE_PHAN_KHUC]
+        allowed = _get_market_phan_khuc()
+        if not allowed:
+            return ents
+        return [e for e in ents if _norm_tier(e.phan_khuc) in allowed]
 
     def _entries_freq_total(self, entries: list[TourEntry], *, in_vtr_period: bool = False) -> float:
         vtr_dates = self._vtr_period_dates()

@@ -26,6 +26,8 @@ import {
   deleteFestivalMappingRule, applyFestivalMappingRules,
   listFestivals, getFilterOptions,
   FestivalMappingRule, Festival,
+  // Compare segment rule (tab So sánh VTR ↔ Thị trường)
+  getCompareSegmentRule, updateCompareSegmentRule, CompareSegmentRule,
 } from "@/lib/api";
 import { COL } from "@/lib/glossary";
 import { InfoTip } from "@/components/InfoTip";
@@ -36,7 +38,7 @@ import { dropHandlers, dragAliasProps, keepInputKeys, keywordForRouteDrop, match
 import { ClassificationRulesTab } from "@/components/ClassificationRulesTab";
 import { Plus, Trash2, RefreshCw, Database, Search, Pencil, Check, X, GripVertical } from "lucide-react";
 
-type Tab = "classify" | "company" | "departure" | "duration" | "schedule" | "festival";
+type Tab = "classify" | "company" | "departure" | "duration" | "schedule" | "festival" | "compare";
 const matchSearch = matchRulesSearch;
 
 function RuleSearchBar({ value, onChange, total, filtered }: { value: string; onChange: (v: string) => void; total: number; filtered: number }) {
@@ -434,6 +436,7 @@ export default function RulesAdminPage() {
             ["duration", COL.thoiGian, unmatchedSummary?.duration],
             ["schedule", "Định dạng Ngày KH", unmatchedSummary?.schedule],
             ["festival", "Lễ hội", undefined as number | undefined],
+            ["compare", "So sánh VTR ↔ Thị trường", undefined as number | undefined],
           ] as const).map(([t, label, badgeCount]) => (
             <button key={t} onClick={() => { setTab(t); setSearch(""); cancelEdit(); }}
               className={cn("px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5", tab === t ? "bg-primary-600 text-white" : "bg-gray-100 hover:bg-gray-200")}>
@@ -659,6 +662,10 @@ export default function RulesAdminPage() {
 
       {tab === "festival" && (
         <FestivalMappingRulesTab search={search} onMessage={setSyncMsg} />
+      )}
+
+      {tab === "compare" && (
+        <CompareSegmentRuleTab isAdmin={isAdmin} onMessage={setSyncMsg} />
       )}
 
       {/* ─── Sticky Apply Bar (fixed bottom) ─────────────────────────────── */}
@@ -1882,6 +1889,197 @@ function FestivalMappingRulesTab({ search, onMessage }: { search: string; onMess
             })}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+// ── Tab "So sánh VTR ↔ Thị trường": admin-config compare segment rule ────────
+function CompareSegmentRuleTab({ isAdmin, onMessage }: { isAdmin: boolean; onMessage: (msg: string) => void }) {
+  const qc = useQueryClient();
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["compare-segment-rule"],
+    queryFn: getCompareSegmentRule,
+    staleTime: 60_000,
+  });
+  const [draftVtr, setDraftVtr] = useState<string[] | null>(null);
+  const [draftMkt, setDraftMkt] = useState<string[] | null>(null);
+
+  const currentVtr = draftVtr ?? data?.vtr_tiers ?? [];
+  const currentMkt = draftMkt ?? data?.market_phan_khuc ?? [];
+  const isDirty = (draftVtr !== null && JSON.stringify(draftVtr) !== JSON.stringify(data?.vtr_tiers))
+    || (draftMkt !== null && JSON.stringify(draftMkt) !== JSON.stringify(data?.market_phan_khuc));
+
+  const saveMut = useMutation({
+    mutationFn: () => updateCompareSegmentRule({
+      vtr_tiers: currentVtr,
+      market_phan_khuc: currentMkt,
+    }),
+    onSuccess: (updated) => {
+      qc.setQueryData(["compare-segment-rule"], updated);
+      qc.invalidateQueries({ queryKey: ["compare"] });
+      qc.invalidateQueries({ queryKey: ["market-lab"] });
+      qc.invalidateQueries({ queryKey: ["insights"] });
+      setDraftVtr(null);
+      setDraftMkt(null);
+      onMessage("Đã lưu quy tắc so sánh — cache đã được làm mới");
+    },
+    onError: (err) => {
+      const msg = (err as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail
+        || (err as Error).message || "Lỗi không xác định";
+      onMessage(`Lỗi khi lưu: ${msg}`);
+    },
+  });
+
+  const resetToDefault = () => {
+    if (!data) return;
+    setDraftVtr(["Tiết kiệm", "Giá Tốt"]);
+    setDraftMkt(["Premium"]);
+  };
+
+  const toggleItem = (list: string[], setter: (v: string[]) => void, item: string) => {
+    if (list.includes(item)) {
+      setter(list.filter((x) => x !== item));
+    } else {
+      setter([...list, item]);
+    }
+  };
+
+  if (isLoading) return <div className="card p-6 text-center text-gray-500">Đang tải…</div>;
+  if (error) return <div className="card p-6 text-red-600 text-sm">Lỗi: {(error as Error).message}</div>;
+  if (!data) return null;
+
+  return (
+    <div className="space-y-4">
+      {/* Method explanation */}
+      <div className="card border-primary-100 bg-primary-50/40 p-4 text-sm text-gray-700 space-y-2">
+        <h3 className="font-semibold text-primary-900 flex items-center gap-1.5">
+          <Database size={14} /> Quy tắc so sánh giá VTR ↔ Thị trường
+        </h3>
+        <p className="text-xs">
+          Module <strong>So sánh VTR</strong>, <strong>Market Lab</strong>, <strong>Insight Engine</strong> đều dùng
+          quy tắc này để chọn TOUR NÀO tham gia so sánh GIÁ (tần suất khởi hành vẫn dùng toàn bộ tour, không lọc).
+        </p>
+        <ul className="text-xs list-disc list-inside space-y-1">
+          <li>
+            <strong>Phía Vietravel</strong>: lọc theo cột <code className="bg-white px-1 rounded">Dòng tour</code>{" "}
+            (Tiết kiệm / Giá Tốt / Tiêu chuẩn / Cao cấp / Tour ESG & LEI).
+          </li>
+          <li>
+            <strong>Phía Thị trường (đối thủ)</strong>: lọc theo cột <code className="bg-white px-1 rounded">Phân khúc</code>{" "}
+            (Standard / Premium / Luxury) — auto compute trong sync.
+          </li>
+          <li>
+            Default cũ (hardcoded): VTR (Tiết kiệm + Giá Tốt) vs Thị trường (Premium). Giờ có thể chỉnh tùy ý.
+          </li>
+          <li>
+            Lưu thành công sẽ <strong>invalidate cache</strong> ngay → request kế tiếp dùng quy tắc mới.
+          </li>
+        </ul>
+      </div>
+
+      {/* Current rule state */}
+      <div className="card p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-800">Quy tắc đang áp dụng</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {data.is_default ? (
+                <span className="text-amber-700">Đang dùng default — chưa admin nào cấu hình</span>
+              ) : data.updated_at ? (
+                <>Cập nhật lần cuối {new Date(data.updated_at).toLocaleString("vi-VN")}{" "}
+                  {data.updated_by && <span>bởi <strong>{data.updated_by}</strong></span>}</>
+              ) : null}
+            </p>
+          </div>
+          {isAdmin && (
+            <div className="flex gap-2">
+              <button type="button" className="btn-secondary text-xs" onClick={resetToDefault}>
+                <RefreshCw size={12} /> Reset default
+              </button>
+              <button type="button" className="btn-primary text-xs"
+                disabled={!isAdmin || !isDirty || saveMut.isPending || currentVtr.length === 0 || currentMkt.length === 0}
+                onClick={() => saveMut.mutate()}>
+                {saveMut.isPending ? <RefreshCw size={12} className="animate-spin" /> : <Check size={12} />}
+                Lưu thay đổi
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* VTR side */}
+          <div className="border rounded-lg p-3">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-sm font-semibold text-primary-700">Phía Vietravel (Dòng tour)</h4>
+              <span className="text-xs text-gray-500">{currentVtr.length}/{data.available_vtr_tiers.length}</span>
+            </div>
+            <div className="space-y-1.5">
+              {data.available_vtr_tiers.map((tier) => {
+                const checked = currentVtr.includes(tier);
+                return (
+                  <label key={tier} className={cn(
+                    "flex items-center gap-2 px-2 py-1.5 rounded text-sm cursor-pointer border",
+                    checked ? "bg-primary-50 border-primary-300" : "bg-white border-gray-200 hover:bg-gray-50",
+                    !isAdmin && "cursor-not-allowed opacity-70",
+                  )}>
+                    <input type="checkbox" checked={checked} disabled={!isAdmin}
+                      onChange={() => toggleItem(currentVtr, (v) => setDraftVtr(v), tier)} />
+                    <span className={checked ? "font-medium text-primary-900" : "text-gray-700"}>{tier}</span>
+                  </label>
+                );
+              })}
+            </div>
+            {currentVtr.length === 0 && (
+              <p className="text-xs text-red-600 mt-2">⚠ Phải chọn ít nhất 1 Dòng tour.</p>
+            )}
+          </div>
+
+          {/* Market side */}
+          <div className="border rounded-lg p-3">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-sm font-semibold text-emerald-700">Phía Thị trường (Phân khúc)</h4>
+              <span className="text-xs text-gray-500">{currentMkt.length}/{data.available_market_phan_khuc.length}</span>
+            </div>
+            <div className="space-y-1.5">
+              {data.available_market_phan_khuc.map((phk) => {
+                const checked = currentMkt.includes(phk);
+                return (
+                  <label key={phk} className={cn(
+                    "flex items-center gap-2 px-2 py-1.5 rounded text-sm cursor-pointer border",
+                    checked ? "bg-emerald-50 border-emerald-300" : "bg-white border-gray-200 hover:bg-gray-50",
+                    !isAdmin && "cursor-not-allowed opacity-70",
+                  )}>
+                    <input type="checkbox" checked={checked} disabled={!isAdmin}
+                      onChange={() => toggleItem(currentMkt, (v) => setDraftMkt(v), phk)} />
+                    <span className={checked ? "font-medium text-emerald-900" : "text-gray-700"}>{phk}</span>
+                  </label>
+                );
+              })}
+            </div>
+            {currentMkt.length === 0 && (
+              <p className="text-xs text-red-600 mt-2">⚠ Phải chọn ít nhất 1 Phân khúc.</p>
+            )}
+          </div>
+        </div>
+
+        {/* Preview */}
+        <div className="mt-4 p-3 bg-gray-50 rounded-lg border text-xs">
+          <p className="font-semibold text-gray-700 mb-1">Preview rule áp dụng:</p>
+          <p className="text-gray-600">
+            So sánh tour Vietravel có Dòng tour ∈ {" "}
+            <span className="font-mono bg-primary-100 px-1 rounded">[{currentVtr.join(", ") || "—"}]</span>
+            {" "} với tour Thị trường có Phân khúc ∈ {" "}
+            <span className="font-mono bg-emerald-100 px-1 rounded">[{currentMkt.join(", ") || "—"}]</span>
+            .
+          </p>
+        </div>
+
+        {!isAdmin && (
+          <p className="text-xs text-amber-700 mt-3">
+            ⚠ Chỉ admin mới có quyền sửa rule này. Bạn đang ở chế độ chỉ xem.
+          </p>
+        )}
       </div>
     </div>
   );

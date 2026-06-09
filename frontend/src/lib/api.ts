@@ -1461,12 +1461,87 @@ export interface HeatmapRegion {
   festival_count: number;
   tour_count: number;
   tour_with_festival: number;
+  vtr_tour_count: number;
   festival_coverage_ratio: number;
   is_under_served: boolean;
 }
 
-export const getRegionHeatmap = async (): Promise<{ regions: HeatmapRegion[]; total_festivals: number }> => {
+export interface HeatmapProvince {
+  province_code: string;
+  province_name: string;
+  region: string;
+  festival_count: number;
+  tour_count: number;
+  tour_with_festival: number;
+  vtr_tour_count: number;
+  festival_coverage_ratio: number;
+  is_under_served: boolean;
+}
+
+export interface HeatmapData {
+  regions: HeatmapRegion[];
+  provinces: HeatmapProvince[];
+  total_festivals: number;
+  total_provinces_with_data: number;
+}
+
+export const getRegionHeatmap = async (): Promise<HeatmapData> => {
   const { data } = await api.get("/festivals/insights/heatmap");
+  return data;
+};
+
+// ── Dashboard summary (smart alerts + quick stats + data quality) ──────────
+export interface DashboardAlert {
+  critical_30d_count: number;
+  critical_30d: Array<{
+    slug: string;
+    name: string;
+    date_start: string;
+    days_until: number;
+    region: FestivalRegion;
+    location_text: string;
+    category: FestivalCategory;
+  }>;
+  under_served_count: number;
+  under_served: Array<{
+    province_code: string;
+    province_name: string;
+    region: string;
+    festival_count: number;
+    vtr_tour_count: number;
+  }>;
+  top_gaps_count: number;
+  top_gaps: Array<{
+    slug: string;
+    name: string;
+    vtr_tours: number;
+    competitor_tours: number;
+    gap_score: number;
+    date_start: string;
+  }>;
+}
+
+export interface DashboardSummary {
+  alerts: DashboardAlert;
+  quick_stats: {
+    upcoming_30d: number;
+    upcoming_90d: number;
+    tours_tagged_festival: number;
+    vtr_tours_tagged_festival: number;
+    vtr_cover_ratio: number;
+  };
+  data_quality: {
+    festivals_total: number;
+    festivals_with_location_pct: number;
+    festivals_with_province_pct: number;
+    tours_total: number;
+    tours_with_province_pct: number;
+    tours_tagged_festival_pct: number;
+  };
+}
+
+export const getFestivalDashboardSummary = async (): Promise<DashboardSummary> => {
+  const { data } = await api.get("/festivals/insights/dashboard-summary");
   return data;
 };
 
@@ -1541,4 +1616,28 @@ export const applyFestivalMappingRules = async () => {
     tours_tagged: number;
     details: { festival_slug: string; festival_name?: string; tagged: number; skip?: string }[];
   };
+};
+
+// ── Compare segment rule (admin) ───────────────────────────────────────────
+export interface CompareSegmentRule {
+  vtr_tiers: string[];
+  market_phan_khuc: string[];
+  updated_at: string | null;
+  updated_by: string | null;
+  is_default: boolean;
+  available_vtr_tiers: string[];
+  available_market_phan_khuc: string[];
+}
+
+export const getCompareSegmentRule = async (): Promise<CompareSegmentRule> => {
+  const { data } = await api.get("/admin/compare-segment-rule");
+  return data;
+};
+
+export const updateCompareSegmentRule = async (payload: {
+  vtr_tiers: string[];
+  market_phan_khuc: string[];
+}): Promise<CompareSegmentRule> => {
+  const { data } = await api.put("/admin/compare-segment-rule", payload);
+  return data;
 };

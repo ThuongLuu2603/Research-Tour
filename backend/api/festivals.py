@@ -270,6 +270,17 @@ class CoverageGapItem(BaseModel):
     gap_score: float
 
 
+@router.get("/insights/dashboard-summary")
+def dashboard_summary(
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Smart dashboard cho landing tab — alerts + quick stats + data quality."""
+    from festival_insights import get_dashboard_summary
+
+    return get_dashboard_summary(db)
+
+
 @router.get("/insights/coverage-gap", response_model=list[CoverageGapItem])
 def coverage_gap(
     limit: int = Query(30, ge=1, le=100),

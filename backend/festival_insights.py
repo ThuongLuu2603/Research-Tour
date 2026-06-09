@@ -127,6 +127,183 @@ def get_pricing_premium(db, top_n: int = 20) -> dict[str, Any]:
     }
 
 
+def get_dashboard_summary(db) -> dict[str, Any]:
+    """Smart dashboard summary cho landing tab Festival module.
+
+    Trả các "smart alerts" + action hints — admin/analyst nhìn thấy ngay
+    insight quan trọng nhất mà không cần click qua từng tab:
+
+      1. Critical festivals 30d: lễ lớn trong 30 ngày tới mà VTR=0
+      2. Under-served provinces: tỉnh có ≥2 lễ nhưng VTR=0
+      3. Top coverage gap: lễ competitor cover mạnh nhất mà VTR bỏ lỡ
+      4. Data quality: % lễ đã tag location_text, % tour đã có province_code
+      5. Quick stats: total lễ upcoming, total tour gắn lễ, % cover VTR
+    """
+    from sqlalchemy import and_, func
+    from models import Festival, Tour
+    from tour_filters import market_filter_clause
+
+    today = date.today()
+    in_30d = today + timedelta(days=30)
+    in_90d = today + timedelta(days=90)
+
+    # ── 1. Critical festivals 30d (lễ sắp tới VTR=0) ───────────────────────
+    upcoming_30 = (
+        db.query(Festival)
+        .filter(and_(
+            Festival.date_start >= today,
+            Festival.date_start <= in_30d,
+        ))
+        .order_by(Festival.date_start.asc())
+        .limit(50)
+        .all()
+    )
+    # Tour VTR cover các lễ này
+    upcoming_slugs = [f.slug for f in upcoming_30]
+    vtr_by_slug: dict[str, int] = defaultdict(int)
+    if upcoming_slugs:
+        rows = (
+            db.query(Tour.festival_slug, func.count(Tour.id))
+            .filter(Tour.festival_slug.in_(upcoming_slugs))
+            .filter(Tour.cong_ty.ilike("%vietravel%"))
+            .filter(market_filter_clause(Tour))
+            .group_by(Tour.festival_slug)
+            .all()
+        )
+        for s, c in rows:
+            vtr_by_slug[s] = int(c)
+    critical_30d = []
+    for f in upcoming_30:
+        if vtr_by_slug.get(f.slug, 0) == 0:
+            critical_30d.append({
+                "slug": f.slug,
+                "name": f.name_vi,
+                "date_start": f.date_start.isoformat(),
+                "days_until": (f.date_start - today).days,
+                "region": f.region,
+                "location_text": f.location_text or "",
+                "category": f.category,
+            })
+
+    # ── 2. Under-served provinces (≥2 lễ, VTR=0) ───────────────────────────
+    fest_prov_rows = (
+        db.query(Festival.province_code, func.count(Festival.id))
+        .filter(Festival.date_end >= today, Festival.date_start <= in_90d)
+        .filter(Festival.province_code != "")
+        .group_by(Festival.province_code)
+        .all()
+    )
+    vtr_prov_rows = (
+        db.query(Tour.province_code, func.count(Tour.id))
+        .filter(Tour.province_code != "")
+        .filter(Tour.cong_ty.ilike("%vietravel%"))
+        .group_by(Tour.province_code)
+        .all()
+    )
+    vtr_by_prov = {pc: int(c) for pc, c in vtr_prov_rows}
+    from provinces import get_name_for_code, get_region_for_code
+
+    under_served = []
+    for pc, fest_n in fest_prov_rows:
+        if not pc:
+            continue
+        fest_n = int(fest_n)
+        vtr_n = vtr_by_prov.get(pc, 0)
+        if fest_n >= 2 and vtr_n == 0:
+            under_served.append({
+                "province_code": pc,
+                "province_name": get_name_for_code(pc) or pc,
+                "region": get_region_for_code(pc) or "",
+                "festival_count": fest_n,
+                "vtr_tour_count": vtr_n,
+            })
+    under_served.sort(key=lambda x: -x["festival_count"])
+
+    # ── 3. Top coverage gap (lễ competitor cover mạnh, VTR thiếu) ──────────
+    # Reuse get_coverage_gap top 5
+    try:
+        from festival_tagging import get_coverage_gap
+
+        gap_top = get_coverage_gap(db, limit=5)
+        top_gaps = [
+            {
+                "slug": g["slug"],
+                "name": g["name"],
+                "vtr_tours": g["vtr_tours"],
+                "competitor_tours": g["competitor_tours"],
+                "gap_score": g["gap_score"],
+                "date_start": g["date_start"],
+            }
+            for g in gap_top
+            if g["gap_score"] > 0
+        ]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("get_coverage_gap in dashboard failed: %s", e)
+        top_gaps = []
+
+    # ── 4. Data quality ────────────────────────────────────────────────────
+    total_fest_upcoming = db.query(Festival).filter(Festival.date_end >= today).count()
+    fest_with_loc = (
+        db.query(Festival)
+        .filter(Festival.date_end >= today)
+        .filter(Festival.location_text != "")
+        .count()
+    )
+    fest_with_prov = (
+        db.query(Festival)
+        .filter(Festival.date_end >= today)
+        .filter(Festival.province_code != "")
+        .count()
+    )
+    total_tours = db.query(Tour).count()
+    tours_tagged = db.query(Tour).filter(Tour.festival_slug.isnot(None)).count()
+    tours_with_prov = db.query(Tour).filter(Tour.province_code != "").count()
+
+    # ── 5. Quick stats ─────────────────────────────────────────────────────
+    upcoming_total_30 = len(upcoming_30)
+    upcoming_total_90 = (
+        db.query(Festival)
+        .filter(and_(
+            Festival.date_start <= in_90d,
+            Festival.date_end >= today,
+        ))
+        .count()
+    )
+    vtr_tours_tagged = (
+        db.query(Tour)
+        .filter(Tour.festival_slug.isnot(None))
+        .filter(Tour.cong_ty.ilike("%vietravel%"))
+        .filter(market_filter_clause(Tour))
+        .count()
+    )
+
+    return {
+        "alerts": {
+            "critical_30d_count": len(critical_30d),
+            "critical_30d": critical_30d[:10],  # top 10
+            "under_served_count": len(under_served),
+            "under_served": under_served[:10],
+            "top_gaps_count": len(top_gaps),
+            "top_gaps": top_gaps,
+        },
+        "quick_stats": {
+            "upcoming_30d": upcoming_total_30,
+            "upcoming_90d": upcoming_total_90,
+            "tours_tagged_festival": tours_tagged,
+            "vtr_tours_tagged_festival": vtr_tours_tagged,
+            "vtr_cover_ratio": round(vtr_tours_tagged / tours_tagged, 2) if tours_tagged > 0 else 0,
+        },
+        "data_quality": {
+            "festivals_total": total_fest_upcoming,
+            "festivals_with_location_pct": round(100 * fest_with_loc / total_fest_upcoming, 0) if total_fest_upcoming > 0 else 0,
+            "festivals_with_province_pct": round(100 * fest_with_prov / total_fest_upcoming, 0) if total_fest_upcoming > 0 else 0,
+            "tours_total": total_tours,
+            "tours_with_province_pct": round(100 * tours_with_prov / total_tours, 0) if total_tours > 0 else 0,
+            "tours_tagged_festival_pct": round(100 * tours_tagged / total_tours, 0) if total_tours > 0 else 0,
+        },
+    }
+
+
 def get_demand_forecast(db, months_ahead: int = 6) -> dict[str, Any]:
     """UC#3 — Forecast tháng peak lễ → suggest tăng inventory.
 
@@ -219,9 +396,16 @@ def get_marketing_calendar(db, months_ahead: int = 12) -> list[dict[str, Any]]:
     """UC#5 — Marketing calendar: lễ hội cho 12 tháng + suggested tour push.
 
     Per festival, suggest top 3 tour Vietravel gắn lễ làm campaign push.
+
+    Performance: trước đây loop N festivals × 1 query/festival → N+1 queries.
+    Với 200-500 festival trong 12 tháng + Render-CRDB latency ~50ms/query → 10-25s
+    → Marketing tab trả 500 Internal Server Error do timeout.
+    Giờ: 1 query lấy hết tour VTR có festival_slug → group in-memory → 1+1 queries.
     """
     from sqlalchemy import and_
+    from sqlalchemy.orm import load_only
     from models import Festival, Tour
+    from tour_filters import market_filter_clause
 
     today = date.today()
     until = today.replace(day=1)
@@ -241,19 +425,33 @@ def get_marketing_calendar(db, months_ahead: int = 12) -> list[dict[str, Any]]:
         .all()
     )
 
+    # 1 query duy nhất: tất cả tour VTR có festival_slug trong range — load_only
+    # giảm RAM/bytes wire. Sắp xếp theo gia asc để khi group sẽ giữ thứ tự "cheapest first".
+    all_vtr_fest_tours = (
+        db.query(Tour)
+        .options(load_only(
+            Tour.id, Tour.festival_slug, Tour.ten_tour, Tour.gia,
+            Tour.so_ngay, Tour.link_url,
+        ))
+        .filter(Tour.festival_slug.isnot(None))
+        .filter(Tour.cong_ty.ilike("%vietravel%"))
+        .filter(Tour.gia.isnot(None))
+        .filter(market_filter_clause(Tour))
+        .order_by(Tour.gia.asc())
+        .all()
+    )
+
+    # Group in-memory: {festival_slug: [top 3 cheapest tours]}
+    tours_by_slug: dict[str, list[Tour]] = defaultdict(list)
+    for t in all_vtr_fest_tours:
+        slug = t.festival_slug
+        if not slug or len(tours_by_slug[slug]) >= 3:
+            continue
+        tours_by_slug[slug].append(t)
+
     out: list[dict[str, Any]] = []
     for f in festivals:
-        # Top 3 tour VTR gắn lễ này (theo giá thấp nhất → bestseller candidate)
-        vtr_tours = (
-            db.query(Tour)
-            .filter(Tour.festival_slug == f.slug)
-            .filter(Tour.cong_ty.ilike("%vietravel%"))
-            .filter(Tour.gia.isnot(None))
-            .filter(market_filter_clause(Tour))
-            .order_by(Tour.gia.asc())
-            .limit(3)
-            .all()
-        )
+        vtr_tours = tours_by_slug.get(f.slug, [])
         out.append({
             "slug": f.slug,
             "name": f.name_vi,
@@ -297,9 +495,13 @@ def _campaign_hint(f) -> str:
 
 
 def get_region_heatmap(db) -> dict[str, Any]:
-    """UC#6 — Heatmap mật độ lễ × mật độ tour theo vùng.
+    """UC#6 — Heatmap mật độ lễ × mật độ tour.
 
-    Output: cho mỗi region, đếm lễ + tour gắn lễ. Frontend render bar/map.
+    Output 2 chiều:
+      - regions: 3 vùng Bắc/Trung/Nam (rollup)
+      - provinces: per-province detail (top 20 by festival count) — bubble/heatmap
+
+    Frontend render: bubble chart by province + region rollup bar.
     """
     from sqlalchemy import func
     from models import Festival, Tour
@@ -307,29 +509,28 @@ def get_region_heatmap(db) -> dict[str, Any]:
     today = date.today()
     end = date(today.year + 1, 12, 31)
 
-    # Festivals per region
-    fest_rows = (
-        db.query(Festival.region, func.count(Festival.id))
+    # ── Festivals: per province + per region ────────────────────────────────
+    fest_prov_rows = (
+        db.query(Festival.province_code, Festival.region, func.count(Festival.id))
         .filter(Festival.date_end >= today, Festival.date_start <= end)
-        .group_by(Festival.region)
+        .group_by(Festival.province_code, Festival.region)
         .all()
     )
-    fest_by_region = {r or "unknown": int(c) for r, c in fest_rows}
+    fest_by_province: dict[str, int] = defaultdict(int)
+    fest_by_region: dict[str, int] = defaultdict(int)
+    for pc, region, c in fest_prov_rows:
+        fest_by_province[pc or ""] += int(c)
+        fest_by_region[region or "unknown"] += int(c)
 
-    # Tours per region (province → region join)
-    from provinces import get_region_for_code
+    # ── Tours: per province (total + festival-tagged) ──────────────────────
     tour_rows = (
         db.query(Tour.province_code, func.count(Tour.id))
         .filter(Tour.province_code != "")
         .group_by(Tour.province_code)
         .all()
     )
-    tour_by_region: dict[str, int] = defaultdict(int)
-    for pc, cnt in tour_rows:
-        r = get_region_for_code(pc)
-        tour_by_region[r or "unknown"] += int(cnt)
+    tour_by_province = {pc: int(c) for pc, c in tour_rows}
 
-    # Tours gắn lễ per region
     tour_fest_rows = (
         db.query(Tour.province_code, func.count(Tour.id))
         .filter(Tour.festival_slug.isnot(None))
@@ -337,26 +538,84 @@ def get_region_heatmap(db) -> dict[str, Any]:
         .group_by(Tour.province_code)
         .all()
     )
+    tour_fest_by_province = {pc: int(c) for pc, c in tour_fest_rows}
+
+    # ── VTR tours per province (cho insight under-served) ──────────────────
+    vtr_tour_rows = (
+        db.query(Tour.province_code, func.count(Tour.id))
+        .filter(Tour.province_code != "")
+        .filter(Tour.cong_ty.ilike("%vietravel%"))
+        .group_by(Tour.province_code)
+        .all()
+    )
+    vtr_by_province = {pc: int(c) for pc, c in vtr_tour_rows}
+
+    # ── Aggregate region rollup ─────────────────────────────────────────────
+    from provinces import get_region_for_code, get_name_for_code
+
+    tour_by_region: dict[str, int] = defaultdict(int)
     tour_fest_by_region: dict[str, int] = defaultdict(int)
-    for pc, cnt in tour_fest_rows:
-        r = get_region_for_code(pc)
-        tour_fest_by_region[r or "unknown"] += int(cnt)
+    vtr_by_region: dict[str, int] = defaultdict(int)
+    for pc, cnt in tour_by_province.items():
+        r = get_region_for_code(pc) or "unknown"
+        tour_by_region[r] += cnt
+    for pc, cnt in tour_fest_by_province.items():
+        r = get_region_for_code(pc) or "unknown"
+        tour_fest_by_region[r] += cnt
+    for pc, cnt in vtr_by_province.items():
+        r = get_region_for_code(pc) or "unknown"
+        vtr_by_region[r] += cnt
 
     regions = ["bac", "trung", "nam"]
-    out = []
+    region_out = []
     for r in regions:
         fest_n = fest_by_region.get(r, 0)
         tour_n = tour_by_region.get(r, 0)
         tour_fest_n = tour_fest_by_region.get(r, 0)
+        vtr_n = vtr_by_region.get(r, 0)
         ratio = (tour_fest_n / fest_n) if fest_n > 0 else 0
-        out.append({
+        region_out.append({
             "region": r,
             "region_label": {"bac": "Bắc", "trung": "Trung", "nam": "Nam"}[r],
             "festival_count": fest_n,
             "tour_count": tour_n,
             "tour_with_festival": tour_fest_n,
+            "vtr_tour_count": vtr_n,
             "festival_coverage_ratio": round(ratio, 2),
-            # Under-served = nhiều lễ nhưng ít tour gắn
             "is_under_served": fest_n >= 3 and ratio < 1.0,
         })
-    return {"regions": out, "total_festivals": sum(fest_by_region.values())}
+
+    # ── Per-province detail (chỉ trả province có festival HOẶC tour > 5) ────
+    all_pcs = set(fest_by_province.keys()) | set(tour_by_province.keys())
+    province_out: list[dict[str, Any]] = []
+    for pc in all_pcs:
+        if not pc:
+            continue
+        fest_n = fest_by_province.get(pc, 0)
+        tour_n = tour_by_province.get(pc, 0)
+        tour_fest_n = tour_fest_by_province.get(pc, 0)
+        vtr_n = vtr_by_province.get(pc, 0)
+        # Threshold: ít nhất 1 lễ HOẶC > 5 tour để khỏi spam province ít data
+        if fest_n == 0 and tour_n < 5:
+            continue
+        ratio = (tour_fest_n / fest_n) if fest_n > 0 else 0
+        province_out.append({
+            "province_code": pc,
+            "province_name": get_name_for_code(pc) or pc,
+            "region": get_region_for_code(pc) or "",
+            "festival_count": fest_n,
+            "tour_count": tour_n,
+            "tour_with_festival": tour_fest_n,
+            "vtr_tour_count": vtr_n,
+            "festival_coverage_ratio": round(ratio, 2),
+            "is_under_served": fest_n >= 2 and (vtr_n == 0 or ratio < 0.5),
+        })
+    # Sort: under-served + festival_count desc
+    province_out.sort(key=lambda x: (-int(x["is_under_served"]), -x["festival_count"], -x["tour_count"]))
+
+    return {
+        "regions": region_out,
+        "provinces": province_out,
+        "total_festivals": sum(fest_by_region.values()),
+        "total_provinces_with_data": len(province_out),
+    }

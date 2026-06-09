@@ -665,6 +665,25 @@ def _merge_dataframe_to_db_locked(
             logger.warning("recompute phan_khuc after %s scrape failed: %s", nguon, e)
             phan_khuc_stats = {"error": str(e)}
 
+    # SAFETY NET — bắt tour bị clear phan_khuc nhưng recompute_segments_for_sync
+    # bỏ sót (vì partial fail, hoặc tour không nằm trong affected_tour_ids do
+    # baseline route thay đổi). Trước đây chỉ chạy ở merge_all_sheet_sources_to_db
+    # → sync 1 nguồn lẻ (Vietravel/Main) bị "phân khúc mất tiu" trên các tour cũ.
+    if recompute_segments:
+        try:
+            from pricing_segments import recompute_missing_phan_khuc
+
+            missing_filled = recompute_missing_phan_khuc(db, cancel_check, _beat)
+            if missing_filled:
+                logger.info("recompute_missing_phan_khuc safety net: filled %d tours after %s sync", missing_filled, nguon)
+                if phan_khuc_stats is None:
+                    phan_khuc_stats = {}
+                phan_khuc_stats["missing_filled"] = missing_filled
+        except JobCancelled:
+            raise
+        except Exception as e:
+            logger.warning("recompute_missing_phan_khuc safety net failed after %s sync: %s", nguon, e)
+
     if inserted or updated or deleted:
         if progress:
             progress(86, "Đang làm mới cache so sánh…")

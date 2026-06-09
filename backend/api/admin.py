@@ -282,3 +282,88 @@ def update_user(
         role=user.role, avatar_url=user.avatar_url or "", is_active=user.is_active,
         last_login=user.last_login.strftime("%d/%m/%Y %H:%M") if user.last_login else None,
     )
+
+
+# ── Compare segment rule (admin-configurable) ────────────────────────────────
+# Thay thế hardcoded VTR(Tiết kiệm/Giá Tốt) vs Market(Premium) trong compare_engine.
+# Admin sửa qua UI ở Quy tắc phân loại → tab Quy tắc so sánh.
+
+
+class CompareSegmentRuleOut(BaseModel):
+    vtr_tiers: list[str]
+    market_phan_khuc: list[str]
+    updated_at: str | None
+    updated_by: str | None
+    is_default: bool
+    available_vtr_tiers: list[str]
+    available_market_phan_khuc: list[str]
+
+
+class CompareSegmentRuleUpdate(BaseModel):
+    vtr_tiers: list[str] = Field(min_length=1)
+    market_phan_khuc: list[str] = Field(min_length=1)
+
+
+@router.get("/compare-segment-rule", response_model=CompareSegmentRuleOut)
+def get_compare_segment_rule(_: User = Depends(get_current_user)):
+    """Trả rule active + danh sách option khả dụng cho UI dropdown."""
+    from compare_rule_config import (
+        AVAILABLE_MARKET_PHAN_KHUC,
+        AVAILABLE_VTR_TIERS,
+        get_compare_rule_config,
+    )
+
+    cfg = get_compare_rule_config()
+    return CompareSegmentRuleOut(
+        vtr_tiers=cfg["vtr_tiers"],
+        market_phan_khuc=cfg["market_phan_khuc"],
+        updated_at=cfg.get("updated_at"),
+        updated_by=cfg.get("updated_by"),
+        is_default=bool(cfg.get("is_default")),
+        available_vtr_tiers=list(AVAILABLE_VTR_TIERS),
+        available_market_phan_khuc=list(AVAILABLE_MARKET_PHAN_KHUC),
+    )
+
+
+@router.put("/compare-segment-rule", response_model=CompareSegmentRuleOut)
+def update_compare_segment_rule(
+    req: CompareSegmentRuleUpdate,
+    admin: User = Depends(require_admin),
+):
+    """Lưu rule mới + invalidate cache compare_engine.
+
+    Tác động: ngay request kế tiếp tới So sánh VTR / Market Lab / Insight Engine
+    sẽ dùng rule mới (cache compare_rule_config 5min, invalidate khi PUT).
+    """
+    from compare_rule_config import (
+        AVAILABLE_MARKET_PHAN_KHUC,
+        AVAILABLE_VTR_TIERS,
+        save_compare_rule,
+    )
+
+    try:
+        cfg = save_compare_rule(
+            vtr_tiers=req.vtr_tiers,
+            market_phan_khuc=req.market_phan_khuc,
+            updated_by=admin.username,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    # Bonus: invalidate compare_cache nếu tồn tại (tránh kết quả cũ).
+    try:
+        from compare_cache import invalidate_compare_cache
+
+        invalidate_compare_cache()
+    except Exception:  # noqa: BLE001
+        pass
+
+    return CompareSegmentRuleOut(
+        vtr_tiers=cfg["vtr_tiers"],
+        market_phan_khuc=cfg["market_phan_khuc"],
+        updated_at=cfg.get("updated_at"),
+        updated_by=cfg.get("updated_by"),
+        is_default=bool(cfg.get("is_default")),
+        available_vtr_tiers=list(AVAILABLE_VTR_TIERS),
+        available_market_phan_khuc=list(AVAILABLE_MARKET_PHAN_KHUC),
+    )

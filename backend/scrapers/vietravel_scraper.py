@@ -229,9 +229,24 @@ def _extract_schedule(chunk: str) -> str:
 
 
 def _extract_prices(chunk: str, max_len: int = 20000) -> int | None:
+    """Trích giá tour từ salePrice JSON. min() là "from price" theo ngày KH
+    — NHƯNG block còn lẫn salePrice của widget Đặt cọc (vd Nam Mỹ Brazil-Peru-
+    Argentina: [10_990_000 (cọc), 283_990_000 (tour)]; priceFinal cũng = cọc
+    nên không dùng được). Heuristic: nếu max/min ≥ 4× ⇒ chắc chắn có deposit
+    lẫn vào, lọc bỏ values < 30% của max rồi lấy min. Tour multi-departure
+    biến động giá theo mùa thường ≤ 2-3× nên ngưỡng 4× là an toàn."""
     sub = chunk[:max_len]
-    nums = [int(x) for x in re.findall(r'\\"salePrice\\":(\d+)', sub)]
-    return min(nums) if nums else None
+    nums = [int(x) for x in re.findall(r'\\"salePrice\\":(\d+)', sub) if int(x) > 0]
+    if not nums:
+        return None
+    hi = max(nums)
+    lo = min(nums)
+    if hi >= lo * 4:
+        threshold = int(hi * 0.3)
+        filtered = [n for n in nums if n >= threshold]
+        if filtered:
+            return min(filtered)
+    return lo
 
 
 def _extract_destination(chunk: str, max_len: int = 8000) -> str:

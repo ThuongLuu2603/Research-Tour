@@ -46,10 +46,15 @@ elif _is_postgres:
             "pool_pre_ping": True,
         }
     else:
+        # Default 5+10 (Render-compat). Override khi self-host VPS low-RAM:
+        #   OTA_DB_POOL_SIZE=3, OTA_DB_MAX_OVERFLOW=2 cho Vietnix CHEAP 1 (2GB RAM).
+        import os
+        _pool_size = int(os.environ.get("OTA_DB_POOL_SIZE", "5"))
+        _max_overflow = int(os.environ.get("OTA_DB_MAX_OVERFLOW", "10"))
         engine_kwargs = {
             "pool_pre_ping": True,
-            "pool_size": 5,
-            "max_overflow": 10,
+            "pool_size": _pool_size,
+            "max_overflow": _max_overflow,
             "pool_recycle": 300,
         }
 

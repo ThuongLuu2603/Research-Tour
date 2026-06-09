@@ -10,13 +10,14 @@
  *   - Heatmap          (Phase 3 UC#6)
  *   - Lunar Planner    (Phase 3 UC#7)
  */
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   listFestivals, getFestivalStats, refreshFestivals,
-  listFestivalTours, getFestivalSummary, getCoverageGap, retagFestivals,
+  listFestivalTours, getFestival, getFestivalSummary, getCoverageGap, retagFestivals,
   getPricingPremium, getDemandForecast, getMarketingCalendar,
   getRegionHeatmap, getLunarPlanner, lunarSeed,
+  getFestivalDashboardSummary,
   Festival, FestivalRegion, FestivalCategory, FestivalFilters,
   FestivalTourLite, CoverageGapItem,
 } from "@/lib/api";
@@ -25,6 +26,7 @@ import {
   Calendar, List, MapPin, RefreshCw, Loader2, ExternalLink,
   Music, Utensils, Trophy, Sparkles, Building, ChevronLeft, ChevronRight,
   X, AlertTriangle, TrendingUp, TrendingDown, Megaphone, Map as MapIcon, Moon,
+  LayoutDashboard, Bell, Target, BadgeCheck,
   LucideIcon,
 } from "lucide-react";
 
@@ -78,20 +80,21 @@ function fmtVND(n: number | null | undefined): string {
   return n.toLocaleString("vi-VN", { maximumFractionDigits: 0 }) + "₫";
 }
 
-type TabKey = "timeline" | "coverage" | "premium" | "forecast" | "marketing" | "heatmap" | "lunar";
-const TABS: { key: TabKey; label: string; Icon: LucideIcon }[] = [
-  { key: "timeline",  label: "Lịch & Timeline",   Icon: Calendar },
-  { key: "coverage",  label: "Coverage Gap",       Icon: AlertTriangle },
-  { key: "premium",   label: "Pricing Premium",    Icon: TrendingUp },
-  { key: "forecast",  label: "Demand Forecast",    Icon: TrendingDown },
-  { key: "marketing", label: "Marketing",          Icon: Megaphone },
-  { key: "heatmap",   label: "Heatmap Vùng",       Icon: MapIcon },
-  { key: "lunar",     label: "Lễ Âm Lịch",         Icon: Moon },
+type TabKey = "dashboard" | "timeline" | "coverage" | "premium" | "forecast" | "marketing" | "heatmap" | "lunar";
+const TABS: { key: TabKey; label: string; Icon: LucideIcon; group?: "discovery" | "analytics" | "action" }[] = [
+  { key: "dashboard", label: "Tổng quan",           Icon: LayoutDashboard },
+  { key: "timeline",  label: "Lịch & Timeline",     Icon: Calendar,     group: "discovery" },
+  { key: "lunar",     label: "Lễ Âm Lịch",          Icon: Moon,         group: "discovery" },
+  { key: "coverage",  label: "Coverage Gap",        Icon: AlertTriangle, group: "analytics" },
+  { key: "premium",   label: "Pricing Premium",     Icon: TrendingUp,   group: "analytics" },
+  { key: "heatmap",   label: "Heatmap tỉnh",        Icon: MapIcon,      group: "analytics" },
+  { key: "forecast",  label: "Demand Forecast",     Icon: TrendingDown, group: "action" },
+  { key: "marketing", label: "Marketing",           Icon: Megaphone,    group: "action" },
 ];
 
 export default function FestivalsPage() {
   const qc = useQueryClient();
-  const [tab, setTab] = useState<TabKey>("timeline");
+  const [tab, setTab] = useState<TabKey>("dashboard");
   const [detailSlug, setDetailSlug] = useState<string | null>(null);
 
   const refresh = useMutation({
@@ -150,23 +153,31 @@ export default function FestivalsPage() {
         </div>
       </div>
 
-      {/* Tabs */}
+      {/* Tabs with subtle group dividers */}
       <div className="border-b border-gray-200 overflow-x-auto">
-        <div className="flex gap-1 min-w-max">
-          {TABS.map((t) => (
-            <button key={t.key} type="button" onClick={() => setTab(t.key)}
-              className={cn(
-                "px-3 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap",
-                tab === t.key ? "border-primary-600 text-primary-700" : "border-transparent text-gray-600 hover:text-gray-900"
-              )}>
-              <t.Icon size={14} /> {t.label}
-            </button>
-          ))}
+        <div className="flex items-end gap-1 min-w-max">
+          {TABS.map((t, idx) => {
+            const prevGroup = idx > 0 ? TABS[idx - 1].group : undefined;
+            const showDivider = !!t.group && t.group !== prevGroup && idx > 0;
+            return (
+              <Fragment key={t.key}>
+                {showDivider && <div className="self-stretch w-px bg-gray-200 mx-1" />}
+                <button type="button" onClick={() => setTab(t.key)}
+                  className={cn(
+                    "px-3 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 whitespace-nowrap",
+                    tab === t.key ? "border-primary-600 text-primary-700" : "border-transparent text-gray-600 hover:text-gray-900"
+                  )}>
+                  <t.Icon size={14} /> {t.label}
+                </button>
+              </Fragment>
+            );
+          })}
         </div>
       </div>
 
       {/* Tab body */}
       <div>
+        {tab === "dashboard" && <DashboardTab onJumpTab={setTab} onPickFestival={setDetailSlug} />}
         {tab === "timeline" && <TimelineTab onPickFestival={setDetailSlug} />}
         {tab === "coverage" && <CoverageGapTab onPickFestival={setDetailSlug} />}
         {tab === "premium" && <PricingPremiumTab />}
@@ -179,6 +190,246 @@ export default function FestivalsPage() {
       {/* Detail modal */}
       {detailSlug && <FestivalDetailModal slug={detailSlug} onClose={() => setDetailSlug(null)} />}
     </div>
+  );
+}
+
+// ── Tab 0: Smart Dashboard (default landing) ─────────────────────────────
+
+function DashboardTab({ onJumpTab, onPickFestival }: {
+  onJumpTab: (k: TabKey) => void;
+  onPickFestival: (slug: string) => void;
+}) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["festival-dashboard"],
+    queryFn: getFestivalDashboardSummary,
+    staleTime: 5 * 60 * 1000,
+  });
+  if (isLoading) return <Loading />;
+  if (error) return <ErrorBox msg={(error as Error).message} />;
+  if (!data) return null;
+  const { alerts, quick_stats, data_quality } = data;
+
+  // Data quality overall score (0-100)
+  const dqScore = Math.round((
+    data_quality.festivals_with_location_pct +
+    data_quality.festivals_with_province_pct +
+    data_quality.tours_with_province_pct +
+    data_quality.tours_tagged_festival_pct
+  ) / 4);
+  const dqColor = dqScore >= 75 ? "emerald" : dqScore >= 50 ? "amber" : "red";
+
+  return (
+    <div className="space-y-4">
+      {/* Hero quick stats */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <StatCard label="Lễ 30 ngày tới" value={quick_stats.upcoming_30d} accent="primary" />
+        <StatCard label="Lễ 90 ngày tới" value={quick_stats.upcoming_90d} />
+        <StatCard label="Tour gắn lễ" value={quick_stats.tours_tagged_festival.toLocaleString("vi-VN")} isText />
+        <StatCard label="VTR cover" value={quick_stats.vtr_tours_tagged_festival.toLocaleString("vi-VN")} isText />
+        <StatCard
+          label="VTR / tổng"
+          value={`${Math.round((quick_stats.vtr_cover_ratio || 0) * 100)}%`}
+          isText
+          accent={quick_stats.vtr_cover_ratio >= 0.3 ? "primary" : undefined}
+        />
+      </div>
+
+      {/* SMART ALERTS — 3 priority cards */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        {/* Alert 1: Critical 30d */}
+        <AlertCard
+          icon={<Bell size={16} />}
+          tone={alerts.critical_30d_count > 0 ? "red" : "gray"}
+          title="Lễ sắp tới VTR chưa cover"
+          count={alerts.critical_30d_count}
+          subtitle={alerts.critical_30d_count > 0
+            ? `${alerts.critical_30d_count} lễ trong 30 ngày tới mà VTR chưa có tour nào`
+            : "Không có lễ nào VTR thiếu cover trong 30 ngày tới"}
+          actionLabel="Xem timeline"
+          onAction={() => onJumpTab("timeline")}
+        >
+          {alerts.critical_30d.slice(0, 5).map((f) => (
+            <button key={f.slug} type="button"
+              onClick={() => onPickFestival(f.slug)}
+              className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-red-100/60 transition-colors border-t border-red-100 first:border-t-0">
+              <p className="font-medium text-red-900 truncate" title={f.name}>{f.name}</p>
+              <p className="text-[10px] text-red-700">
+                Còn {f.days_until}d · {regionDisplay(f.region, f.location_text)}
+              </p>
+            </button>
+          ))}
+        </AlertCard>
+
+        {/* Alert 2: Under-served provinces */}
+        <AlertCard
+          icon={<Target size={16} />}
+          tone={alerts.under_served_count > 0 ? "amber" : "gray"}
+          title="Tỉnh có lễ nhưng VTR=0"
+          count={alerts.under_served_count}
+          subtitle={alerts.under_served_count > 0
+            ? `${alerts.under_served_count} tỉnh có ≥2 lễ trong 90 ngày tới mà VTR chưa có tour`
+            : "Tất cả tỉnh có lễ đều đã có tour VTR"}
+          actionLabel="Xem heatmap"
+          onAction={() => onJumpTab("heatmap")}
+        >
+          {alerts.under_served.slice(0, 5).map((p) => (
+            <div key={p.province_code}
+              className="text-xs px-2 py-1.5 border-t border-amber-100 first:border-t-0 flex items-center justify-between gap-2">
+              <span className="font-medium text-amber-900 truncate flex items-center gap-1">
+                <MapPin size={11} /> {p.province_name}
+              </span>
+              <span className="text-amber-700 text-[10px] shrink-0">
+                {p.festival_count} lễ · VTR=0
+              </span>
+            </div>
+          ))}
+        </AlertCard>
+
+        {/* Alert 3: Top coverage gaps */}
+        <AlertCard
+          icon={<AlertTriangle size={16} />}
+          tone={alerts.top_gaps_count > 0 ? "orange" : "gray"}
+          title="Đối thủ cover nhiều, VTR thiếu"
+          count={alerts.top_gaps_count}
+          subtitle={alerts.top_gaps_count > 0
+            ? `Top ${alerts.top_gaps_count} lễ competitor mạnh nhất mà VTR chưa cạnh tranh`
+            : "Không có gap đáng kể"}
+          actionLabel="Xem Coverage Gap"
+          onAction={() => onJumpTab("coverage")}
+        >
+          {alerts.top_gaps.slice(0, 5).map((g) => (
+            <button key={g.slug} type="button"
+              onClick={() => onPickFestival(g.slug)}
+              className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-orange-100/60 transition-colors border-t border-orange-100 first:border-t-0">
+              <p className="font-medium text-orange-900 truncate" title={g.name}>{g.name}</p>
+              <p className="text-[10px] text-orange-700">
+                Đối thủ: <strong>{g.competitor_tours}</strong> · VTR: <strong>{g.vtr_tours}</strong> · gap {g.gap_score.toFixed(1)}
+              </p>
+            </button>
+          ))}
+        </AlertCard>
+      </div>
+
+      {/* Data Quality + Quick actions */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        {/* Data Quality */}
+        <div className="card p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
+              <BadgeCheck size={14} /> Chất lượng dữ liệu
+            </h3>
+            <span className={cn(
+              "text-xs font-bold px-2 py-0.5 rounded-full",
+              dqColor === "emerald" ? "bg-emerald-100 text-emerald-800" :
+              dqColor === "amber" ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"
+            )}>
+              {dqScore}/100
+            </span>
+          </div>
+          <div className="space-y-2 text-xs">
+            <QualityBar label="Lễ có địa điểm" value={data_quality.festivals_with_location_pct} />
+            <QualityBar label="Lễ có province_code" value={data_quality.festivals_with_province_pct} />
+            <QualityBar label="Tour có province_code" value={data_quality.tours_with_province_pct} />
+            <QualityBar label="Tour đã tag lễ" value={data_quality.tours_tagged_festival_pct} />
+          </div>
+          <p className="text-[10px] text-gray-500 mt-3 italic">
+            Tổng: {data_quality.festivals_total.toLocaleString("vi-VN")} lễ upcoming ·{" "}
+            {data_quality.tours_total.toLocaleString("vi-VN")} tour
+          </p>
+        </div>
+
+        {/* Quick actions */}
+        <div className="card p-4">
+          <h3 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-1.5">
+            <Sparkles size={14} /> Quick actions
+          </h3>
+          <div className="grid grid-cols-2 gap-2">
+            <QuickAction Icon={Calendar} label="Xem lịch lễ 90 ngày" onClick={() => onJumpTab("timeline")} />
+            <QuickAction Icon={TrendingUp} label="Phân tích Premium %" onClick={() => onJumpTab("premium")} />
+            <QuickAction Icon={Megaphone} label="Marketing 12 tháng" onClick={() => onJumpTab("marketing")} />
+            <QuickAction Icon={MapIcon} label="Heatmap tỉnh" onClick={() => onJumpTab("heatmap")} />
+            <QuickAction Icon={Moon} label="Lễ âm lịch" onClick={() => onJumpTab("lunar")} />
+            <QuickAction Icon={TrendingDown} label="Demand forecast 6 tháng" onClick={() => onJumpTab("forecast")} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AlertCard({ icon, tone, title, count, subtitle, actionLabel, onAction, children }: {
+  icon: React.ReactNode;
+  tone: "red" | "amber" | "orange" | "gray";
+  title: string;
+  count: number;
+  subtitle: string;
+  actionLabel: string;
+  onAction: () => void;
+  children?: React.ReactNode;
+}) {
+  const toneClass = {
+    red: "border-red-200 bg-red-50/40",
+    amber: "border-amber-200 bg-amber-50/40",
+    orange: "border-orange-200 bg-orange-50/40",
+    gray: "border-gray-200 bg-gray-50/40",
+  }[tone];
+  const accentText = {
+    red: "text-red-700",
+    amber: "text-amber-700",
+    orange: "text-orange-700",
+    gray: "text-gray-500",
+  }[tone];
+  return (
+    <div className={cn("card overflow-hidden border", toneClass)}>
+      <div className="p-3 border-b border-current/10">
+        <div className="flex items-start justify-between gap-2 mb-1">
+          <div className={cn("font-semibold text-sm flex items-center gap-1.5", accentText)}>
+            {icon} {title}
+          </div>
+          <span className={cn("text-xl font-bold leading-none", accentText)}>
+            {count}
+          </span>
+        </div>
+        <p className="text-[11px] text-gray-600">{subtitle}</p>
+      </div>
+      {count > 0 && children && (
+        <div className="bg-white/40 max-h-56 overflow-y-auto">
+          {children}
+        </div>
+      )}
+      <button type="button" onClick={onAction}
+        className={cn(
+          "w-full px-3 py-2 text-xs font-medium border-t flex items-center justify-center gap-1 transition-colors hover:bg-white/60",
+          accentText
+        )}>
+        {actionLabel} <ChevronRight size={12} />
+      </button>
+    </div>
+  );
+}
+
+function QualityBar({ label, value }: { label: string; value: number }) {
+  const color = value >= 75 ? "bg-emerald-500" : value >= 50 ? "bg-amber-500" : "bg-red-500";
+  return (
+    <div>
+      <div className="flex justify-between text-gray-700 mb-0.5">
+        <span>{label}</span>
+        <span className="font-semibold">{value}%</span>
+      </div>
+      <div className="h-1.5 bg-gray-100 rounded overflow-hidden">
+        <div className={cn("h-full transition-all", color)} style={{ width: `${value}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function QuickAction({ Icon, label, onClick }: { Icon: LucideIcon; label: string; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick}
+      className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 hover:border-primary-300 hover:bg-primary-50/40 transition-colors text-left">
+      <Icon size={16} className="text-primary-600 shrink-0" />
+      <span className="text-xs text-gray-700 font-medium">{label}</span>
+    </button>
   );
 }
 
@@ -503,8 +754,30 @@ function CoverageGapTab({ onPickFestival }: { onPickFestival: (slug: string) => 
       Chưa có dữ liệu. Bấm <strong>Re-tag tour</strong> để map tour với lễ hội trước.
     </EmptyState>
   );
+  // Coverage stats summary
+  const totalGap = data.filter((r) => r.vtr_tours === 0 && r.competitor_tours > 0).length;
+  const partialGap = data.filter((r) => r.vtr_tours > 0 && r.vtr_tours < r.competitor_tours).length;
   return (
-    <div className="card overflow-x-auto">
+    <div className="space-y-3">
+      {/* Method hint */}
+      <div className="card border-amber-100 bg-amber-50/40 p-3 text-xs text-gray-700">
+        <p className="flex items-start gap-1.5">
+          <AlertTriangle size={14} className="text-amber-600 shrink-0 mt-0.5" />
+          <span>
+            <strong>Coverage gap</strong> = lễ hội mà đối thủ có tour cover (cùng địa điểm tổ chức) nhưng VTR chưa có/ít.
+            Match filter theo <strong>province_code</strong> hoặc <strong>region</strong> của lễ — nên match thấp khi lễ
+            có địa điểm chưa được map hoặc tour của bạn không có <code className="bg-white px-1 rounded">province_code</code>.
+            Bấm <strong>Re-tag tour</strong> để cập nhật.
+          </span>
+        </p>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard label="Tổng lễ phân tích" value={data.length} />
+        <StatCard label="Hoàn toàn miss (VTR=0)" value={totalGap} accent="primary" />
+        <StatCard label="Cover thiếu" value={partialGap} />
+        <StatCard label="Lễ VTR đủ cover" value={data.length - totalGap - partialGap} />
+      </div>
+      <div className="card overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="bg-gray-50 sticky top-0">
           <tr>
@@ -557,12 +830,14 @@ function CoverageGapTab({ onPickFestival }: { onPickFestival: (slug: string) => 
         </tbody>
       </table>
     </div>
+    </div>
   );
 }
 
 // ── Tab 3: Pricing Premium ───────────────────────────────────────────────
 
 function PricingPremiumTab() {
+  const [showMethod, setShowMethod] = useState(false);
   const { data, isLoading, error } = useQuery({
     queryKey: ["festival-premium"],
     queryFn: () => getPricingPremium(20),
@@ -575,6 +850,38 @@ function PricingPremiumTab() {
   );
   return (
     <div className="space-y-4">
+      {/* Method explanation — collapsible */}
+      <div className="card border-primary-100 bg-primary-50/40 overflow-hidden">
+        <button type="button" onClick={() => setShowMethod((v) => !v)}
+          className="w-full px-3 py-2 flex items-center justify-between text-left hover:bg-primary-50/60">
+          <span className="text-xs font-semibold text-primary-900 flex items-center gap-1.5">
+            <TrendingUp size={13} /> Cách tính Premium %
+          </span>
+          <ChevronRight size={14} className={cn("text-primary-700 transition-transform", showMethod && "rotate-90")} />
+        </button>
+        {showMethod && (
+          <div className="px-3 pb-3 text-xs text-gray-700 space-y-2 border-t border-primary-100">
+            <p className="pt-2">
+              <strong>Premium %</strong> = mức giá tăng (hoặc giảm) của tour gắn lễ so với tour cùng tuyến nhưng KHÔNG gắn lễ.
+            </p>
+            <p>
+              <strong>Pipeline (6 bước):</strong>
+            </p>
+            <ol className="list-decimal list-inside space-y-1 pl-1">
+              <li>Lọc tour có giá trong khoảng <strong>500K – 500M VND</strong> (loại outlier do scrape lỗi).</li>
+              <li>Loại tour có thị trường "Không xác định" (rule toàn hệ thống).</li>
+              <li>Gom nhóm theo <code className="bg-white px-1 rounded">(thị_trường, tuyến_tour, has_festival)</code>.</li>
+              <li>Chỉ giữ nhóm có <strong>≥3 tour không lễ</strong> + <strong>≥2 tour có lễ</strong>.</li>
+              <li>Dùng <strong>median</strong> (không phải mean) — robust với outlier.</li>
+              <li>Premium % = (median_có_lễ − median_không_lễ) / median_không_lễ × 100. Bỏ qua nếu |premium| {`>`} 500%.</li>
+            </ol>
+            <p className="text-gray-600 italic">
+              Ví dụ: tour "Nha Trang" có lễ median 8M, không lễ median 6M → Premium = +33%.
+            </p>
+          </div>
+        )}
+      </div>
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard label="Tuyến phân tích" value={data.summary.routes_analyzed} />
         <StatCard label="Premium TB" value={`${data.summary.avg_premium_pct}%`} accent="primary" isText />
@@ -638,6 +945,8 @@ function PremiumTable({ title, rows, positive }: {
 // ── Tab 4: Demand Forecast ───────────────────────────────────────────────
 
 function DemandForecastTab() {
+  const [expandedMonth, setExpandedMonth] = useState<string | null>(null);
+  const [pickedSlug, setPickedSlug] = useState<string | null>(null);
   const { data, isLoading, error } = useQuery({
     queryKey: ["festival-forecast"],
     queryFn: () => getDemandForecast(6),
@@ -648,57 +957,88 @@ function DemandForecastTab() {
   if (!data) return null;
   return (
     <div className="space-y-3">
-      <p className="text-xs text-gray-600">
-        Forecast 6 tháng tới — số lễ + recommendation inventory + tour hiện đã gắn.
-      </p>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {data.forecast.map((m) => (
-          <div key={m.month_label} className={cn(
-            "card p-4 border-l-4",
-            m.inventory_recommendation === "high" ? "border-red-500" :
-            m.inventory_recommendation === "medium" ? "border-amber-500" : "border-gray-300",
-          )}>
-            <div className="flex items-start justify-between mb-2">
-              <h3 className="text-base font-bold text-gray-900">{m.month_label}</h3>
-              <span className={cn(
-                "badge text-[10px]",
-                m.inventory_recommendation === "high" ? "bg-red-100 text-red-800" :
-                m.inventory_recommendation === "medium" ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-700",
-              )}>
-                {m.inventory_label}
-              </span>
-            </div>
-            <div className="grid grid-cols-3 gap-2 text-center mb-3 text-xs">
-              <div>
-                <p className="font-bold text-lg text-primary-700">{m.festival_count}</p>
-                <p className="text-gray-500 text-[10px]">Lễ hội</p>
-              </div>
-              <div>
-                <p className="font-bold text-lg text-gray-900">{m.tour_count}</p>
-                <p className="text-gray-500 text-[10px]">Tour gắn</p>
-              </div>
-              <div>
-                <p className="font-bold text-lg text-emerald-700">{m.vtr_tour_count}</p>
-                <p className="text-gray-500 text-[10px]">VTR cover</p>
-              </div>
-            </div>
-            {m.top_region && (
-              <p className="text-xs text-gray-600 mb-2">
-                Vùng nhiều lễ: <strong>{REGION_LABEL[m.top_region as FestivalRegion] ?? m.top_region}</strong>
-              </p>
-            )}
-            {m.top_festivals.length > 0 && (
-              <div className="space-y-1 pt-2 border-t">
-                {m.top_festivals.slice(0, 3).map((f) => (
-                  <p key={f.slug} className="text-[11px] text-gray-700 truncate" title={f.name}>
-                    • {f.name}
-                  </p>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
+      <div className="card border-primary-100 bg-primary-50/40 p-3 text-xs text-gray-700">
+        <p className="flex items-start gap-1.5">
+          <TrendingDown size={14} className="text-primary-600 shrink-0 mt-0.5" />
+          <span>
+            <strong>Mục đích:</strong> dự báo nhu cầu inventory theo tháng dựa trên số lễ + độ phủ tour hiện tại.
+            Tháng <span className="text-red-700 font-semibold">đỏ (high)</span> = nhiều lễ, ít tour VTR → cơ hội mở tour mới.
+            Tháng <span className="text-amber-700 font-semibold">vàng (medium)</span> = cần check cover.
+            <strong> Click card</strong> để xem chi tiết lễ + tour và mở action.
+          </span>
+        </p>
       </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {data.forecast.map((m) => {
+          const isExpanded = expandedMonth === m.month_label;
+          return (
+            <button key={m.month_label} type="button"
+              onClick={() => setExpandedMonth(isExpanded ? null : m.month_label)}
+              className={cn(
+                "card p-4 border-l-4 text-left w-full hover:shadow-md transition-all",
+                m.inventory_recommendation === "high" ? "border-red-500" :
+                m.inventory_recommendation === "medium" ? "border-amber-500" : "border-gray-300",
+                isExpanded && "ring-2 ring-primary-300",
+              )}>
+              <div className="flex items-start justify-between mb-2">
+                <h3 className="text-base font-bold text-gray-900">{m.month_label}</h3>
+                <span className={cn(
+                  "badge text-[10px]",
+                  m.inventory_recommendation === "high" ? "bg-red-100 text-red-800" :
+                  m.inventory_recommendation === "medium" ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-700",
+                )}>
+                  {m.inventory_label}
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center mb-3 text-xs">
+                <div>
+                  <p className="font-bold text-lg text-primary-700">{m.festival_count}</p>
+                  <p className="text-gray-500 text-[10px]">Lễ hội</p>
+                </div>
+                <div>
+                  <p className="font-bold text-lg text-gray-900">{m.tour_count}</p>
+                  <p className="text-gray-500 text-[10px]">Tour gắn</p>
+                </div>
+                <div>
+                  <p className="font-bold text-lg text-emerald-700">{m.vtr_tour_count}</p>
+                  <p className="text-gray-500 text-[10px]">VTR cover</p>
+                </div>
+              </div>
+              {m.top_region && (
+                <p className="text-xs text-gray-600 mb-2">
+                  Vùng nhiều lễ: <strong>{REGION_LABEL[m.top_region as FestivalRegion] ?? m.top_region}</strong>
+                </p>
+              )}
+              {m.top_festivals.length > 0 && (
+                <div className="space-y-1 pt-2 border-t">
+                  {m.top_festivals.slice(0, isExpanded ? 10 : 3).map((f) => (
+                    <button key={f.slug} type="button"
+                      onClick={(e) => { e.stopPropagation(); setPickedSlug(f.slug); }}
+                      className="block text-left text-[11px] text-primary-700 hover:underline truncate w-full"
+                      title={f.name}>
+                      • {f.name}
+                    </button>
+                  ))}
+                  {!isExpanded && m.top_festivals.length > 3 && (
+                    <p className="text-[10px] text-gray-400 italic">+{m.top_festivals.length - 3} lễ khác — click để xem</p>
+                  )}
+                </div>
+              )}
+              {isExpanded && m.inventory_recommendation !== "low" && (
+                <div className="mt-3 pt-2 border-t border-amber-200 bg-amber-50/40 -mx-4 -mb-4 px-4 pb-3 rounded-b">
+                  <p className="text-[10px] font-semibold text-amber-800 uppercase tracking-wide mb-1">Suggested action</p>
+                  <p className="text-xs text-amber-900">
+                    {m.inventory_recommendation === "high"
+                      ? `Tháng nhu cầu CAO — ${m.festival_count} lễ nhưng chỉ ${m.vtr_tour_count} tour VTR cover. Đề xuất mở thêm tour ${m.top_region ? REGION_LABEL[m.top_region as FestivalRegion] : "vùng tương ứng"}.`
+                      : `Tháng nhu cầu trung bình — review tour ${m.top_region ? REGION_LABEL[m.top_region as FestivalRegion] : ""} để tăng cover.`}
+                  </p>
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      {pickedSlug && <FestivalDetailModal slug={pickedSlug} onClose={() => setPickedSlug(null)} />}
     </div>
   );
 }
@@ -772,6 +1112,8 @@ function MarketingTab() {
 // ── Tab 6: Heatmap Vùng ─────────────────────────────────────────────────
 
 function HeatmapTab() {
+  const [filterRegion, setFilterRegion] = useState<"all" | "bac" | "trung" | "nam">("all");
+  const [sortBy, setSortBy] = useState<"festival" | "tour" | "underserved">("underserved");
   const { data, isLoading, error } = useQuery({
     queryKey: ["festival-heatmap"],
     queryFn: getRegionHeatmap,
@@ -780,37 +1122,166 @@ function HeatmapTab() {
   if (isLoading) return <Loading />;
   if (error) return <ErrorBox msg={(error as Error).message} />;
   if (!data) return null;
-  const max = Math.max(...data.regions.map((r) => Math.max(r.festival_count, r.tour_with_festival)), 1);
+
+  const maxRegion = Math.max(...data.regions.map((r) => Math.max(r.festival_count, r.tour_with_festival)), 1);
+  const filteredProvinces = data.provinces
+    .filter((p) => filterRegion === "all" || p.region === filterRegion)
+    .sort((a, b) => {
+      if (sortBy === "underserved") return Number(b.is_under_served) - Number(a.is_under_served) || b.festival_count - a.festival_count;
+      if (sortBy === "festival") return b.festival_count - a.festival_count;
+      return b.tour_count - a.tour_count;
+    });
+  const maxProvFest = Math.max(...filteredProvinces.map((p) => p.festival_count), 1);
+  const maxProvTour = Math.max(...filteredProvinces.map((p) => p.tour_count), 1);
+  const underservedCount = data.provinces.filter((p) => p.is_under_served).length;
+
   return (
     <div className="space-y-4">
-      <div className="card p-4">
-        <p className="text-xs text-gray-600 mb-3">
-          Mật độ lễ × mật độ tour theo vùng. Vùng under-served = có lễ nhưng ít tour cover.
+      {/* Method hint */}
+      <div className="card border-primary-100 bg-primary-50/40 p-3 text-xs text-gray-700">
+        <p className="flex items-start gap-1.5">
+          <MapIcon size={14} className="text-primary-600 shrink-0 mt-0.5" />
+          <span>
+            <strong>Heatmap mật độ lễ × tour</strong> theo tỉnh + vùng. Tỉnh{" "}
+            <span className="text-amber-700 font-semibold">under-served</span> = có ≥2 lễ nhưng VTR=0 hoặc ratio &lt;50%.
+          </span>
         </p>
-        <div className="space-y-3">
+      </div>
+
+      {/* Region rollup */}
+      <div className="card p-4">
+        <h3 className="text-sm font-semibold text-gray-800 mb-3">Tổng quan 3 vùng</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {data.regions.map((r) => (
             <div key={r.region} className={cn(
               "rounded-lg border p-3",
-              r.is_under_served && "border-amber-300 bg-amber-50",
+              r.is_under_served ? "border-amber-300 bg-amber-50" : "border-gray-200",
             )}>
               <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-                <h3 className="font-bold text-gray-900">Miền {r.region_label}</h3>
+                <h4 className="font-bold text-gray-900">Miền {r.region_label}</h4>
                 {r.is_under_served && (
                   <span className="badge bg-amber-200 text-amber-900 text-[10px]">
-                    <AlertTriangle size={10} /> Under-served — cơ hội mở tour
+                    <AlertTriangle size={10} /> Under-served
                   </span>
                 )}
               </div>
-              <div className="grid grid-cols-3 gap-3 text-xs">
-                <BarStat label="Số lễ" value={r.festival_count} max={max} color="bg-primary-500" />
-                <BarStat label="Tour gắn lễ" value={r.tour_with_festival} max={max} color="bg-emerald-500" />
-                <div className="text-center">
-                  <p className="font-bold text-2xl text-gray-900">{r.festival_coverage_ratio.toFixed(2)}</p>
-                  <p className="text-gray-500 text-[10px]">Tỉ lệ tour/lễ</p>
+              <div className="grid grid-cols-4 gap-2 text-center mb-2 text-xs">
+                <div>
+                  <p className="font-bold text-base text-primary-700">{r.festival_count}</p>
+                  <p className="text-gray-500 text-[10px]">Lễ</p>
                 </div>
+                <div>
+                  <p className="font-bold text-base text-gray-900">{r.tour_count.toLocaleString("vi-VN")}</p>
+                  <p className="text-gray-500 text-[10px]">Tour</p>
+                </div>
+                <div>
+                  <p className="font-bold text-base text-emerald-700">{r.tour_with_festival}</p>
+                  <p className="text-gray-500 text-[10px]">Tour gắn lễ</p>
+                </div>
+                <div>
+                  <p className="font-bold text-base text-amber-700">{r.vtr_tour_count}</p>
+                  <p className="text-gray-500 text-[10px]">VTR</p>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <BarStat label="Lễ" value={r.festival_count} max={maxRegion} color="bg-primary-500" />
+                <BarStat label="Tour gắn lễ" value={r.tour_with_festival} max={maxRegion} color="bg-emerald-500" />
               </div>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Province detail */}
+      <div className="card">
+        <div className="p-3 border-b bg-gray-50 flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-gray-800">
+            Chi tiết theo tỉnh thành ({filteredProvinces.length}/{data.total_provinces_with_data})
+          </h3>
+          <div className="flex flex-wrap gap-2 items-center">
+            <FilterSelect label="Vùng" value={filterRegion} onChange={(v) => setFilterRegion(v as "all" | "bac" | "trung" | "nam")}
+              options={[
+                { value: "all", label: `Tất cả (${data.provinces.length})` },
+                { value: "bac", label: "Miền Bắc" },
+                { value: "trung", label: "Miền Trung" },
+                { value: "nam", label: "Miền Nam" },
+              ]} />
+            <FilterSelect label="Sắp xếp" value={sortBy} onChange={(v) => setSortBy(v as "festival" | "tour" | "underserved")}
+              options={[
+                { value: "underserved", label: `Under-served trước (${underservedCount})` },
+                { value: "festival", label: "Theo số lễ" },
+                { value: "tour", label: "Theo số tour" },
+              ]} />
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="bg-gray-50/50">
+              <tr>
+                <th className="px-2 py-2 text-left">Tỉnh thành</th>
+                <th className="px-2 py-2 text-left">Vùng</th>
+                <th className="px-2 py-2 text-right whitespace-nowrap">Lễ</th>
+                <th className="px-2 py-2 text-left min-w-[140px]">Mật độ lễ</th>
+                <th className="px-2 py-2 text-right whitespace-nowrap">Tour</th>
+                <th className="px-2 py-2 text-left min-w-[140px]">Mật độ tour</th>
+                <th className="px-2 py-2 text-right whitespace-nowrap">VTR</th>
+                <th className="px-2 py-2 text-right whitespace-nowrap">Tour gắn lễ</th>
+                <th className="px-2 py-2 text-right whitespace-nowrap">Ratio</th>
+                <th className="px-2 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredProvinces.map((p) => (
+                <tr key={p.province_code} className={cn(
+                  "border-t hover:bg-gray-50",
+                  p.is_under_served && "bg-amber-50/40"
+                )}>
+                  <td className="px-2 py-1.5 font-medium text-gray-900 whitespace-nowrap">
+                    <MapPin size={11} className="inline mr-1 text-gray-400" />
+                    {p.province_name}
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <span className={cn("text-[10px] px-1.5 py-0.5 rounded border", REGION_COLOR[(p.region || "") as FestivalRegion])}>
+                      {REGION_LABEL[(p.region || "") as FestivalRegion] ?? p.region}
+                    </span>
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono font-semibold text-primary-700">{p.festival_count}</td>
+                  <td className="px-2 py-1.5">
+                    <div className="bg-gray-100 rounded h-2 relative overflow-hidden">
+                      <div className="bg-primary-500 h-full rounded" style={{ width: `${(p.festival_count / maxProvFest) * 100}%` }} />
+                    </div>
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono text-gray-900">{p.tour_count.toLocaleString("vi-VN")}</td>
+                  <td className="px-2 py-1.5">
+                    <div className="bg-gray-100 rounded h-2 relative overflow-hidden">
+                      <div className="bg-gray-700 h-full rounded" style={{ width: `${(p.tour_count / maxProvTour) * 100}%` }} />
+                    </div>
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-mono text-amber-700">{p.vtr_tour_count}</td>
+                  <td className="px-2 py-1.5 text-right font-mono text-emerald-700">{p.tour_with_festival}</td>
+                  <td className="px-2 py-1.5 text-right">
+                    <span className={cn(
+                      "inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold",
+                      p.festival_coverage_ratio >= 1 ? "bg-emerald-100 text-emerald-800" :
+                      p.festival_coverage_ratio >= 0.5 ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"
+                    )}>
+                      {p.festival_coverage_ratio.toFixed(2)}
+                    </span>
+                  </td>
+                  <td className="px-2 py-1.5 text-right">
+                    {p.is_under_served && (
+                      <span className="badge bg-amber-200 text-amber-900 text-[10px] whitespace-nowrap">
+                        <AlertTriangle size={10} /> Mở tour
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {filteredProvinces.length === 0 && (
+                <tr><td colSpan={10} className="text-center text-gray-400 py-8">Không có tỉnh nào trong bộ lọc.</td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -884,81 +1355,219 @@ function LunarTab() {
 // ── Festival Detail Modal ────────────────────────────────────────────────
 
 function FestivalDetailModal({ slug, onClose }: { slug: string; onClose: () => void }) {
-  const { data: summary, isLoading } = useQuery({
+  // 3 parallel queries: full festival meta + summary stats + tour list
+  const { data: festival, isLoading: festLoading, error: festError } = useQuery({
+    queryKey: ["festival-detail", slug],
+    queryFn: () => getFestival(slug),
+    enabled: !!slug,
+  });
+  const { data: summary, isLoading: sumLoading } = useQuery({
     queryKey: ["festival-summary", slug],
     queryFn: () => getFestivalSummary(slug),
     enabled: !!slug,
   });
-  const { data: tours } = useQuery({
+  const { data: tours, isLoading: toursLoading } = useQuery({
     queryKey: ["festival-tours", slug],
     queryFn: () => listFestivalTours(slug),
     enabled: !!slug,
   });
 
+  const cat = festival?.category;
+  const catMeta = cat ? CATEGORY_META[cat] : null;
+  const daysAway = festival ? daysUntil(festival.date_start) : null;
+  const isLoading = festLoading || sumLoading || toursLoading;
+
+  // Tần suất estimate: cùng category + cùng location_text trong DB → đếm lần xuất hiện qua năm
+  // (simple heuristic: lễ âm lịch = hằng năm; lễ có "thường niên"/"hằng năm" trong tên = annual)
+  const recurrenceHint = useMemo(() => {
+    if (!festival) return null;
+    if (festival.is_lunar) return "Lễ âm lịch — diễn ra hằng năm theo lịch âm";
+    const nameLower = festival.name_vi.toLowerCase();
+    if (/(hằng năm|thường niên|lần thứ|kỳ \d+|năm \d{4})/.test(nameLower)) {
+      return "Sự kiện thường niên — lặp lại hằng năm";
+    }
+    return "Sự kiện diễn ra theo lịch tổ chức cụ thể (xem nguồn để biết tần suất chính xác)";
+  }, [festival]);
+
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col"
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-4 border-b shrink-0">
-          <h2 className="text-lg font-bold text-gray-900 truncate pr-2">{summary?.name ?? "Lễ hội"}</h2>
-          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-700 shrink-0">
-            <X size={20} />
-          </button>
-        </div>
-        <div className="overflow-auto p-4 space-y-4 flex-1">
-          {isLoading && <Loading />}
-          {summary && (
-            <div className="grid grid-cols-3 gap-3">
-              <StatCard label="Tour gắn" value={summary.total_tours} accent="primary" />
-              <StatCard label="VTR cover" value={summary.vtr_tours} />
-              <StatCard label="Đối thủ" value={summary.competitor_tours} />
+        {/* Hero header with optional image */}
+        {festival?.image_url ? (
+          <div className="relative h-32 sm:h-40 bg-gradient-to-r from-primary-500 to-primary-700 shrink-0">
+            <img src={festival.image_url} alt={festival.name_vi}
+              className="w-full h-full object-cover opacity-90"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+            <button type="button" onClick={onClose}
+              className="absolute top-2 right-2 bg-black/40 hover:bg-black/60 text-white rounded-full p-1.5">
+              <X size={18} />
+            </button>
+            <div className="absolute bottom-2 left-4 right-4 text-white">
+              <h2 className="text-lg sm:text-xl font-bold drop-shadow truncate">
+                {festival.name_vi}
+              </h2>
             </div>
-          )}
-          {tours && tours.length > 0 && (
-            <div>
-              <h3 className="text-sm font-semibold text-gray-700 mb-2">Tour gắn lễ ({tours.length})</h3>
-              <div className="overflow-x-auto -mx-4 px-4">
-                <table className="w-full text-xs min-w-[800px]">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-2 py-1.5 text-left whitespace-nowrap">Công ty</th>
-                      <th className="px-2 py-1.5 text-left">Tên tour</th>
-                      <th className="px-2 py-1.5 text-right whitespace-nowrap">Giá</th>
-                      <th className="px-2 py-1.5 text-right whitespace-nowrap">Ngày</th>
-                      <th className="px-2 py-1.5 text-right whitespace-nowrap">Cách lễ</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {tours.map((t: FestivalTourLite) => (
-                      <tr key={t.id} className="border-t hover:bg-gray-50">
-                        <td className="px-2 py-1.5 whitespace-nowrap">
-                          <span className={cn(
-                            "px-1 py-0.5 rounded text-[10px] font-medium",
-                            t.cong_ty.toLowerCase().includes("vietravel") ? "bg-primary-100 text-primary-800" : "bg-gray-100 text-gray-700",
-                          )}>
-                            {t.cong_ty}
-                          </span>
-                        </td>
-                        <td className="px-2 py-1.5 max-w-[400px] truncate" title={t.ten_tour}>
-                          {t.ten_tour}
-                        </td>
-                        <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap">{fmtVND(t.gia)}</td>
-                        <td className="px-2 py-1.5 text-right text-gray-500 whitespace-nowrap">{t.so_ngay ? `${t.so_ngay}N` : "—"}</td>
-                        <td className="px-2 py-1.5 text-right text-gray-600 whitespace-nowrap">
-                          {t.festival_distance_days === 0 ? "Trùng" :
-                            t.festival_distance_days === null ? "—" :
-                            t.festival_distance_days > 0 ? `${t.festival_distance_days}d trước` :
-                            `${-t.festival_distance_days}d sau`}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between p-4 border-b shrink-0 bg-gradient-to-r from-primary-50 to-white">
+            <h2 className="text-lg font-bold text-gray-900 truncate pr-2">
+              {festival?.name_vi ?? summary?.name ?? "Lễ hội"}
+            </h2>
+            <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-700 shrink-0">
+              <X size={20} />
+            </button>
+          </div>
+        )}
+
+        <div className="overflow-auto flex-1">
+          {isLoading && <div className="p-8"><Loading /></div>}
+          {festError && <div className="p-4"><ErrorBox msg={`Không tải được lễ hội: ${(festError as Error).message}`} /></div>}
+
+          {festival && (
+            <div className="p-4 space-y-4">
+              {/* Metadata badges row */}
+              <div className="flex flex-wrap gap-2 items-center">
+                <span className={cn("text-xs px-2 py-1 rounded border font-medium", REGION_COLOR[festival.region])}>
+                  {regionDisplay(festival.region, festival.location_text)}
+                </span>
+                {catMeta && (
+                  <span className="text-xs px-2 py-1 rounded bg-gray-100 text-gray-700 border flex items-center gap-1">
+                    <catMeta.Icon size={11} /> {catMeta.label}
+                  </span>
+                )}
+                {festival.is_lunar && (
+                  <span className="text-xs px-2 py-1 rounded bg-purple-100 text-purple-800 border border-purple-200 flex items-center gap-1">
+                    <Moon size={11} /> Âm lịch
+                  </span>
+                )}
+                {daysAway !== null && daysAway >= 0 && daysAway <= 365 && (
+                  <span className={cn(
+                    "text-xs px-2 py-1 rounded border font-semibold",
+                    daysAway <= 7 ? "bg-red-100 text-red-800 border-red-200" :
+                    daysAway <= 30 ? "bg-amber-100 text-amber-800 border-amber-200" :
+                    "bg-emerald-50 text-emerald-700 border-emerald-200"
+                  )}>
+                    {daysAway === 0 ? "Hôm nay" : `Còn ${daysAway} ngày`}
+                  </span>
+                )}
+                {daysAway !== null && daysAway < 0 && (
+                  <span className="text-xs px-2 py-1 rounded bg-gray-100 text-gray-500 border">
+                    Đã diễn ra {Math.abs(daysAway)}d trước
+                  </span>
+                )}
               </div>
+
+              {/* Key info grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                <div className="rounded-lg border bg-gray-50/50 p-3">
+                  <p className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Thời gian</p>
+                  <p className="font-semibold text-gray-900 flex items-center gap-1.5">
+                    <Calendar size={14} className="text-primary-600" />
+                    {formatDateRange(festival.date_start, festival.date_end)}
+                  </p>
+                </div>
+                <div className="rounded-lg border bg-gray-50/50 p-3">
+                  <p className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Địa điểm</p>
+                  <p className="font-semibold text-gray-900">
+                    {festival.location_text || <span className="text-gray-400 italic">Chưa rõ</span>}
+                  </p>
+                </div>
+                <div className="rounded-lg border bg-gray-50/50 p-3 sm:col-span-2">
+                  <p className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Tần suất</p>
+                  <p className="text-sm text-gray-800">{recurrenceHint}</p>
+                </div>
+              </div>
+
+              {/* Description */}
+              {festival.description && (
+                <div className="rounded-lg border bg-white p-3">
+                  <p className="text-[10px] uppercase tracking-wide text-gray-500 mb-1.5">Mô tả</p>
+                  <p className="text-sm text-gray-700 whitespace-pre-line line-clamp-6">
+                    {festival.description}
+                  </p>
+                </div>
+              )}
+
+              {/* Source link */}
+              {festival.source_url && (
+                <a href={festival.source_url} target="_blank" rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-xs text-primary-600 hover:underline">
+                  <ExternalLink size={12} /> Xem nguồn gốc
+                </a>
+              )}
+
+              {/* Coverage stats */}
+              {summary && (
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-700 mb-2">Phủ tour ở đúng địa điểm lễ</h3>
+                  <div className="grid grid-cols-3 gap-3">
+                    <StatCard label="Tổng tour gắn" value={summary.total_tours} accent="primary" />
+                    <StatCard label="VTR cover" value={summary.vtr_tours} />
+                    <StatCard label="Đối thủ" value={summary.competitor_tours} />
+                  </div>
+                  {summary.avg_price && (
+                    <p className="text-xs text-gray-500 mt-2">
+                      Giá trung bình tour cùng location: <strong className="text-gray-800">{fmtVND(summary.avg_price)}</strong>
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Tour table */}
+              {tours && tours.length > 0 ? (
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-700 mb-2">Tour gắn lễ ({tours.length})</h3>
+                  <div className="overflow-x-auto -mx-4 px-4 border rounded-lg">
+                    <table className="w-full text-xs min-w-[800px]">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-2 py-1.5 text-left whitespace-nowrap">Công ty</th>
+                          <th className="px-2 py-1.5 text-left">Tên tour</th>
+                          <th className="px-2 py-1.5 text-right whitespace-nowrap">Giá</th>
+                          <th className="px-2 py-1.5 text-right whitespace-nowrap">Ngày</th>
+                          <th className="px-2 py-1.5 text-right whitespace-nowrap">Cách lễ</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tours.map((t: FestivalTourLite) => (
+                          <tr key={t.id} className="border-t hover:bg-gray-50">
+                            <td className="px-2 py-1.5 whitespace-nowrap">
+                              <span className={cn(
+                                "px-1 py-0.5 rounded text-[10px] font-medium",
+                                t.cong_ty.toLowerCase().includes("vietravel") ? "bg-primary-100 text-primary-800" : "bg-gray-100 text-gray-700",
+                              )}>
+                                {t.cong_ty}
+                              </span>
+                            </td>
+                            <td className="px-2 py-1.5 max-w-[400px] truncate" title={t.ten_tour}>
+                              {t.ten_tour}
+                            </td>
+                            <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap">{fmtVND(t.gia)}</td>
+                            <td className="px-2 py-1.5 text-right text-gray-500 whitespace-nowrap">{t.so_ngay ? `${t.so_ngay}N` : "—"}</td>
+                            <td className="px-2 py-1.5 text-right text-gray-600 whitespace-nowrap">
+                              {t.festival_distance_days === 0 ? "Trùng" :
+                                t.festival_distance_days === null ? "—" :
+                                t.festival_distance_days > 0 ? `${t.festival_distance_days}d trước` :
+                                `${-t.festival_distance_days}d sau`}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-lg border bg-amber-50 border-amber-200 p-4 text-center">
+                  <p className="text-sm text-amber-900 font-medium mb-1">Chưa có tour nào gắn lễ này</p>
+                  <p className="text-xs text-amber-700">
+                    Vào <strong>Quy tắc phân loại → Quy tắc Lễ hội</strong> để map lễ này với thị trường/tuyến tour cụ thể,
+                    sau đó bấm <strong>Re-tag tour</strong>.
+                  </p>
+                </div>
+              )}
             </div>
-          )}
-          {tours && tours.length === 0 && (
-            <p className="text-center text-gray-500 text-sm py-8">Chưa có tour nào gắn lễ này (cùng location).</p>
           )}
         </div>
       </div>
