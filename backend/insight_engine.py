@@ -198,25 +198,37 @@ def _compute_home_brief(db: Session) -> dict:
         "flagged_tours": daily.flagged_tours,
     }
     kpis_source = "snapshot"
+    # CRITICAL: KHÔNG block đợi compare_cache build (~40s) khi cache cold.
+    # Lần đầu login sau restart: dùng snapshot (precomputed daily — accurate enough).
+    # Khi prewarm xong (background ~40s sau startup) → cache hot → live compute.
+    # → User experience: login instant với snapshot data, không phải đợi 40s.
     try:
-        from compare_cache import get_compare_context
-        from compare_engine import summarize_context
+        from compare_cache import _cache as _compare_in_mem
 
-        ctx = get_compare_context(db, [], "", "")
-        live = summarize_context(ctx.tours, ctx.segments)
-        kpis.update({
-            "total_tours": live["total_tours"],
-            "vtr_tours": live["vtr_count"],
-            "segment_count": live["segment_count"],
-            "cheaper_segments": live["cheaper"],
-            "expensive_segments": live["expensive"],
-            "avg_gap_pct": live["avg_gap_pct"],
-            "freq_leading": live["freq_leading"],
-            "freq_lagging": live["freq_lagging"],
-        })
-        kpis_source = "live"
-    except Exception:
-        pass  # lỗi build context → giữ KPI snapshot làm fallback
+        cache_is_warm = bool(_compare_in_mem)
+    except Exception:  # noqa: BLE001
+        cache_is_warm = False
+
+    if cache_is_warm:
+        try:
+            from compare_cache import get_compare_context
+            from compare_engine import summarize_context
+
+            ctx = get_compare_context(db, [], "", "")
+            live = summarize_context(ctx.tours, ctx.segments)
+            kpis.update({
+                "total_tours": live["total_tours"],
+                "vtr_tours": live["vtr_count"],
+                "segment_count": live["segment_count"],
+                "cheaper_segments": live["cheaper"],
+                "expensive_segments": live["expensive"],
+                "avg_gap_pct": live["avg_gap_pct"],
+                "freq_leading": live["freq_leading"],
+                "freq_lagging": live["freq_lagging"],
+            })
+            kpis_source = "live"
+        except Exception:  # noqa: BLE001
+            pass  # lỗi build context → giữ KPI snapshot làm fallback
 
     from snapshot_service import delta_vs_previous, get_trend
     return {
