@@ -161,6 +161,22 @@ def compare_summary(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    # Redis cache TTL 5 phut. Key = filter params + DB fingerprint (auto invalidate
+    # khi data thay doi). summarize_context iterates 7568 tours + 65 segments =
+    # 6-8s compute. Cache hit < 50ms.
+    from redis_cache import make_key, redis_get, redis_set
+    from compare_cache import _db_fingerprint
+
+    fp = _db_fingerprint(db)
+    cache_key = make_key(
+        "compare.summary",
+        thi_truong=sorted(thi_truong), tuyen_tour=tuyen_tour, diem_kh=diem_kh,
+        fp_count=fp[0], fp_updated=fp[1],
+    )
+    cached = redis_get(cache_key)
+    if cached is not None:
+        return CompareSummary(**cached)
+
     ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh)
     from compare_engine import summarize_context
 
@@ -168,7 +184,7 @@ def compare_summary(
     vtr_count = k["vtr_count"]
     vtr_freq = k["vtr_freq_monthly"]
 
-    return CompareSummary(
+    result = CompareSummary(
         company=settings.company_name,
         total_vietravel_tours=vtr_count,
         vietravel_tab_tours=vtr_count,
@@ -185,6 +201,11 @@ def compare_summary(
         freq_lagging_segments=k["freq_lagging"],
         methodology=METHODOLOGY,
     )
+    try:
+        redis_set(cache_key, result.model_dump(), ttl=300)
+    except Exception:  # noqa: BLE001
+        pass
+    return result
 
 
 @router.get("/segments")
