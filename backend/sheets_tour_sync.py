@@ -941,6 +941,25 @@ def _merge_sheet_source_to_db_locked(
             logger.warning("recompute phan_khuc after %s sync failed: %s", nguon, e)
             phan_khuc_stats = {"error": str(e)}
 
+    # SAFETY NET (identical to merge_sheet_source_to_db) — Vietravel scrape sync
+    # cũng cần fill phan_khuc cho tour bị clear nhưng recompute_segments_for_sync
+    # bỏ sót (do baseline route thay đổi hoặc partial fail). Trước đây thiếu safety
+    # net ở path này → user thấy "tour update không có phân khúc" sau Vietravel sync.
+    if recompute_segments:
+        try:
+            from pricing_segments import recompute_missing_phan_khuc
+
+            missing_filled = recompute_missing_phan_khuc(db, cancel_check, _beat)
+            if missing_filled:
+                logger.info("recompute_missing_phan_khuc safety net: filled %d tours after %s scrape sync", missing_filled, nguon)
+                if phan_khuc_stats is None:
+                    phan_khuc_stats = {}
+                phan_khuc_stats["missing_filled"] = missing_filled
+        except JobCancelled:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.warning("recompute_missing_phan_khuc safety net failed after %s scrape sync: %s", nguon, e)
+
     logger.info(
         "Sheet sync %s: inserted=%s updated=%s unchanged=%s skipped=%s deleted=%s synced=%s "
         "route_reclassified=%s route_preserved=%s",
