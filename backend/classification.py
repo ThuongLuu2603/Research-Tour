@@ -1469,6 +1469,7 @@ def _apply_all_rules_to_tours_locked(
         except TypeError:
             progress_cb(n, total_n, msg)
 
+    affected_tour_ids: list[int] = []
     for batch in _iter_canonical_tour_batches(
         db,
         incremental=incremental,
@@ -1477,17 +1478,23 @@ def _apply_all_rules_to_tours_locked(
         for i, t in enumerate(batch):
             derived_dirty = False
             mk, rt, from_rule, rule_id = matcher.resolve(t.ten_tour or "", t.lich_trinh or "")
-            m_delta, r_delta = _apply_rule_result_to_tour(
-                t,
-                mk,
-                rt,
-                from_rule,
-                rule_id,
-                update_derived=False,
-            )
-            market_n += m_delta
-            route_n += r_delta
-            derived_dirty = bool(m_delta or r_delta)
+            # STICKY UNMATCH: tour KHÔNG match rule → KHÔNG wipe TT/Tuyến cũ.
+            # Trước đây _apply_rule_result_to_tour wipe về "" gây mất data + phân khúc lệch.
+            # Giờ chỉ áp dụng khi from_rule=True (có match thực sự).
+            if from_rule:
+                m_delta, r_delta = _apply_rule_result_to_tour(
+                    t,
+                    mk,
+                    rt,
+                    from_rule,
+                    rule_id,
+                    update_derived=False,
+                )
+                market_n += m_delta
+                route_n += r_delta
+                derived_dirty = bool(m_delta or r_delta)
+                if m_delta or r_delta:
+                    affected_tour_ids.append(t.id)
 
             fixed_link = normalize_tour_link(t.link_url)
             if fixed_link != (t.link_url or ""):
@@ -1566,6 +1573,12 @@ def _apply_all_rules_to_tours_locked(
         refresh_segment_mv()
     except Exception:
         pass
+    # Invalidate route_avg cache vì TT/Tuyến vừa thay đổi → bucket key đổi.
+    try:
+        from pricing_segments import invalidate_route_avg_cache
+        invalidate_route_avg_cache()
+    except Exception:  # noqa: BLE001
+        pass
     if recompute_phan_khuc:
         try:
             from pricing_segments import recompute_all_phan_khuc
@@ -1575,13 +1588,23 @@ def _apply_all_rules_to_tours_locked(
             logger.warning("recompute phan_khuc after rules apply failed: %s", e)
             result["phan_khuc"] = {"error": str(e)}
     else:
-        result["phan_khuc"] = {"skipped": True}
+        # Mặc định: TÍNH LẠI phân khúc cho tour vừa đổi TT/Tuyến (affected_tour_ids)
+        # + fill tour còn rỗng. Trước đây chỉ fill rỗng → tour có phân khúc cũ giữ
+        # mismatch với TT mới sau apply rules.
         try:
-            from pricing_segments import recompute_missing_phan_khuc
-
+            from pricing_segments import (
+                recompute_missing_phan_khuc,
+                recompute_phan_khuc_for_tour_ids,
+            )
+            if affected_tour_ids:
+                result["phan_khuc_affected"] = recompute_phan_khuc_for_tour_ids(
+                    db, affected_tour_ids
+                )
             result["phan_khuc_filled"] = recompute_missing_phan_khuc(db)
+            result["phan_khuc"] = {"affected_only": True, "count": len(affected_tour_ids)}
         except Exception as e:
-            logger.warning("recompute missing phan_khuc failed: %s", e)
+            logger.warning("recompute phan_khuc affected after rules apply failed: %s", e)
+            result["phan_khuc"] = {"error": str(e)}
     result["message"] = (
         f"Đã quét {processed}/{total} tour"
         f"{' (chỉ tour mới/cần cập nhật)' if incremental else ''} — "
@@ -1675,6 +1698,12 @@ def _apply_classification_rules_to_tours_locked(
 
         invalidate_compare_cache()
     except Exception:
+        pass
+    # Cache route_avg phụ thuộc TT/Tuyến → invalidate khi rule áp dụng.
+    try:
+        from pricing_segments import invalidate_route_avg_cache
+        invalidate_route_avg_cache()
+    except Exception:  # noqa: BLE001
         pass
     return {"market_updated": market_n, "route_updated": route_n, "links_repaired": link_n, "tours_scanned": processed}
 

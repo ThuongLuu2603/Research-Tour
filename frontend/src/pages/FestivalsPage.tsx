@@ -870,7 +870,9 @@ function CoverageGapTab({ onPickFestival }: { onPickFestival: (slug: string) => 
             <tr>
               <th className="px-3 py-2 text-left">Lễ hội</th>
               <th className="px-3 py-2 text-left">Ngày</th>
-              <th className="px-3 py-2 text-left">Vùng</th>
+              <th className="px-3 py-2 text-left" title="Điểm tổ chức của lễ hội — dùng làm khóa khớp với Tuyến tour qua mapping rule">
+                Điểm tổ chức
+              </th>
               <th className="px-3 py-2 text-right">VTR (tagged / implied)</th>
               <th className="px-3 py-2 text-right">Đối thủ (tagged / implied)</th>
               <th className="px-3 py-2 text-left">Top đối thủ</th>
@@ -905,18 +907,26 @@ function CoverageGapTab({ onPickFestival }: { onPickFestival: (slug: string) => 
                     <button type="button" className="text-primary-600 hover:underline text-left" onClick={() => onPickFestival(row.slug)}>
                       {row.name}
                     </button>
-                    {locationText && (
-                      <p className="text-[10px] text-gray-500 mt-0.5 truncate max-w-[200px]" title={locationText}>
-                        <MapPin size={9} className="inline mr-0.5" />{locationText}
-                      </p>
-                    )}
                   </td>
                   <td className="px-3 py-2 text-xs text-gray-600">{formatDateRange(row.date_start, row.date_end)}</td>
                   <td className="px-3 py-2">
-                    {row.region && (
-                      <span className={cn("text-[10px] px-1.5 py-0.5 rounded border", REGION_COLOR[row.region as FestivalRegion])}>
-                        {regionDisplay(row.region as FestivalRegion, locationText)}
-                      </span>
+                    {/* Điểm tổ chức = location_text scrape được. Đây là khóa khớp với
+                        rule.location_keyword (substring) → suy ra tour có tuyen_tour
+                        cùng khu vực. Vùng/region chỉ là badge phụ. */}
+                    {locationText ? (
+                      <div className="flex flex-col gap-0.5">
+                        <span className="inline-flex items-center gap-1 text-xs text-gray-800 font-medium max-w-[200px]" title={locationText}>
+                          <MapPin size={11} className="text-gray-500 shrink-0" />
+                          <span className="truncate">{locationText}</span>
+                        </span>
+                        {row.region && row.region !== "intl" && (
+                          <span className={cn("text-[9px] px-1.5 py-0.5 rounded border w-fit", REGION_COLOR[row.region as FestivalRegion])}>
+                            Miền {regionDisplay(row.region as FestivalRegion, locationText)}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-[10px] text-gray-400 italic">Chưa có điểm tổ chức</span>
                     )}
                   </td>
                   <td className={cn("px-3 py-2 text-right font-mono text-xs", row.vtr_tours === 0 && "text-red-600 font-bold")}>
