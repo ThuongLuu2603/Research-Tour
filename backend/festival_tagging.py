@@ -412,7 +412,9 @@ def get_coverage_gap(db, limit: int = 30) -> list[dict[str, Any]]:
     """
     from redis_cache import make_key, redis_get, redis_set
 
-    cache_key = make_key("festival.coverage_gap", limit=limit)
+    # v2 — bump after Fix A/B/C (has_rule key + expanded matching) so stale
+    # pre-fix cache entries (missing has_rule) are not served.
+    cache_key = make_key("festival.coverage_gap", limit=limit, v=2)
     cached = redis_get(cache_key)
     if cached is not None:
         return cached
@@ -484,26 +486,32 @@ def _compute_coverage_gap(db, limit: int) -> list[dict[str, Any]]:
         .filter(FestivalTourMappingRule.active == True)  # noqa: E712
         .all()
     )
-    # Map: lowered location_keyword → list[rule]
-    rules_by_loc_kw: dict[str, list[Any]] = defaultdict(list)
-    for r in rules:
-        kw = (r.location_keyword or "").strip().lower()
-        if kw:
-            rules_by_loc_kw[kw].append(r)
 
-    # For each festival, pick matching rules (festival.location_text contains kw).
+    # For each festival, pick matching rules. Fix B — match if ANY of:
+    #   • rule.location_keyword (lower) ∈ festival.location_text (lower)   [origin]
+    #   • rule.location_keyword (lower) ∈ festival.name_vi/name_en (lower) [city in name,
+    #     vd "Seoul Food" name chứa "Seoul" → rule location_keyword="Seoul" match]
+    #   • rule.market_keyword (lower) ∈ festival.location_text (lower)     [country/region,
+    #     vd festival location_text="Hàn Quốc" + rule market_keyword="Hàn Quốc"]
     rules_per_festival: dict[str, list[Any]] = {}
     for f in festivals:
         loc_text = (f.location_text or "").lower()
+        name_text = ((f.name_vi or "") + " " + (f.name_en or "")).lower()
         matched: list[Any] = []
         seen_rule_ids: set[int] = set()
-        if loc_text:
-            for kw, rule_list in rules_by_loc_kw.items():
-                if kw in loc_text:
-                    for r in rule_list:
-                        if r.id not in seen_rule_ids:
-                            matched.append(r)
-                            seen_rule_ids.add(r.id)
+        for r in rules:
+            if r.id in seen_rule_ids:
+                continue
+            kw = (r.location_keyword or "").strip().lower()
+            mk = (r.market_keyword or "").strip().lower()
+            hit = False
+            if kw and (kw in loc_text or kw in name_text):
+                hit = True
+            elif mk and mk in loc_text:
+                hit = True
+            if hit:
+                matched.append(r)
+                seen_rule_ids.add(r.id)
         rules_per_festival[f.slug] = matched
 
     # ── Block 3: prefetch implied tour candidates ──────────────────────────
@@ -633,6 +641,7 @@ def _compute_coverage_gap(db, limit: int) -> list[dict[str, Any]]:
             "date_end": f.date_end.isoformat(),
             "region": f.region,
             "location": f.location_text or "",
+            "location_text": f.location_text or "",
             "vtr_tours": vtr_total,
             "competitor_tours": comp_total,
             "vtr_tours_tagged": vtr_tagged,
@@ -642,7 +651,11 @@ def _compute_coverage_gap(db, limit: int) -> list[dict[str, Any]]:
             "top_competitors": dict(sorted(merged_competitors.items(), key=lambda kv: -kv[1])[:5]),
             "gap_score": comp_total - vtr_total * 1.5,
             "mapping_rule_ids": [str(r.id) for r in matched_rules],
+            # Fix A/C — serialize BOTH keys: has_mapping_rule (back-compat) +
+            # has_rule (what frontend FestivalsPage.tsx actually reads). Mismatch
+            # of these keys was the root cause of "—" + has_rule===undefined.
             "has_mapping_rule": bool(matched_rules),
+            "has_rule": bool(matched_rules),
         })
     out.sort(key=lambda x: -x["gap_score"])
     return out[:limit]
@@ -650,7 +663,6 @@ def _compute_coverage_gap(db, limit: int) -> list[dict[str, Any]]:
 
 def get_coverage_gap_mapping_summary(db) -> dict[str, int]:
     """Issue #5 Phase A — Stats về festival nào có/không có mapping rule."""
-    from collections import defaultdict
     from models import Festival, FestivalTourMappingRule
 
     today = date.today()
@@ -664,17 +676,24 @@ def get_coverage_gap_mapping_summary(db) -> dict[str, int]:
         .filter(FestivalTourMappingRule.active == True)  # noqa: E712
         .all()
     )
-    rules_by_kw: dict[str, list[Any]] = defaultdict(list)
-    for r in rules:
-        kw = (r.location_keyword or "").strip().lower()
-        if kw:
-            rules_by_kw[kw].append(r)
+    # Use the SAME expanded matching as _compute_coverage_gap (Fix B) so the
+    # header count ("X/Y festival có mapping rule") agrees with per-row "Có rule".
+    def _festival_has_rule(f) -> bool:
+        loc = (f.location_text or "").lower()
+        name = ((f.name_vi or "") + " " + (f.name_en or "")).lower()
+        for r in rules:
+            kw = (r.location_keyword or "").strip().lower()
+            mk = (r.market_keyword or "").strip().lower()
+            if kw and (kw in loc or kw in name):
+                return True
+            if mk and mk in loc:
+                return True
+        return False
 
     with_rule = 0
     without_rule = 0
     for f in festivals:
-        loc = (f.location_text or "").lower()
-        if loc and any(kw in loc for kw in rules_by_kw):
+        if _festival_has_rule(f):
             with_rule += 1
         else:
             without_rule += 1

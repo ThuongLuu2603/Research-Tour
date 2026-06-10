@@ -273,6 +273,11 @@ class CoverageGapItem(BaseModel):
     competitor_tours_implied: int = 0
     mapping_rule_ids: list[str] = []
     has_mapping_rule: bool = False
+    # Frontend (FestivalsPage.tsx) reads `has_rule`; keep `has_mapping_rule` for
+    # back-compat. Both serialized identically by _compute_coverage_gap.
+    has_rule: bool = False
+    # Frontend reads `location_text ?? location`; expose alias for new clients.
+    location_text: str = ""
     top_competitors: dict[str, int]
     gap_score: float
 

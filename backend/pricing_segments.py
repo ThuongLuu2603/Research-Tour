@@ -57,13 +57,53 @@ def invalidate_route_avg_cache() -> None:
         _route_avg_cache_ts = 0.0
 
 
+def _build_market_scoped_route_avg(db: Session, thi_truong: str) -> dict[str, float]:
+    """Build route_avg CHỈ cho 1 thị trường — nhanh hơn full scan rất nhiều.
+
+    Chính xác cho bucket của tour vì bucket_key = market | route | departure;
+    mọi tour cùng bucket đều cùng market → filter market không làm sai giá TB.
+    7000 tour → vài trăm tour cùng market → sub-second thay vì 20-30s.
+    """
+    from sqlalchemy.orm import load_only
+    from data_sources import DB_CANONICAL_NGUON
+    _COLS = (Tour.id, Tour.thi_truong, Tour.tuyen_tour, Tour.diem_kh,
+             Tour.gia, Tour.thoi_gian, Tour.so_ngay, Tour.lich_kh, Tour.nguon)
+    candidates = (
+        db.query(Tour)
+        .options(load_only(*_COLS))
+        .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
+        .filter(Tour.gia != None, Tour.gia >= MIN_VALID_PRICE)  # noqa: E711
+        .filter(Tour.thi_truong == (thi_truong or ""))
+        .all()
+    )
+    return build_route_market_avg_price_day(candidates)
+
+
 def recompute_phan_khuc_for_single_tour_sync(db: Session, tour: Tour) -> str:
-    """Tính lại phân khúc cho 1 tour ĐỒNG BỘ — dùng cache route_avg để nhanh.
-    Trả về label mới (đã commit vào DB). Sub-second trên cache hit.
+    """Tính lại phân khúc cho 1 tour ĐỒNG BỘ — KHÔNG bao giờ full scan 7000 tour.
+
+    Chiến lược:
+      1. Cache route_avg toàn DB còn warm (TTL 60s) → dùng ngay (instant).
+      2. Cache cold → build route_avg CHỈ cho thị trường của tour (market-scoped,
+         sub-second, chính xác cho bucket này). KHÔNG full scan → tránh block 20-30s.
     Skip nếu tour là Vietravel (phân khúc VTR = Dòng tour, không tính lại)."""
     if (tour.nguon or "") == "Vietravel":
         return tour.phan_khuc or ""
-    route_avg = get_cached_route_avg(db)
+
+    # Fast path: full cache còn warm → dùng luôn (rẻ nhất).
+    now = time.time()
+    with _route_avg_lock:
+        warm = (
+            _route_avg_cache
+            if (_route_avg_cache is not None and (now - _route_avg_cache_ts) < _ROUTE_AVG_TTL)
+            else None
+        )
+    if warm is not None:
+        route_avg = warm
+    else:
+        # Cold: market-scoped build — nhanh, chính xác, KHÔNG full scan.
+        route_avg = _build_market_scoped_route_avg(db, tour.thi_truong or "")
+
     label = phan_khuc_relative_for_tour(tour, route_avg)
     if tour.phan_khuc != label:
         tour.phan_khuc = label[:64]

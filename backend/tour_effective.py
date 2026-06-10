@@ -11,6 +11,22 @@ OVERRIDE_FIELDS = frozenset({
     "cong_ty", "thi_truong", "tuyen_tour", "diem_kh", "thoi_gian", "analyst_note", "flagged",
 })
 
+# Các field text mà override="" KHÔNG được phép wipe giá trị canonical khi hiển thị.
+# (analyst_note/flagged được phép rỗng/false — đó là ý người dùng.)
+_NON_WIPE_OVERRIDE_FIELDS = frozenset({
+    "cong_ty", "thi_truong", "tuyen_tour", "diem_kh", "thoi_gian",
+})
+
+
+def _is_blank_override(field: str, value: Any) -> bool:
+    """Override rỗng cho field text → coi như KHÔNG override (giữ canonical).
+
+    Đây là GỐC bug diem_kh/thoi_gian bị '' khi tour không match quy tắc: form stale
+    gửi chuỗi rỗng → lưu vào override → merge hiển thị '' đè lên giá trị DB đúng."""
+    if field not in _NON_WIPE_OVERRIDE_FIELDS:
+        return False
+    return value is None or (isinstance(value, str) and not value.strip())
+
 TOUR_EXPORT_FIELDS = (
     "id", "external_id", "cong_ty", "thi_truong", "tuyen_tour", "ten_tour",
     "lich_trinh", "diem_kh", "thoi_gian", "gia", "gia_raw", "lich_kh",
@@ -26,14 +42,14 @@ class EffectiveTour:
     has_override: bool
 
     def get(self, field: str, default: Any = "") -> Any:
-        if field in self.overrides:
+        if field in self.overrides and not _is_blank_override(field, self.overrides[field]):
             return self.overrides[field]
         return getattr(self.tour, field, default)
 
     def to_dict(self) -> dict[str, Any]:
         out = {f: getattr(self.tour, f, None) for f in TOUR_EXPORT_FIELDS if hasattr(self.tour, f)}
         for k, v in self.overrides.items():
-            if k in OVERRIDE_FIELDS:
+            if k in OVERRIDE_FIELDS and not _is_blank_override(k, v):
                 out[k] = v
         # Override thời gian → tính lại số ngày để hiển thị/giá-ngày khớp trong workspace.
         if "thoi_gian" in self.overrides:
@@ -66,9 +82,22 @@ def parse_override_json(raw: str | None) -> dict[str, Any]:
 
 def merge_tour(canonical: Tour, override: TourOverride | None) -> EffectiveTour:
     overrides = parse_override_json(override.overrides_json if override else None)
-    filtered = {k: v for k, v in overrides.items() if k in OVERRIDE_FIELDS}
+    # Loại bỏ override rỗng cho field text → giữ canonical, tự "heal" row đã hỏng từ trước.
+    filtered = {
+        k: v for k, v in overrides.items()
+        if k in OVERRIDE_FIELDS and not _is_blank_override(k, v)
+    }
     return EffectiveTour(tour=canonical, overrides=filtered, has_override=bool(filtered))
 
 
 def build_override_patch(patch: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in patch.items() if k in OVERRIDE_FIELDS and v is not None}
+    # STICKY: bỏ None VÀ chuỗi rỗng cho field text (diem_kh/thoi_gian/...) → không bao
+    # giờ ghi override="" wipe giá trị canonical. analyst_note/flagged vẫn cho rỗng.
+    out: dict[str, Any] = {}
+    for k, v in patch.items():
+        if k not in OVERRIDE_FIELDS or v is None:
+            continue
+        if _is_blank_override(k, v):
+            continue
+        out[k] = v
+    return out
