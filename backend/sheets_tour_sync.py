@@ -601,6 +601,13 @@ def _merge_dataframe_to_db_locked(
             if matched:
                 fields["thi_truong"] = mk
                 fields["tuyen_tour"] = rt
+            elif nguon in ("Main", "Vietravel"):
+                # RULE LÀ NGUỒN CHÂN LÝ: rule không match → KHÔNG lấy classification
+                # từ cột Google Sheet (tránh data sai/cũ trong sheet đè lên). Để trống
+                # → tour vào panel "Chưa khớp" để admin tạo rule. Tránh case tour
+                # "Trung Quốc Tân Cương" bị gán nhầm "Châu Mỹ / Bờ Tây Mỹ" từ cột sheet.
+                fields["thi_truong"] = ""
+                fields["tuyen_tour"] = ""
         elif not is_new and tour is not None and not needs_classify:
             fields = {
                 **fields,
@@ -865,6 +872,13 @@ def _merge_sheet_source_to_db_locked(
             if matched:
                 fields["thi_truong"] = mk
                 fields["tuyen_tour"] = rt
+            elif nguon in ("Main", "Vietravel"):
+                # RULE LÀ NGUỒN CHÂN LÝ: rule không match → KHÔNG lấy classification
+                # từ cột Google Sheet (tránh data sai/cũ trong sheet đè lên). Để trống
+                # → tour vào panel "Chưa khớp" để admin tạo rule. Tránh case tour
+                # "Trung Quốc Tân Cương" bị gán nhầm "Châu Mỹ / Bờ Tây Mỹ" từ cột sheet.
+                fields["thi_truong"] = ""
+                fields["tuyen_tour"] = ""
         elif not is_new and tour is not None and not needs_classify:
             fields = {
                 **fields,

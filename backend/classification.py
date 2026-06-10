@@ -1478,23 +1478,25 @@ def _apply_all_rules_to_tours_locked(
         for i, t in enumerate(batch):
             derived_dirty = False
             mk, rt, from_rule, rule_id = matcher.resolve(t.ten_tour or "", t.lich_trinh or "")
-            # STICKY UNMATCH: tour KHÔNG match rule → KHÔNG wipe TT/Tuyến cũ.
-            # Trước đây _apply_rule_result_to_tour wipe về "" gây mất data + phân khúc lệch.
-            # Giờ chỉ áp dụng khi from_rule=True (có match thực sự).
-            if from_rule:
-                m_delta, r_delta = _apply_rule_result_to_tour(
-                    t,
-                    mk,
-                    rt,
-                    from_rule,
-                    rule_id,
-                    update_derived=False,
-                )
-                market_n += m_delta
-                route_n += r_delta
-                derived_dirty = bool(m_delta or r_delta)
-                if m_delta or r_delta:
-                    affected_tour_ids.append(t.id)
+            # RULE LÀ NGUỒN CHÂN LÝ cho Thị trường/Tuyến:
+            #   - match  → set theo rule
+            #   - KHÔNG match → để TRỐNG (tour vào panel "Chưa khớp" để admin tạo rule).
+            # _apply_rule_result_to_tour TỰ bảo vệ manual_locked (admin set tay KHÔNG bị
+            # đụng → return 0,0). Còn diem_kh/thoi_gian/cong_ty vẫn STICKY (các block
+            # guarded bên dưới — chỉ ghi khi resolve ra giá trị mới, KHÔNG wipe).
+            m_delta, r_delta = _apply_rule_result_to_tour(
+                t,
+                mk,
+                rt,
+                from_rule,
+                rule_id,
+                update_derived=False,
+            )
+            market_n += m_delta
+            route_n += r_delta
+            derived_dirty = bool(m_delta or r_delta)
+            if m_delta or r_delta:
+                affected_tour_ids.append(t.id)
 
             fixed_link = normalize_tour_link(t.link_url)
             if fixed_link != (t.link_url or ""):
