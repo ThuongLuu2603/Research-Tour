@@ -545,16 +545,11 @@ export default function ResearchGrid() {
   const mutation = useMutation({
     mutationFn: ({ id, patch }: { id: string; patch: Partial<Tour> }) =>
       patchWorkspaceTour(workspaceId!, id, patch),
-    onSuccess: (_data, variables) => {
+    onSuccess: () => {
+      // Backend đã recompute phân khúc ĐỒNG BỘ trong PATCH response (cache route_avg
+      // 60s → sub-second). Chỉ cần 1 invalidate, KHÔNG cần setTimeout 2s race như trước.
       qc.invalidateQueries({ queryKey: ["workspace-tours"] });
       setToast("Cập nhật thành công");
-      // Phân khúc recompute background ~1-2s sau commit. Refetch để UI show value mới.
-      const touchedClassFields = ["thi_truong", "tuyen_tour", "thoi_gian"].some((k) => k in variables.patch);
-      if (touchedClassFields) {
-        setTimeout(() => {
-          qc.invalidateQueries({ queryKey: ["workspace-tours"] });
-        }, 2000);
-      }
     },
     onError: (e: { response?: { data?: { detail?: string } } }) => {
       setToast(e.response?.data?.detail || "Lỗi lưu tour");

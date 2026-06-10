@@ -1,6 +1,8 @@
 """Phân khúc giá theo TB/ngày tour so với TB/ngày TT trên cùng Thị trường + Tuyến + Điểm KH."""
 from __future__ import annotations
 
+import threading
+import time
 from collections import defaultdict
 
 from sqlalchemy import bindparam, update
@@ -11,6 +13,61 @@ from models import Tour
 # Ghi phân khúc theo LÔ NHỎ để tránh 1 transaction khổng lồ bị CockroachDB hủy
 # (SerializationFailure/ABORT_SPAN). Mỗi lô là 1 transaction riêng + retry lỗi tạm thời.
 _PHAN_KHUC_BATCH = 300
+
+# Cache route_avg trong RAM 60s. Tránh build lại cho mỗi PATCH edit tour
+# (build ~300-500ms, scan 7000+ tour). Invalidate khi sync/scrape lớn.
+_ROUTE_AVG_TTL = 60.0
+_route_avg_cache: dict[str, float] | None = None
+_route_avg_cache_ts: float = 0.0
+_route_avg_lock = threading.Lock()
+
+
+def get_cached_route_avg(db: Session) -> dict[str, float]:
+    """Lấy route_avg từ RAM cache (TTL 60s) hoặc build lại."""
+    global _route_avg_cache, _route_avg_cache_ts
+    now = time.time()
+    with _route_avg_lock:
+        if _route_avg_cache is not None and (now - _route_avg_cache_ts) < _ROUTE_AVG_TTL:
+            return _route_avg_cache
+    # Miss → build (ngoài lock để không block reader)
+    from sqlalchemy.orm import load_only
+    from data_sources import DB_CANONICAL_NGUON
+    _PRICE_COLS = (Tour.id, Tour.thi_truong, Tour.tuyen_tour, Tour.diem_kh,
+                   Tour.gia, Tour.thoi_gian, Tour.so_ngay, Tour.lich_kh, Tour.nguon)
+    all_priced = (
+        db.query(Tour)
+        .options(load_only(*_PRICE_COLS))
+        .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
+        .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+        .all()
+    )
+    fresh = build_route_market_avg_price_day(all_priced)
+    with _route_avg_lock:
+        _route_avg_cache = fresh
+        _route_avg_cache_ts = time.time()
+    return fresh
+
+
+def invalidate_route_avg_cache() -> None:
+    """Xoá RAM cache route_avg — gọi sau sync lớn / scrape mới / bulk PATCH."""
+    global _route_avg_cache, _route_avg_cache_ts
+    with _route_avg_lock:
+        _route_avg_cache = None
+        _route_avg_cache_ts = 0.0
+
+
+def recompute_phan_khuc_for_single_tour_sync(db: Session, tour: Tour) -> str:
+    """Tính lại phân khúc cho 1 tour ĐỒNG BỘ — dùng cache route_avg để nhanh.
+    Trả về label mới (đã commit vào DB). Sub-second trên cache hit.
+    Skip nếu tour là Vietravel (phân khúc VTR = Dòng tour, không tính lại)."""
+    if (tour.nguon or "") == "Vietravel":
+        return tour.phan_khuc or ""
+    route_avg = get_cached_route_avg(db)
+    label = phan_khuc_relative_for_tour(tour, route_avg)
+    if tour.phan_khuc != label:
+        tour.phan_khuc = label[:64]
+        db.commit()
+    return tour.phan_khuc or ""
 
 
 def _beat(progress, msg: str) -> None:

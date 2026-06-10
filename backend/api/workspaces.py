@@ -294,13 +294,22 @@ def patch_workspace_tour(
     if data:
         _upsert_override(db, workspace_id, tour_id, user.id, data)
     db.commit()
+    # Recompute phân khúc ĐỒNG BỘ cho 1 tour (cache route_avg 60s → sub-second).
+    # Trước đây dùng background thread + frontend setTimeout 2s — race condition trên
+    # VPS chậm (build route_avg ~3-5s) → UI đọc giá trị "" → hiển thị "—".
+    if wrote_db:
+        try:
+            from pricing_segments import recompute_phan_khuc_for_single_tour_sync
+            recompute_phan_khuc_for_single_tour_sync(db, tour)
+        except Exception as e:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).warning(
+                "Sync phân khúc recompute failed cho tour %d: %s", tour_id, e
+            )
     override = db.query(TourOverride).filter(
         TourOverride.workspace_id == workspace_id, TourOverride.tour_id == tour_id
     ).first()
     result = merge_tour(tour, override).to_dict()
-    # Defer recompute phân khúc sau khi response — KHÔNG block user "Lưu" (full scan ~vài giây).
-    if wrote_db:
-        _recompute_phan_khuc_background([tour_id])
     return result
 
 
@@ -339,8 +348,14 @@ def bulk_patch_workspace_tours(
             wrote_ids.append(tour_id)
         updated += 1
     db.commit()
-    # Defer phân khúc recompute → bulk save trả về ngay; recompute chạy nền.
+    # Bulk: nhiều tour → background OK. Cache route_avg invalidated trước recompute để
+    # đảm bảo các edit khác dùng dữ liệu fresh sau bulk.
     if wrote_ids:
+        try:
+            from pricing_segments import invalidate_route_avg_cache
+            invalidate_route_avg_cache()
+        except Exception:  # noqa: BLE001
+            pass
         _recompute_phan_khuc_background(wrote_ids)
     return {"updated": updated, "workspace_id": workspace_id}
 
