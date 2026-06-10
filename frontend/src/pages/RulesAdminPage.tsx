@@ -67,7 +67,12 @@ export default function RulesAdminPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const isAdmin = user?.role === "admin";
-  const [tab, setTab] = useState<Tab>("classify");
+  const [tab, setTab] = useState<Tab>(() => {
+    // Issue #5: cho phép deep-link từ Festival CoverageGapTab (/rules#festival).
+    const hash = typeof window !== "undefined" ? window.location.hash.replace("#", "") : "";
+    const validTabs: Tab[] = ["classify", "company", "departure", "duration", "schedule", "festival", "compare"];
+    return (validTabs as string[]).includes(hash) ? (hash as Tab) : "classify";
+  });
   const [search, setSearch] = useState("");
   const [syncMsg, setSyncMsg] = useState("");
   const [applying, setApplying] = useState(false);

@@ -266,8 +266,25 @@ class CoverageGapItem(BaseModel):
     location: str = ""
     vtr_tours: int
     competitor_tours: int
+    # Issue #5 Phase A: split tagged vs implied
+    vtr_tours_tagged: int = 0
+    vtr_tours_implied: int = 0
+    competitor_tours_tagged: int = 0
+    competitor_tours_implied: int = 0
+    mapping_rule_ids: list[str] = []
+    has_mapping_rule: bool = False
     top_competitors: dict[str, int]
     gap_score: float
+
+
+class CoverageGapMappingSummary(BaseModel):
+    total_festivals: int
+    festivals_with_rule: int
+    festivals_without_rule: int
+
+
+## MappingSuggestion / BulkMappingRule schemas live in api/festival_mapping.py
+## để gần endpoint hơn (mounted dưới /api/admin/rules/festival-mapping).
 
 
 @router.get("/insights/dashboard-summary")
@@ -294,6 +311,24 @@ def coverage_gap(
     from festival_tagging import get_coverage_gap
 
     return get_coverage_gap(db, limit=limit)
+
+
+@router.get(
+    "/insights/coverage-gap/mapping-summary",
+    response_model=CoverageGapMappingSummary,
+)
+def coverage_gap_mapping_summary(
+    _: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Issue #5 Phase A — How many festivals have/lack a mapping rule."""
+    from festival_tagging import get_coverage_gap_mapping_summary
+
+    return CoverageGapMappingSummary(**get_coverage_gap_mapping_summary(db))
+
+
+## NOTE: auto-suggest và bulk-create endpoints mounted trong api/festival_mapping.py
+## để share /api/admin/rules/festival-mapping/* namespace với CRUD hiện có.
 
 
 @router.post("/insights/retag")

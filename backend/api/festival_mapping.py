@@ -17,6 +17,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/admin/rules/festival-mapping", tags=["festival-mapping"])
 
 
+def _invalidate_festival_caches() -> None:
+    """Issue #5 Phase A — wipe coverage/dashboard Redis caches sau CUD rule."""
+    try:
+        from redis_cache import redis_invalidate_pattern
+
+        redis_invalidate_pattern("ota:festival.coverage_gap:*")
+        redis_invalidate_pattern("ota:festival.dashboard:*")
+    except Exception:  # noqa: BLE001
+        logger.exception("redis_invalidate_pattern festival cache fail")
+
+
 class _IdAsStrMixin:
     """CockroachDB unique_rowid() vượt JS Number.MAX_SAFE — serialize string."""
 
@@ -82,6 +93,7 @@ def create_rule(
     db.add(rule)
     db.commit()
     db.refresh(rule)
+    _invalidate_festival_caches()
     return FestivalMappingOut.from_model(rule)
 
 
@@ -103,6 +115,7 @@ def update_rule(
         setattr(rule, k, v)
     db.commit()
     db.refresh(rule)
+    _invalidate_festival_caches()
     return FestivalMappingOut.from_model(rule)
 
 
@@ -121,6 +134,7 @@ def delete_rule(
         raise HTTPException(404, "Rule không tồn tại")
     db.delete(rule)
     db.commit()
+    _invalidate_festival_caches()
     return {"deleted": rule_id}
 
 
@@ -213,9 +227,119 @@ def apply_rules(
         })
         total_tagged += len(tours)
     logger.info("Festival manual mapping: %d tours tagged across %d rules", total_tagged, len(rules))
+    _invalidate_festival_caches()
     return {
         "message": f"Áp dụng {len(rules)} rule, tag {total_tagged} tour",
         "rules_applied": len(rules),
         "tours_tagged": total_tagged,
         "details": rule_stats,
     }
+
+
+# ── Issue #5 Phase A: auto-suggest + bulk-create ───────────────────────────
+
+
+class MappingSuggestion(BaseModel):
+    festival_slug: str
+    festival_name: str
+    location_text: str
+    suggested_location_keyword: str
+    suggested_market: str
+    suggested_route: str
+    confidence: float
+    tour_count: int
+    reasoning: str
+
+
+class MappingSuggestionsOut(BaseModel):
+    suggestions: list[MappingSuggestion]
+
+
+class BulkMappingRuleIn(BaseModel):
+    location_keyword: str
+    market_keyword: str = ""
+    route_keyword: str = ""
+    date_window_days: int = 7
+    active: bool = True
+    note: str = ""
+
+
+class BulkMappingCreateIn(BaseModel):
+    rules: list[BulkMappingRuleIn]
+
+
+class BulkMappingCreateOut(BaseModel):
+    inserted: int
+    ids: list[str]
+    skipped: list[dict[str, str]] = []
+
+
+@router.post("/auto-suggest", response_model=MappingSuggestionsOut)
+def auto_suggest_rules(
+    limit: int = 20,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Suggest mapping rules cho top under-served festivals.
+
+    Logic: lấy festival upcoming chưa có rule match → tìm top tour cluster
+    (market, route) trong tuyen_tour chứa keyword → suggest.
+    """
+    from festival_tagging import suggest_festival_mapping_rules
+
+    if limit < 1:
+        limit = 1
+    if limit > 100:
+        limit = 100
+    items = suggest_festival_mapping_rules(db, limit=limit)
+    return MappingSuggestionsOut(suggestions=[MappingSuggestion(**s) for s in items])
+
+
+@router.post("/bulk-create", response_model=BulkMappingCreateOut)
+def bulk_create_rules(
+    body: BulkMappingCreateIn,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Bulk insert FestivalTourMappingRule. Trả inserted count + ids."""
+    inserted_ids: list[str] = []
+    skipped: list[dict[str, str]] = []
+    for idx, r in enumerate(body.rules):
+        loc_kw = (r.location_keyword or "").strip()
+        if not loc_kw:
+            skipped.append({"index": str(idx), "reason": "location_keyword rỗng"})
+            continue
+        mk = (r.market_keyword or "").strip()
+        rk = (r.route_keyword or "").strip()
+        if not mk and not rk:
+            skipped.append({
+                "index": str(idx),
+                "reason": "phải có ít nhất 1 trong market_keyword/route_keyword",
+            })
+            continue
+        rule = FestivalTourMappingRule(
+            location_keyword=loc_kw,
+            market_keyword=mk,
+            route_keyword=rk,
+            date_window_days=max(0, min(365, int(r.date_window_days or 7))),
+            active=bool(r.active),
+            note=(r.note or "")[:512],
+        )
+        db.add(rule)
+        try:
+            db.flush()
+            inserted_ids.append(str(rule.id))
+        except Exception as e:  # noqa: BLE001
+            db.rollback()
+            skipped.append({"index": str(idx), "reason": f"insert lỗi: {e}"})
+    try:
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        raise HTTPException(500, f"Bulk commit fail: {e}") from e
+    _invalidate_festival_caches()
+    return BulkMappingCreateOut(
+        inserted=len(inserted_ids),
+        ids=inserted_ids,
+        skipped=skipped,
+    )

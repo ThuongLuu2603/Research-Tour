@@ -1636,6 +1636,57 @@ export const applyFestivalMappingRules = async () => {
   };
 };
 
+// ── Festival Mapping Summary & Auto-Suggest (Phase B, Issue #5) ───────────────
+// Backend coord: 3 endpoints (Phase A — backend đang implement):
+//   GET  /festivals/insights/coverage-gap/mapping-summary
+//   GET  /festivals/insights/coverage-gap/mapping-suggestions?limit=N
+//   POST /admin/rules/festival-mapping/bulk
+
+export interface FestivalMappingSummary {
+  total_festivals: number;
+  festivals_with_rule: number;
+  festivals_without_rule: number;
+  rules_total: number;
+  coverage_pct: number;
+}
+
+export const getFestivalMappingSummary = async (): Promise<FestivalMappingSummary> => {
+  const { data } = await api.get("/festivals/insights/coverage-gap/mapping-summary");
+  return data;
+};
+
+export interface FestivalMappingSuggestion {
+  festival_slug: string;
+  festival_name: string;
+  location_text: string;
+  location_keyword: string;       // suggested keyword (prefilled từ location)
+  suggested_market: string;       // dropdown value matched từ DB
+  suggested_route: string;        // dropdown value matched từ DB
+  confidence: number;             // 0..1 (UI: 0..100 %)
+  reason?: string;                // why suggested (debug/tooltip)
+}
+
+export const getFestivalMappingSuggestions = async (limit = 20): Promise<{ suggestions: FestivalMappingSuggestion[] }> => {
+  const { data } = await api.get(`/festivals/insights/coverage-gap/mapping-suggestions?limit=${limit}`);
+  return data;
+};
+
+export const bulkCreateFestivalMappingRules = async (rules: FestivalMappingRuleInput[]) => {
+  const { data } = await api.post("/admin/rules/festival-mapping/bulk", { rules });
+  return data as { inserted: number; ids: string[]; skipped?: number };
+};
+
+// Extended CoverageGapItem fields (Phase A backend will add tagged/implied split + has_rule).
+// Existing CoverageGapItem keeps vtr_tours/competitor_tours for back-compat (= tagged values).
+export interface CoverageGapItemExt extends CoverageGapItem {
+  vtr_tours_tagged?: number;
+  vtr_tours_implied?: number;
+  competitor_tours_tagged?: number;
+  competitor_tours_implied?: number;
+  has_rule?: boolean;
+  location_text?: string;
+}
+
 // ── Compare segment rule (admin) ───────────────────────────────────────────
 export interface CompareSegmentRule {
   vtr_tiers: string[];

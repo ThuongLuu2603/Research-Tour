@@ -144,28 +144,50 @@ function EditableCell({ value, onSave, disabled }: { value: string; onSave: (v: 
 }
 
 /**
- * EditableSelectCell — chỉ cho phép chọn từ dropdown (không free typing) → tránh typo.
- * Có search box bên trong để filter options khi list dài.
+ * EditableSelectCell — chỉ cho phép chọn option có trong list (strict mode).
+ *
+ * Issue #1 — STRICT cascading:
+ *  - `strict=true` (default): Enter chỉ save khi gõ text match EXACT 1 option.
+ *    Nếu user gõ free text không match → hiện warning, KHÔNG close edit mode,
+ *    bắt buộc user phải pick từ dropdown.
+ *  - `onCancel`: callback khi user huỷ edit (escape / nút huỷ).
  */
 function EditableSelectCell({
   value, options, onSave, disabled, placeholder = "— chọn —",
+  strict = true,
+  onCancel,
 }: {
   value: string;
   options: string[];
-  onSave: (v: string) => void;
+  /** Return `false` to KEEP edit mode open (e.g. validation reject). Default = close. */
+  onSave: (v: string) => boolean | void;
   disabled?: boolean;
   placeholder?: string;
+  strict?: boolean;
+  onCancel?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [search, setSearch] = useState("");
+  const [warning, setWarning] = useState("");
+
+  const closeEdit = useCallback(() => {
+    setEditing(false);
+    setWarning("");
+    setSearch("");
+  }, []);
+  const cancelEdit = useCallback(() => {
+    closeEdit();
+    onCancel?.();
+  }, [closeEdit, onCancel]);
+
   if (disabled) {
     return <span className="truncate max-w-[140px]">{value || "—"}</span>;
   }
   if (!editing) {
     return (
-      <span className="group flex items-center gap-1">
+      <span className="group inline-flex items-center gap-1 rounded px-1 py-0.5 -mx-1 -my-0.5">
         <span className="truncate max-w-[140px]">{value || "—"}</span>
-        <button onClick={() => { setSearch(""); setEditing(true); }} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-primary-600">
+        <button onClick={() => { setSearch(""); setWarning(""); setEditing(true); }} className="text-gray-400 hover:text-primary-600 opacity-0 group-hover:opacity-100">
           <Pencil size={12} />
         </button>
       </span>
@@ -174,33 +196,69 @@ function EditableSelectCell({
   const filtered = search.trim()
     ? options.filter((o) => o.toLowerCase().includes(search.toLowerCase()))
     : options;
+
+  /**
+   * STRICT save: chỉ save khi value match EXACT 1 option (case-insensitive).
+   * Nếu không match → show warning, giữ editing mode.
+   */
+  const tryStrictSave = () => {
+    const q = search.trim();
+    if (!q) {
+      setWarning("Vui lòng chọn từ dropdown.");
+      return;
+    }
+    // Exact match (case-insensitive) priority
+    const exact = options.find((o) => o.toLowerCase() === q.toLowerCase());
+    if (exact) {
+      const r = onSave(exact);
+      if (r !== false) closeEdit();
+      return;
+    }
+    // Single filtered match
+    if (filtered.length === 1) {
+      const r = onSave(filtered[0]);
+      if (r !== false) closeEdit();
+      return;
+    }
+    setWarning(
+      strict
+        ? "Giá trị không có trong danh sách. Vui lòng chọn từ dropdown."
+        : "Không có option match. Chọn từ dropdown.",
+    );
+  };
+
   return (
     <span className="relative inline-block">
       <input
         autoFocus
         type="search"
         placeholder={placeholder}
-        className="input text-xs py-0.5 px-1 w-40"
+        className={cn("input text-xs py-0.5 px-1 w-40", warning && "ring-1 ring-red-400 border-red-400")}
         value={search}
-        onChange={(e) => setSearch(e.target.value)}
+        onChange={(e) => { setSearch(e.target.value); if (warning) setWarning(""); }}
         onKeyDown={(e) => {
-          if (e.key === "Escape") setEditing(false);
-          if (e.key === "Enter" && filtered.length === 1) {
-            onSave(filtered[0]);
-            setEditing(false);
+          if (e.key === "Escape") { cancelEdit(); return; }
+          if (e.key === "Enter") {
+            e.preventDefault();
+            tryStrictSave();
           }
         }}
       />
-      <div className="absolute top-full left-0 z-20 mt-0.5 max-h-48 min-w-[180px] overflow-y-auto rounded border border-gray-200 bg-white shadow-lg">
+      <div className="absolute top-full left-0 z-20 mt-0.5 max-h-56 min-w-[200px] overflow-y-auto rounded border border-gray-200 bg-white shadow-lg">
+        {warning && (
+          <div className="px-2 py-1.5 text-[11px] text-red-700 bg-red-50 border-b border-red-100 leading-snug">
+            ⚠ {warning}
+          </div>
+        )}
         {filtered.length === 0 && (
-          <div className="px-2 py-1.5 text-xs text-gray-400">Không có option</div>
+          <div className="px-2 py-1.5 text-xs text-gray-400">Không tìm thấy option phù hợp</div>
         )}
         {filtered.slice(0, 100).map((opt) => (
           <button
             key={opt}
             type="button"
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => { onSave(opt); setEditing(false); }}
+            onClick={() => { const r = onSave(opt); if (r !== false) closeEdit(); }}
             className={cn(
               "block w-full px-2 py-1 text-left text-xs hover:bg-primary-50",
               opt === value && "bg-primary-100 font-semibold"
@@ -212,13 +270,161 @@ function EditableSelectCell({
         <button
           type="button"
           onMouseDown={(e) => e.preventDefault()}
-          onClick={() => setEditing(false)}
+          onClick={cancelEdit}
           className="block w-full border-t border-gray-100 px-2 py-1 text-left text-xs text-red-600 hover:bg-red-50"
         >
           ✕ Huỷ
         </button>
       </div>
     </span>
+  );
+}
+
+/**
+ * EditableMarketRoutePair — popover mini-form 2 dropdown (TT + Tuyến) cho cell
+ * Thị trường. Khi user mở edit, hiển thị inline form chứa cả hai dropdown:
+ *   Row 1: Thị trường (all markets)
+ *   Row 2: Tuyến tour (filtered theo TT đã pick ở row 1)
+ *
+ * Save chỉ enabled khi cả 2 đều có giá trị. Save → 1 PATCH chứa cả
+ * `thi_truong` + `tuyen_tour`. Đổi TT row 1 → reset Tuyến row 2 về empty.
+ * Strict mode (chỉ pick từ option, không free text). Cancel/Escape → revert
+ * cả 2, không lưu gì.
+ */
+function EditableMarketRoutePair({
+  valueMarket,
+  valueRoute,
+  marketOptions,
+  routesByMarket,
+  allRoutes,
+  onSave,
+  disabled,
+}: {
+  valueMarket: string;
+  valueRoute: string;
+  marketOptions: string[];
+  routesByMarket: Record<string, string[]>;
+  allRoutes: string[];
+  onSave: (market: string, route: string) => void;
+  disabled?: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draftMarket, setDraftMarket] = useState(valueMarket || "");
+  const [draftRoute, setDraftRoute] = useState(valueRoute || "");
+
+  const openEdit = () => {
+    setDraftMarket(valueMarket || "");
+    setDraftRoute(valueRoute || "");
+    setEditing(true);
+  };
+  const closeEdit = () => {
+    setEditing(false);
+  };
+
+  const handleSubmit = () => {
+    if (!draftMarket || !draftRoute) return;
+    onSave(draftMarket, draftRoute);
+    closeEdit();
+  };
+
+  if (disabled) {
+    return <span className="truncate max-w-[140px]">{valueMarket || "—"}</span>;
+  }
+
+  if (!editing) {
+    return (
+      <span className="group inline-flex items-center gap-1 rounded px-1 py-0.5 -mx-1 -my-0.5">
+        <span className="truncate max-w-[140px]">{valueMarket || "—"}</span>
+        <button
+          onClick={openEdit}
+          className="text-gray-400 hover:text-primary-600 opacity-0 group-hover:opacity-100"
+          title="Sửa Thị trường & Tuyến tour"
+        >
+          <Pencil size={12} />
+        </button>
+      </span>
+    );
+  }
+
+  // Routes filtered theo draftMarket. Nếu chưa pick market → empty (force pick TT trước).
+  const filteredRoutes = draftMarket
+    ? (routesByMarket[draftMarket] ?? [])
+    : allRoutes;
+  const canSave = !!draftMarket && !!draftRoute;
+  const hintMissing = (draftMarket && !draftRoute) || (!draftMarket && draftRoute);
+
+  return (
+    <div
+      className="relative inline-block"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          closeEdit();
+        }
+      }}
+    >
+      <div className="absolute top-0 left-0 z-30 min-w-[240px] rounded-md border border-gray-200 bg-white shadow-lg p-2 space-y-1.5">
+        <div>
+          <label className="block text-[10px] font-semibold text-gray-500 uppercase mb-0.5">Thị trường</label>
+          <select
+            autoFocus
+            className="input text-xs py-1 w-full"
+            value={draftMarket}
+            onChange={(e) => {
+              const m = e.target.value;
+              setDraftMarket(m);
+              // Đổi TT → reset Tuyến (vì danh sách mới khác hẳn).
+              setDraftRoute("");
+            }}
+          >
+            <option value="">— Chọn thị trường —</option>
+            {marketOptions.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] font-semibold text-gray-500 uppercase mb-0.5">Tuyến tour</label>
+          <select
+            className="input text-xs py-1 w-full"
+            value={draftRoute}
+            onChange={(e) => setDraftRoute(e.target.value)}
+            disabled={!draftMarket}
+          >
+            <option value="">{draftMarket ? "— Chọn tuyến tour —" : "— Chọn thị trường trước —"}</option>
+            {filteredRoutes.map((r) => (
+              <option key={r} value={r}>{r}</option>
+            ))}
+          </select>
+        </div>
+        {hintMissing && (
+          <p className="text-[11px] text-amber-700 leading-snug">
+            Vui lòng chọn cả Thị trường và Tuyến tour
+          </p>
+        )}
+        <div className="flex items-center justify-end gap-1.5 pt-1">
+          <button
+            type="button"
+            onClick={closeEdit}
+            className="text-xs px-2 py-1 rounded border border-gray-200 text-gray-600 hover:bg-gray-50"
+          >
+            Huỷ
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!canSave}
+            className={cn(
+              "text-xs px-2.5 py-1 rounded text-white",
+              canSave
+                ? "bg-emerald-600 hover:bg-emerald-700"
+                : "bg-gray-300 cursor-not-allowed",
+            )}
+          >
+            Lưu
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -793,43 +999,47 @@ export default function ResearchGrid() {
                   <span className="truncate block max-w-[140px]">{tour.cong_ty}</span>
                 </td>
                 <td className="px-3 py-2">
-                  <EditableSelectCell
+                  {/* Luồng 1 — Edit Thị trường: mở popover mini-form 2 dropdown (TT + Tuyến).
+                      Save 1 PATCH chứa cả 2 field. Cancel → revert cả 2. */}
+                  <EditableMarketRoutePair
                     disabled={!canEdit}
-                    value={tour.thi_truong}
-                    options={(opts?.thi_truong ?? []) as string[]}
-                    placeholder="Tìm thị trường…"
-                    onSave={(v) => {
-                      // Issue #3: Đổi TT → tuyến tour cũ có thể không thuộc TT mới
-                      // → clear tuyen_tour để user buộc phải chọn lại.
-                      const currentRoutes = (opts?.routes_by_market?.[v] ?? []) as string[];
-                      const keepRoute = currentRoutes.includes(tour.tuyen_tour);
+                    valueMarket={tour.thi_truong}
+                    valueRoute={tour.tuyen_tour}
+                    marketOptions={(opts?.thi_truong ?? []) as string[]}
+                    routesByMarket={(opts?.routes_by_market ?? {}) as Record<string, string[]>}
+                    allRoutes={(opts?.tuyen_tour ?? []) as string[]}
+                    onSave={(market, route) => {
                       mutation.mutate({
                         id: tour.id,
-                        patch: keepRoute ? { thi_truong: v } : { thi_truong: v, tuyen_tour: "" },
+                        patch: { thi_truong: market, tuyen_tour: route },
                       });
+                      setToast("Đã cập nhật Thị trường và Tuyến tour");
                     }}
                   />
                 </td>
                 <td className="px-3 py-2">
+                  {/* Luồng 2 — Edit Tuyến: dropdown FULL list mọi Tuyến (không filter theo TT).
+                      Save → lookup marketByRoute → bulk PATCH {thi_truong, tuyen_tour}.
+                      Nếu không tìm được TT → toast cảnh báo + chặn save (giữ edit mode). */}
                   <EditableSelectCell
                     disabled={!canEdit}
                     value={tour.tuyen_tour}
-                    options={
-                      // Filter routes theo TT hiện tại của tour (chứ không phải selMarkets).
-                      // Nếu tour chưa có TT → show all routes.
-                      tour.thi_truong
-                        ? ((opts?.routes_by_market?.[tour.thi_truong] ?? []) as string[])
-                        : ((opts?.tuyen_tour ?? []) as string[])
-                    }
+                    options={(opts?.tuyen_tour ?? []) as string[]}
                     placeholder="Tìm tuyến tour…"
+                    strict
                     onSave={(v) => {
-                      // Issue #3: Chọn tuyến tour → auto-fill TT tương ứng (reverse cascade)
                       const inferredMarket = marketByRoute[v];
-                      const patch: Partial<Tour> = { tuyen_tour: v };
-                      if (inferredMarket && inferredMarket !== tour.thi_truong) {
-                        patch.thi_truong = inferredMarket;
+                      if (!inferredMarket) {
+                        setToast(
+                          "Không tìm được thị trường tương ứng. Vui lòng dùng nút sửa Thị trường để chọn cả 2.",
+                        );
+                        return false; // keep edit mode open so user re-picks
                       }
-                      mutation.mutate({ id: tour.id, patch });
+                      mutation.mutate({
+                        id: tour.id,
+                        patch: { thi_truong: inferredMarket, tuyen_tour: v },
+                      });
+                      setToast(`Đã cập nhật Tuyến tour và tự match Thị trường: ${inferredMarket}`);
                     }}
                   />
                 </td>

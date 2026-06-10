@@ -425,9 +425,28 @@ def get_coverage_gap(db, limit: int = 30) -> list[dict[str, Any]]:
 
 
 def _compute_coverage_gap(db, limit: int) -> list[dict[str, Any]]:
+    """Coverage gap v2 — Issue #5 Phase A.
+
+    Counts BOTH:
+      - "tagged" tour: Tour.festival_slug = f.slug (đã chạy festival tagging).
+      - "implied" tour: tour match qua FestivalTourMappingRule
+            (Festival.location_text contains rule.location_keyword
+             AND Tour.thi_truong = rule.market_keyword [nếu có]
+             AND Tour.tuyen_tour ILIKE %rule.route_keyword% [nếu có]
+             AND Tour.lich_kh date overlap festival range — kiểm in-memory).
+
+    Performance:
+      - 1 query festivals (≤ 200).
+      - 1 query FestivalTourMappingRule (≤ ~100). Build lookup by lowered
+        location_keyword.
+      - 1 query tour có festival_slug (existing).
+      - 1 query tour matching ANY rule (market_keyword / route_keyword filter
+        gộp OR). Tránh N+1.
+    """
     from collections import defaultdict
 
-    from models import Festival, Tour
+    from models import Festival, FestivalTourMappingRule, Tour
+    from sqlalchemy import and_, or_, func
     from sqlalchemy.orm import load_only
     from tour_filters import market_filter_clause
 
@@ -442,51 +461,171 @@ def _compute_coverage_gap(db, limit: int) -> list[dict[str, Any]]:
     if not festivals:
         return []
 
-    # 1 query lấy tất cả tour có festival_slug (chỉ cột cần)
+    # ── Block 1: tagged tours (Tour.festival_slug = slug) ───────────────────
     fest_slugs = {f.slug for f in festivals}
-    tour_rows = (
+    tagged_tour_rows = (
         db.query(Tour)
         .options(load_only(
-            Tour.id, Tour.cong_ty, Tour.festival_slug,
+            Tour.id, Tour.cong_ty, Tour.festival_slug, Tour.lich_kh,
             Tour.province_code, Tour.thi_truong, Tour.tuyen_tour,
         ))
         .filter(Tour.festival_slug.in_(fest_slugs))
         .filter(market_filter_clause(Tour))
         .all()
     )
-
-    # Build location matcher cho mỗi festival (vẫn cần per-festival vì location_text khác nhau)
-    # Group tours theo festival_slug trước, rồi filter location in-memory.
-    tours_by_slug: dict[str, list[Tour]] = defaultdict(list)
-    for t in tour_rows:
+    tagged_by_slug: dict[str, list[Tour]] = defaultdict(list)
+    for t in tagged_tour_rows:
         if t.festival_slug:
-            tours_by_slug[t.festival_slug].append(t)
+            tagged_by_slug[t.festival_slug].append(t)
 
+    # ── Block 2: load mapping rules ────────────────────────────────────────
+    rules = (
+        db.query(FestivalTourMappingRule)
+        .filter(FestivalTourMappingRule.active == True)  # noqa: E712
+        .all()
+    )
+    # Map: lowered location_keyword → list[rule]
+    rules_by_loc_kw: dict[str, list[Any]] = defaultdict(list)
+    for r in rules:
+        kw = (r.location_keyword or "").strip().lower()
+        if kw:
+            rules_by_loc_kw[kw].append(r)
+
+    # For each festival, pick matching rules (festival.location_text contains kw).
+    rules_per_festival: dict[str, list[Any]] = {}
+    for f in festivals:
+        loc_text = (f.location_text or "").lower()
+        matched: list[Any] = []
+        seen_rule_ids: set[int] = set()
+        if loc_text:
+            for kw, rule_list in rules_by_loc_kw.items():
+                if kw in loc_text:
+                    for r in rule_list:
+                        if r.id not in seen_rule_ids:
+                            matched.append(r)
+                            seen_rule_ids.add(r.id)
+        rules_per_festival[f.slug] = matched
+
+    # ── Block 3: prefetch implied tour candidates ──────────────────────────
+    # Build single OR filter cho mọi rule có ít nhất 1 trong market/route.
+    # Lưu ý: tour rỗng festival_slug HOẶC khác slug đang xét — sẽ filter cụ thể
+    # khi map về festival. Để giảm load, chỉ kéo tour có lich_kh != "".
+    implied_filters = []
+    for r in rules:
+        cond = []
+        if r.market_keyword and r.market_keyword.strip():
+            cond.append(Tour.thi_truong == r.market_keyword.strip())
+        if r.route_keyword and r.route_keyword.strip():
+            cond.append(func.lower(Tour.tuyen_tour).like(f"%{r.route_keyword.strip().lower()}%"))
+        if cond:
+            implied_filters.append(and_(*cond))
+
+    implied_tour_rows: list[Tour] = []
+    if implied_filters:
+        implied_tour_rows = (
+            db.query(Tour)
+            .options(load_only(
+                Tour.id, Tour.cong_ty, Tour.festival_slug, Tour.lich_kh,
+                Tour.province_code, Tour.thi_truong, Tour.tuyen_tour,
+            ))
+            .filter(or_(*implied_filters))
+            .filter(Tour.lich_kh != "")
+            .filter(market_filter_clause(Tour))
+            .all()
+        )
+
+    # Per-rule matcher (in-memory). Tránh re-iter scan toàn bộ table per festival.
+    def _tour_matches_rule(t: Tour, r: Any) -> bool:
+        mk = (r.market_keyword or "").strip()
+        if mk and (t.thi_truong or "") != mk:
+            return False
+        rk = (r.route_keyword or "").strip()
+        if rk and rk.lower() not in (t.tuyen_tour or "").lower():
+            return False
+        return True
+
+    # ── Block 4: build output ──────────────────────────────────────────────
     out: list[dict[str, Any]] = []
     for f in festivals:
-        tours = tours_by_slug.get(f.slug, [])
-        if not tours:
-            continue
-
-        # Apply location filter in-memory
         loc_filter_fn = _location_match_filter_fn(f)
+
+        # tagged
+        tagged = tagged_by_slug.get(f.slug, [])
         if loc_filter_fn is not None:
-            tours = [t for t in tours if loc_filter_fn(t)]
+            tagged_filt = [t for t in tagged if loc_filter_fn(t)]
+        else:
+            tagged_filt = tagged
 
-        vtr_count = 0
-        comp_count = 0
-        comp_companies: dict[str, int] = defaultdict(int)
-        for t in tours:
-            co = t.cong_ty or ""
-            if "vietravel" in co.lower():
-                vtr_count += 1
-            else:
-                comp_count += 1
-                if co:
-                    comp_companies[co] += 1
+        # implied — chỉ tính nếu có rule match festival này.
+        matched_rules = rules_per_festival.get(f.slug, [])
+        implied_set: dict[int, Tour] = {}
+        if matched_rules and implied_tour_rows:
+            f_start, f_end = f.date_start, f.date_end
+            # parse lich_kh dates lazy/cache per tour id để tránh re-parse.
+            parsed_cache: dict[int, list] = {}
+            for t in implied_tour_rows:
+                if t.id in implied_set:
+                    continue
+                # Bỏ qua nếu đã tagged đúng slug — coi như cả tagged + implied
+                # → tránh đếm 2 lần.
+                if t.festival_slug == f.slug:
+                    continue
+                # rule match?
+                if not any(_tour_matches_rule(t, r) for r in matched_rules):
+                    continue
+                # date overlap with festival range
+                if t.id not in parsed_cache:
+                    parsed_cache[t.id] = _parse_tour_lich_kh(t.lich_kh or "")
+                tour_dates = parsed_cache[t.id]
+                if not tour_dates:
+                    continue
+                # Sử dụng default window (DEFAULT_DISTANCE_THRESHOLD_DAYS); với
+                # rule có date_window_days riêng, sẽ override per-rule. Lấy
+                # window lớn nhất trong matched_rules để inclusive.
+                max_window = max(
+                    (int(getattr(r, "date_window_days", 0) or 0) for r in matched_rules),
+                    default=DEFAULT_DISTANCE_THRESHOLD_DAYS,
+                )
+                if max_window <= 0:
+                    max_window = DEFAULT_DISTANCE_THRESHOLD_DAYS
+                dist = _compute_min_distance(tour_dates, f_start, f_end)
+                if dist is None or abs(dist) > max_window:
+                    continue
+                if loc_filter_fn is not None and not loc_filter_fn(t):
+                    continue
+                implied_set[t.id] = t
 
-        if comp_count == 0 and vtr_count == 0:
+        # Bucket VTR vs competitor cho cả tagged + implied (riêng).
+        def _bucket(rows: list[Tour]) -> tuple[int, int, dict[str, int]]:
+            vtr = 0
+            comp = 0
+            comp_companies: dict[str, int] = defaultdict(int)
+            for t in rows:
+                co = (t.cong_ty or "")
+                if "vietravel" in co.lower():
+                    vtr += 1
+                else:
+                    comp += 1
+                    if co:
+                        comp_companies[co] += 1
+            return vtr, comp, comp_companies
+
+        vtr_tagged, comp_tagged, comp_companies_tagged = _bucket(tagged_filt)
+        implied_rows = list(implied_set.values())
+        vtr_implied, comp_implied, comp_companies_implied = _bucket(implied_rows)
+
+        vtr_total = vtr_tagged + vtr_implied
+        comp_total = comp_tagged + comp_implied
+        if vtr_total == 0 and comp_total == 0:
             continue
+
+        # merge top_competitors
+        merged_competitors: dict[str, int] = defaultdict(int)
+        for k, v in comp_companies_tagged.items():
+            merged_competitors[k] += v
+        for k, v in comp_companies_implied.items():
+            merged_competitors[k] += v
+
         out.append({
             "slug": f.slug,
             "name": f.name_vi,
@@ -494,13 +633,140 @@ def _compute_coverage_gap(db, limit: int) -> list[dict[str, Any]]:
             "date_end": f.date_end.isoformat(),
             "region": f.region,
             "location": f.location_text or "",
-            "vtr_tours": vtr_count,
-            "competitor_tours": comp_count,
-            "top_competitors": dict(sorted(comp_companies.items(), key=lambda kv: -kv[1])[:5]),
-            "gap_score": comp_count - vtr_count * 1.5,
+            "vtr_tours": vtr_total,
+            "competitor_tours": comp_total,
+            "vtr_tours_tagged": vtr_tagged,
+            "vtr_tours_implied": vtr_implied,
+            "competitor_tours_tagged": comp_tagged,
+            "competitor_tours_implied": comp_implied,
+            "top_competitors": dict(sorted(merged_competitors.items(), key=lambda kv: -kv[1])[:5]),
+            "gap_score": comp_total - vtr_total * 1.5,
+            "mapping_rule_ids": [str(r.id) for r in matched_rules],
+            "has_mapping_rule": bool(matched_rules),
         })
     out.sort(key=lambda x: -x["gap_score"])
     return out[:limit]
+
+
+def get_coverage_gap_mapping_summary(db) -> dict[str, int]:
+    """Issue #5 Phase A — Stats về festival nào có/không có mapping rule."""
+    from collections import defaultdict
+    from models import Festival, FestivalTourMappingRule
+
+    today = date.today()
+    festivals = (
+        db.query(Festival)
+        .filter(Festival.date_end >= today)
+        .all()
+    )
+    rules = (
+        db.query(FestivalTourMappingRule)
+        .filter(FestivalTourMappingRule.active == True)  # noqa: E712
+        .all()
+    )
+    rules_by_kw: dict[str, list[Any]] = defaultdict(list)
+    for r in rules:
+        kw = (r.location_keyword or "").strip().lower()
+        if kw:
+            rules_by_kw[kw].append(r)
+
+    with_rule = 0
+    without_rule = 0
+    for f in festivals:
+        loc = (f.location_text or "").lower()
+        if loc and any(kw in loc for kw in rules_by_kw):
+            with_rule += 1
+        else:
+            without_rule += 1
+    return {
+        "total_festivals": len(festivals),
+        "festivals_with_rule": with_rule,
+        "festivals_without_rule": without_rule,
+    }
+
+
+def suggest_festival_mapping_rules(db, limit: int = 20) -> list[dict[str, Any]]:
+    """Issue #5 Phase A — Auto-suggest mapping cho top under-served festivals.
+
+    Logic:
+      1. Lấy festivals upcoming chưa có rule match (location_text không match
+         bất kỳ location_keyword nào).
+      2. Score by "under-served": comp_tagged + comp_implied (đo bằng tour
+         match location keyword festival → có hiện hữu cần map nhưng chưa).
+      3. Suggest top cluster (market, route) của tour ở cùng location.
+    """
+    from collections import defaultdict
+    from models import Festival, FestivalTourMappingRule, Tour
+    from sqlalchemy import func
+    from tour_filters import market_filter_clause
+
+    today = date.today()
+    festivals = (
+        db.query(Festival)
+        .filter(Festival.date_end >= today)
+        .order_by(Festival.date_start.asc())
+        .all()
+    )
+    rules = (
+        db.query(FestivalTourMappingRule)
+        .filter(FestivalTourMappingRule.active == True)  # noqa: E712
+        .all()
+    )
+    existing_kws = {(r.location_keyword or "").strip().lower() for r in rules if r.location_keyword}
+
+    out: list[dict[str, Any]] = []
+    for f in festivals:
+        loc_text = (f.location_text or "").strip()
+        if not loc_text:
+            continue
+        # skip nếu đã có rule match
+        loc_low = loc_text.lower()
+        if any(kw and kw in loc_low for kw in existing_kws):
+            continue
+
+        # Suggested keyword = phần đầu location_text trước dấu phẩy.
+        first_part = loc_text.split(",")[0].strip()
+        if not first_part or len(first_part) < 3:
+            continue
+        # Strip prefix t./tp./p./x./h./q.
+        cleaned = re.sub(r"^(t\.|tp\.|p\.|x\.|h\.|q\.)\s*", "", first_part, flags=re.IGNORECASE).strip()
+        suggested_loc = cleaned or first_part
+
+        # Tour clusters by (market, route) — chỉ tour có tuyen_tour chứa suggested_loc
+        cluster_q = (
+            db.query(Tour.thi_truong, Tour.tuyen_tour, func.count(Tour.id))
+            .filter(market_filter_clause(Tour))
+            .filter(func.lower(Tour.tuyen_tour).like(f"%{suggested_loc.lower()}%"))
+            .filter(Tour.thi_truong != "")
+            .filter(Tour.tuyen_tour != "")
+            .group_by(Tour.thi_truong, Tour.tuyen_tour)
+            .order_by(func.count(Tour.id).desc())
+            .limit(3)
+            .all()
+        )
+        if not cluster_q:
+            continue
+        top_market, top_route, top_count = cluster_q[0]
+        total_in_loc = sum(c for _, _, c in cluster_q)
+        confidence = round(top_count / total_in_loc, 2) if total_in_loc else 0.0
+
+        out.append({
+            "festival_slug": f.slug,
+            "festival_name": f.name_vi,
+            "location_text": loc_text,
+            "suggested_location_keyword": suggested_loc,
+            "suggested_market": top_market or "",
+            "suggested_route": top_route or "",
+            "confidence": confidence,
+            "tour_count": int(top_count),
+            "reasoning": (
+                f"Top cluster {top_count}/{total_in_loc} tour ở \"{suggested_loc}\" → "
+                f"{top_market}/{top_route}."
+            ),
+        })
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _location_match_filter_fn(festival):

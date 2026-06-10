@@ -18,15 +18,20 @@ import {
   getPricingPremium, getDemandForecast, getMarketingCalendar,
   getRegionHeatmap, getLunarPlanner, lunarSeed,
   getFestivalDashboardSummary,
+  getFilterOptions,
+  getFestivalMappingSummary, getFestivalMappingSuggestions, bulkCreateFestivalMappingRules,
+  createFestivalMappingRule,
   Festival, FestivalRegion, FestivalCategory, FestivalFilters,
-  FestivalTourLite, CoverageGapItem,
+  FestivalTourLite, CoverageGapItemExt,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useNavigate } from "react-router-dom";
 import {
   Calendar, List, MapPin, RefreshCw, Loader2, ExternalLink,
   Music, Utensils, Trophy, Sparkles, Building, ChevronLeft, ChevronRight,
   X, AlertTriangle, TrendingUp, TrendingDown, Megaphone, Map as MapIcon, Moon,
   LayoutDashboard, Bell, Target, BadgeCheck,
+  Plus, Check, Wand2,
   LucideIcon,
 } from "lucide-react";
 
@@ -739,14 +744,52 @@ function CalendarView({ festivals, month, onPrev, onNext, onPick }: {
   );
 }
 
-// ── Tab 2: Coverage Gap ──────────────────────────────────────────────────
+// ── Tab 2: Coverage Gap (Issue #5 Phase B redesign) ──────────────────────
+//
+// Major changes vs prev:
+//   1. Header summary chip: X/Y festivals có mapping rule + click → /rules#festival
+//      + button "🔮 Gợi ý mapping" → AutoSuggestModal.
+//   2. Per-row badge "✓ Có rule" / "✗ Chưa rule" — click "Chưa rule" mở inline
+//      MappingCreateModal.
+//   3. Split VTR/Competitor counters thành tagged/implied columns (nếu backend
+//      Phase A trả về extended fields).
+//   4. Sort priority: chưa rule + gap cao → top. Visual hierarchy border-left:
+//        red   = no rule + high gap   (priority cao nhất)
+//        orange= có rule + high gap   (rule quá narrow)
+//        green = fully covered (VTR ≥ competitor)
+//        gray  = default
+//
+// Backend coord notes:
+//   - getFestivalMappingSummary(): GET /festivals/insights/coverage-gap/mapping-summary
+//   - getFestivalMappingSuggestions(): GET /festivals/insights/coverage-gap/mapping-suggestions
+//   - bulkCreateFestivalMappingRules(): POST /admin/rules/festival-mapping/bulk
+//   - CoverageGapItemExt extended fields (vtr_tours_tagged, has_rule…): backend
+//     Phase A đang implement, FE fallback graceful nếu field undefined.
 
 function CoverageGapTab({ onPickFestival }: { onPickFestival: (slug: string) => void }) {
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const [showSuggest, setShowSuggest] = useState(false);
+  const [createModal, setCreateModal] = useState<{
+    festival_slug: string;
+    location_keyword: string;
+    festival_name: string;
+  } | null>(null);
+
   const { data, isLoading, error } = useQuery({
     queryKey: ["festival-coverage-gap"],
     queryFn: () => getCoverageGap(30),
     staleTime: 60 * 60 * 1000,
   });
+
+  // Mapping summary — graceful fallback nếu endpoint backend chưa sẵn sàng.
+  const { data: summary } = useQuery({
+    queryKey: ["festival-mapping-summary"],
+    queryFn: getFestivalMappingSummary,
+    staleTime: 60 * 60 * 1000,
+    retry: false,
+  });
+
   if (isLoading) return <Loading />;
   if (error) return <ErrorBox msg={(error as Error).message} />;
   if (!data || data.length === 0) return (
@@ -754,82 +797,528 @@ function CoverageGapTab({ onPickFestival }: { onPickFestival: (slug: string) => 
       Chưa có dữ liệu. Bấm <strong>Re-tag tour</strong> để map tour với lễ hội trước.
     </EmptyState>
   );
-  // Coverage stats summary
+
+  // Sort priority: no rule + high gap_score → top.
+  // Có rule + low gap → bottom. Stable sort theo gap_score desc trong nhóm.
+  const sorted = [...(data as CoverageGapItemExt[])].sort((a, b) => {
+    const aNoRule = a.has_rule === false ? 1 : 0;
+    const bNoRule = b.has_rule === false ? 1 : 0;
+    if (aNoRule !== bNoRule) return bNoRule - aNoRule;
+    return b.gap_score - a.gap_score;
+  });
+
   const totalGap = data.filter((r) => r.vtr_tours === 0 && r.competitor_tours > 0).length;
   const partialGap = data.filter((r) => r.vtr_tours > 0 && r.vtr_tours < r.competitor_tours).length;
+
   return (
     <div className="space-y-3">
+      {/* Header — Mapping coverage chip + actions */}
+      <div className="card border-primary-100 bg-gradient-to-r from-primary-50/60 to-amber-50/40 p-3 flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2 flex-1 min-w-[240px]">
+          <BadgeCheck size={18} className="text-primary-700 shrink-0" />
+          {summary ? (
+            <button
+              type="button"
+              onClick={() => navigate("/rules#festival")}
+              className="text-left hover:underline"
+              title="Mở Quy tắc phân loại → tab Lễ hội"
+            >
+              <p className="text-sm font-semibold text-primary-900">
+                {summary.festivals_with_rule}/{summary.total_festivals} festival có mapping rule
+                <span className="ml-2 text-xs text-primary-700">({summary.coverage_pct}%)</span>
+              </p>
+              <p className="text-[11px] text-gray-600 mt-0.5">
+                Click để mở Quy tắc phân loại — tab Lễ hội ↗
+              </p>
+            </button>
+          ) : (
+            <p className="text-xs text-gray-600 italic">Đang tải mapping summary…</p>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowSuggest(true)}
+          className="btn-primary text-xs flex items-center gap-1.5"
+        >
+          <Wand2 size={14} /> Gợi ý mapping
+        </button>
+      </div>
+
       {/* Method hint */}
       <div className="card border-amber-100 bg-amber-50/40 p-3 text-xs text-gray-700">
         <p className="flex items-start gap-1.5">
           <AlertTriangle size={14} className="text-amber-600 shrink-0 mt-0.5" />
           <span>
             <strong>Coverage gap</strong> = lễ hội mà đối thủ có tour cover (cùng địa điểm tổ chức) nhưng VTR chưa có/ít.
-            Match filter theo <strong>province_code</strong> hoặc <strong>region</strong> của lễ — nên match thấp khi lễ
-            có địa điểm chưa được map hoặc tour của bạn không có <code className="bg-white px-1 rounded">province_code</code>.
-            Bấm <strong>Re-tag tour</strong> để cập nhật.
+            Cột <strong>Tagged</strong> = tour đã được tag festival qua mapping rule;
+            cột <strong>Implied</strong> = tour cùng location nhưng chưa có rule cụ thể.
+            Festival <span className="text-red-700 font-semibold">Chưa rule</span> + gap cao → ưu tiên tạo mapping ngay.
           </span>
         </p>
       </div>
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard label="Tổng lễ phân tích" value={data.length} />
         <StatCard label="Hoàn toàn miss (VTR=0)" value={totalGap} accent="primary" />
         <StatCard label="Cover thiếu" value={partialGap} />
         <StatCard label="Lễ VTR đủ cover" value={data.length - totalGap - partialGap} />
       </div>
+
       <div className="card overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead className="bg-gray-50 sticky top-0">
-          <tr>
-            <th className="px-3 py-2 text-left">Lễ hội</th>
-            <th className="px-3 py-2 text-left">Ngày</th>
-            <th className="px-3 py-2 text-left">Vùng</th>
-            <th className="px-3 py-2 text-right">VTR</th>
-            <th className="px-3 py-2 text-right">Đối thủ</th>
-            <th className="px-3 py-2 text-left">Top đối thủ</th>
-            <th className="px-3 py-2 text-right">Gap</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((row: CoverageGapItem) => (
-            <tr key={row.slug} className="border-t hover:bg-gray-50">
-              <td className="px-3 py-2">
-                <button type="button" className="text-primary-600 hover:underline text-left" onClick={() => onPickFestival(row.slug)}>
-                  {row.name}
-                </button>
-              </td>
-              <td className="px-3 py-2 text-xs text-gray-600">{formatDateRange(row.date_start, row.date_end)}</td>
-              <td className="px-3 py-2">
-                {row.region && (
-                  <span className={cn("text-[10px] px-1.5 py-0.5 rounded border", REGION_COLOR[row.region as FestivalRegion])}>
-                    {regionDisplay(row.region as FestivalRegion, (row as { location?: string }).location)}
-                  </span>
-                )}
-              </td>
-              <td className={cn("px-3 py-2 text-right font-mono", row.vtr_tours === 0 && "text-red-600 font-bold")}>
-                {row.vtr_tours}
-              </td>
-              <td className="px-3 py-2 text-right font-mono">{row.competitor_tours}</td>
-              <td className="px-3 py-2 text-xs text-gray-700">
-                {Object.entries(row.top_competitors).slice(0, 3).map(([co, cnt]) => (
-                  <span key={co} className="inline-block mr-2">
-                    {co}: <strong>{cnt}</strong>
-                  </span>
-                ))}
-              </td>
-              <td className="px-3 py-2 text-right">
-                <span className={cn(
-                  "inline-block px-2 py-0.5 rounded text-xs font-semibold",
-                  row.gap_score > 5 ? "bg-red-100 text-red-800" : row.gap_score > 2 ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-700"
-                )}>
-                  {row.gap_score.toFixed(1)}
-                </span>
-              </td>
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 sticky top-0">
+            <tr>
+              <th className="px-3 py-2 text-left">Lễ hội</th>
+              <th className="px-3 py-2 text-left">Ngày</th>
+              <th className="px-3 py-2 text-left">Vùng</th>
+              <th className="px-3 py-2 text-right">VTR (tagged / implied)</th>
+              <th className="px-3 py-2 text-right">Đối thủ (tagged / implied)</th>
+              <th className="px-3 py-2 text-left">Top đối thủ</th>
+              <th className="px-3 py-2 text-center">Rule</th>
+              <th className="px-3 py-2 text-right">Gap</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {sorted.map((row) => {
+              const hasRule = row.has_rule === true;
+              const noRule = row.has_rule === false;
+              const fullyCovered = row.vtr_tours > 0 && row.vtr_tours >= row.competitor_tours;
+              // Visual hierarchy border-left:
+              //   red  = no rule + high gap (priority)
+              //   orange= có rule + still high gap (rule too narrow)
+              //   green= fully covered
+              const borderClass =
+                noRule && row.gap_score > 2 ? "border-l-4 border-red-500" :
+                hasRule && row.gap_score > 2 ? "border-l-4 border-orange-400" :
+                fullyCovered ? "border-l-4 border-emerald-400" :
+                "border-l-4 border-transparent";
+
+              const vtrTagged = row.vtr_tours_tagged ?? row.vtr_tours;
+              const vtrImplied = row.vtr_tours_implied ?? 0;
+              const compTagged = row.competitor_tours_tagged ?? row.competitor_tours;
+              const compImplied = row.competitor_tours_implied ?? 0;
+              const locationText = row.location_text ?? row.location ?? "";
+
+              return (
+                <tr key={row.slug} className={cn("border-t hover:bg-gray-50", borderClass)}>
+                  <td className="px-3 py-2">
+                    <button type="button" className="text-primary-600 hover:underline text-left" onClick={() => onPickFestival(row.slug)}>
+                      {row.name}
+                    </button>
+                    {locationText && (
+                      <p className="text-[10px] text-gray-500 mt-0.5 truncate max-w-[200px]" title={locationText}>
+                        <MapPin size={9} className="inline mr-0.5" />{locationText}
+                      </p>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-xs text-gray-600">{formatDateRange(row.date_start, row.date_end)}</td>
+                  <td className="px-3 py-2">
+                    {row.region && (
+                      <span className={cn("text-[10px] px-1.5 py-0.5 rounded border", REGION_COLOR[row.region as FestivalRegion])}>
+                        {regionDisplay(row.region as FestivalRegion, locationText)}
+                      </span>
+                    )}
+                  </td>
+                  <td className={cn("px-3 py-2 text-right font-mono text-xs", row.vtr_tours === 0 && "text-red-600 font-bold")}>
+                    <span>{vtrTagged}</span>
+                    {row.vtr_tours_implied !== undefined && (
+                      <span className="text-gray-400"> / {vtrImplied}</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono text-xs">
+                    <span>{compTagged}</span>
+                    {row.competitor_tours_implied !== undefined && (
+                      <span className="text-gray-400"> / {compImplied}</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-xs text-gray-700">
+                    {Object.entries(row.top_competitors).slice(0, 3).map(([co, cnt]) => (
+                      <span key={co} className="inline-block mr-2">
+                        {co}: <strong>{cnt}</strong>
+                      </span>
+                    ))}
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    {row.has_rule === undefined ? (
+                      <span className="text-[10px] text-gray-400">—</span>
+                    ) : hasRule ? (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                        <Check size={10} /> Có rule
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setCreateModal({
+                          festival_slug: row.slug,
+                          festival_name: row.name,
+                          location_keyword: locationText,
+                        })}
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded-full bg-red-100 text-red-800 border border-red-200 hover:bg-red-200 transition-colors"
+                        title="Click để tạo mapping rule cho festival này"
+                      >
+                        <Plus size={10} /> Chưa rule
+                      </button>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <span className={cn(
+                      "inline-block px-2 py-0.5 rounded text-xs font-semibold",
+                      row.gap_score > 5 ? "bg-red-100 text-red-800" : row.gap_score > 2 ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-700"
+                    )}>
+                      {row.gap_score.toFixed(1)}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {showSuggest && (
+        <AutoSuggestModal
+          onClose={() => setShowSuggest(false)}
+          onCreated={() => {
+            qc.invalidateQueries({ queryKey: ["festival-coverage-gap"] });
+            qc.invalidateQueries({ queryKey: ["festival-mapping-summary"] });
+            qc.invalidateQueries({ queryKey: ["festival-mapping-rules"] });
+          }}
+        />
+      )}
+
+      {createModal && (
+        <MappingCreateModal
+          festivalName={createModal.festival_name}
+          initialLocationKeyword={createModal.location_keyword}
+          onClose={() => setCreateModal(null)}
+          onCreated={() => {
+            setCreateModal(null);
+            qc.invalidateQueries({ queryKey: ["festival-coverage-gap"] });
+            qc.invalidateQueries({ queryKey: ["festival-mapping-summary"] });
+            qc.invalidateQueries({ queryKey: ["festival-mapping-rules"] });
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+// ── AutoSuggestModal — bulk-create mapping rules từ suggestions ──────────────
+
+function AutoSuggestModal({
+  onClose, onCreated,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["festival-mapping-suggestions"],
+    queryFn: () => getFestivalMappingSuggestions(20),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Track checked state cho từng suggestion (key = festival_slug).
+  // Pre-check theo confidence rule:
+  //   > 0.8 → checked
+  //   > 0.5 → unchecked (user review)
+  //   < 0.5 → unchecked
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [initialized, setInitialized] = useState(false);
+
+  // Initialize pre-checks 1 lần khi data load xong.
+  useMemo(() => {
+    if (!data || initialized) return;
+    const next = new Set<string>();
+    data.suggestions.forEach((s) => {
+      if (s.confidence > 0.8) next.add(s.festival_slug);
+    });
+    setChecked(next);
+    setInitialized(true);
+  }, [data, initialized]);
+
+  const createMut = useMutation({
+    mutationFn: (rules: Array<{ location_keyword: string; market_keyword?: string; route_keyword?: string }>) =>
+      bulkCreateFestivalMappingRules(rules),
+    onSuccess: (res) => {
+      onCreated();
+      // eslint-disable-next-line no-alert
+      alert(`Đã tạo ${res.inserted} mapping rule. Retag tour chạy nền…`);
+      onClose();
+    },
+    onError: (e: unknown) => {
+      const err = e as { response?: { data?: { detail?: string } }; message?: string };
+      // eslint-disable-next-line no-alert
+      alert(err.response?.data?.detail || err.message || "Lỗi tạo bulk mapping");
+    },
+  });
+
+  const toggle = (slug: string) => {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(slug)) next.delete(slug); else next.add(slug);
+      return next;
+    });
+  };
+
+  const handleSubmit = () => {
+    if (!data) return;
+    const rules = data.suggestions
+      .filter((s) => checked.has(s.festival_slug))
+      .map((s) => ({
+        location_keyword: s.location_keyword,
+        market_keyword: s.suggested_market || undefined,
+        route_keyword: s.suggested_route || undefined,
+      }));
+    if (rules.length === 0) {
+      // eslint-disable-next-line no-alert
+      alert("Chọn ít nhất 1 mapping để tạo");
+      return;
+    }
+    createMut.mutate(rules);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b">
+          <h3 className="text-base font-bold flex items-center gap-2">
+            <Wand2 size={16} className="text-primary-600" />
+            Gợi ý mapping rules (Auto-suggest)
+          </h3>
+          <button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-900">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto">
+          {isLoading && <Loading />}
+          {error && <ErrorBox msg={(error as Error).message} />}
+          {data && data.suggestions.length === 0 && (
+            <EmptyState>Không có gợi ý nào. Có thể tất cả festival đã có rule hoặc location_text chưa parse được.</EmptyState>
+          )}
+          {data && data.suggestions.length > 0 && (
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 sticky top-0">
+                <tr>
+                  <th className="px-3 py-2 text-center w-10">
+                    <input
+                      type="checkbox"
+                      checked={data.suggestions.every((s) => checked.has(s.festival_slug))}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setChecked(new Set(data.suggestions.map((s) => s.festival_slug)));
+                        } else {
+                          setChecked(new Set());
+                        }
+                      }}
+                    />
+                  </th>
+                  <th className="px-3 py-2 text-left">Lễ hội</th>
+                  <th className="px-3 py-2 text-left">Location</th>
+                  <th className="px-3 py-2 text-left">Thị trường</th>
+                  <th className="px-3 py-2 text-left">Tuyến tour</th>
+                  <th className="px-3 py-2 text-right">Confidence</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.suggestions.map((s) => {
+                  const isChecked = checked.has(s.festival_slug);
+                  const confPct = Math.round(s.confidence * 100);
+                  const confClass =
+                    s.confidence > 0.8 ? "bg-emerald-100 text-emerald-800" :
+                    s.confidence > 0.5 ? "bg-amber-100 text-amber-800" :
+                    "bg-gray-100 text-gray-700";
+                  return (
+                    <tr key={s.festival_slug} className={cn("border-t hover:bg-gray-50", isChecked && "bg-primary-50/40")}>
+                      <td className="px-3 py-2 text-center">
+                        <input type="checkbox" checked={isChecked} onChange={() => toggle(s.festival_slug)} />
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        <span className="font-medium text-gray-900">{s.festival_name}</span>
+                        {s.reason && <p className="text-[10px] text-gray-500 mt-0.5">{s.reason}</p>}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-gray-700">
+                        <span className="font-mono text-[11px] bg-gray-100 px-1 rounded">{s.location_keyword}</span>
+                        {s.location_text && s.location_text !== s.location_keyword && (
+                          <p className="text-[10px] text-gray-500 mt-0.5">{s.location_text}</p>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-xs">{s.suggested_market || <span className="text-gray-400">—</span>}</td>
+                      <td className="px-3 py-2 text-xs">{s.suggested_route || <span className="text-gray-400">—</span>}</td>
+                      <td className="px-3 py-2 text-right">
+                        <span className={cn("inline-block px-2 py-0.5 rounded text-xs font-semibold", confClass)}>
+                          {confPct}%
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="border-t px-4 py-3 flex items-center justify-between bg-gray-50 rounded-b-lg">
+          <p className="text-xs text-gray-600">
+            <strong>{checked.size}</strong> mapping đã chọn
+            {data && ` / ${data.suggestions.length} gợi ý`}
+            <span className="ml-3 text-gray-400">
+              (✓ pre-check confidence &gt; 80%)
+            </span>
+          </p>
+          <div className="flex gap-2">
+            <button type="button" onClick={onClose} className="btn-secondary text-xs">Huỷ</button>
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={createMut.isPending || checked.size === 0}
+              className="btn-primary text-xs flex items-center gap-1.5 disabled:opacity-50"
+            >
+              {createMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+              Tạo {checked.size} mapping
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── MappingCreateModal — inline single-row create từ "Chưa rule" badge ───────
+
+function MappingCreateModal({
+  festivalName, initialLocationKeyword, onClose, onCreated,
+}: {
+  festivalName: string;
+  initialLocationKeyword: string;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [locationKeyword, setLocationKeyword] = useState(initialLocationKeyword);
+  const [marketKeyword, setMarketKeyword] = useState("");
+  const [routeKeyword, setRouteKeyword] = useState("");
+  const [note, setNote] = useState("");
+
+  // Dropdown TT/Tuyến từ filter-options (DB-driven).
+  const { data: opts } = useQuery({
+    queryKey: ["filter-options"],
+    queryFn: getFilterOptions,
+    staleTime: 60_000,
+  });
+  const availableRoutes = useMemo(() => {
+    if (!marketKeyword || !opts) return (opts?.tuyen_tour ?? []) as string[];
+    return (opts.routes_by_market[marketKeyword] ?? []) as string[];
+  }, [marketKeyword, opts]);
+
+  const createMut = useMutation({
+    mutationFn: () => createFestivalMappingRule({
+      location_keyword: locationKeyword.trim(),
+      market_keyword: marketKeyword.trim() || undefined,
+      route_keyword: routeKeyword.trim() || undefined,
+      note: note.trim() || undefined,
+    }),
+    onSuccess: onCreated,
+    onError: (e: unknown) => {
+      const err = e as { response?: { data?: { detail?: string } }; message?: string };
+      // eslint-disable-next-line no-alert
+      alert(err.response?.data?.detail || err.message || "Lỗi tạo mapping rule");
+    },
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-2xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b">
+          <h3 className="text-sm font-bold flex items-center gap-2">
+            <Plus size={14} className="text-primary-600" />
+            Tạo mapping cho: <span className="text-primary-700">{festivalName}</span>
+          </h3>
+          <button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-900">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="text-xs font-semibold text-gray-700 block mb-1">
+              Location keyword <span className="text-red-500">*</span>
+            </label>
+            <input
+              autoFocus
+              className="input text-sm w-full"
+              value={locationKeyword}
+              onChange={(e) => setLocationKeyword(e.target.value)}
+              placeholder="vd: Đà Lạt, Hội An…"
+            />
+            <p className="text-[10px] text-gray-500 mt-0.5">
+              Keyword tìm match trong tour.diem_kh / ten_tour. Prefilled từ location của festival.
+            </p>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-gray-700 block mb-1">Thị trường</label>
+            <select
+              className="input text-sm w-full"
+              value={marketKeyword}
+              onChange={(e) => {
+                setMarketKeyword(e.target.value);
+                // Reset route nếu không thuộc TT mới
+                if (e.target.value && opts) {
+                  const routes = (opts.routes_by_market[e.target.value] ?? []) as string[];
+                  if (!routes.includes(routeKeyword)) setRouteKeyword("");
+                }
+              }}
+            >
+              <option value="">— bất kỳ —</option>
+              {(opts?.thi_truong ?? []).map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-gray-700 block mb-1">
+              Tuyến tour {marketKeyword && <span className="text-gray-400 text-[10px]">(theo TT)</span>}
+            </label>
+            <select
+              className="input text-sm w-full"
+              value={routeKeyword}
+              onChange={(e) => setRouteKeyword(e.target.value)}
+            >
+              <option value="">— bất kỳ —</option>
+              {availableRoutes.map((r) => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-gray-700 block mb-1">Ghi chú</label>
+            <input
+              className="input text-sm w-full"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="(tuỳ chọn)"
+            />
+          </div>
+        </div>
+
+        <div className="border-t px-4 py-3 flex items-center justify-end gap-2 bg-gray-50 rounded-b-lg">
+          <button type="button" onClick={onClose} className="btn-secondary text-xs">Huỷ</button>
+          <button
+            type="button"
+            onClick={() => createMut.mutate()}
+            disabled={createMut.isPending || !locationKeyword.trim()}
+            className="btn-primary text-xs flex items-center gap-1.5 disabled:opacity-50"
+          >
+            {createMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+            Tạo mapping
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
