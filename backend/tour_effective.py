@@ -31,7 +31,7 @@ TOUR_EXPORT_FIELDS = (
     "id", "external_id", "cong_ty", "thi_truong", "tuyen_tour", "ten_tour",
     "lich_trinh", "diem_kh", "thoi_gian", "gia", "gia_raw", "lich_kh",
     "link_url", "ma_tour", "khach_san", "hang_khong", "so_ngay", "phan_khuc",
-    "nguon", "analyst_note", "flagged",
+    "nguon", "analyst_note", "flagged", "manual_locked",
 )
 
 

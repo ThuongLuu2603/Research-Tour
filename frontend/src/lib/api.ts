@@ -118,6 +118,7 @@ export interface Tour {
   ma_tour: string; khach_san: string; hang_khong: string; so_ngay: number | null;
   phan_khuc: string; dong_tour?: string; nguon: string; analyst_note: string; flagged: boolean;
   has_override?: boolean; canonical_id?: number;
+  manual_locked?: boolean;  // admin đã chỉnh TT/Tuyến/Thời gian → ghi thẳng DB + khóa
   sheet_sync?: { ok: boolean; message: string; row?: number } | null;
 }
 

@@ -988,7 +988,17 @@ export default function ResearchGrid() {
                     className="font-medium text-gray-900 text-xs leading-snug"
                     clamp={2}
                   />
-                  {tour.has_override && <span className="text-[10px] text-blue-600 block mt-0.5">Đã chỉnh workspace</span>}
+                  <span className="flex flex-wrap items-center gap-1 mt-0.5">
+                    {tour.manual_locked && (
+                      <span
+                        className="inline-flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200"
+                        title="Admin đã chỉnh Thị trường/Tuyến/Thời gian — quy tắc & sync sheet sẽ không ghi đè"
+                      >
+                        🔒 Đã chỉnh bởi admin
+                      </span>
+                    )}
+                    {tour.has_override && <span className="text-[10px] text-blue-600">Đã chỉnh workspace</span>}
+                  </span>
                 </td>
                 <td className="px-3 py-2 text-xs text-gray-700 max-w-[140px]">
                   <span className="truncate block max-w-[140px]">{tour.cong_ty}</span>
