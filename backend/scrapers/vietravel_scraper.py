@@ -1,13 +1,23 @@
 """
 Scrape tour listings from travel.com.vn (Vietravel) and sync to Google Sheets.
+
+Vietravel đã đổi web sang SPA (Single Page App) → dữ liệu KHÔNG còn nhúng trong HTML.
+Toàn bộ tour lấy qua API JSON `api2.travel.com.vn`. Bản HTML-scrape cũ đã chết.
+
+API:
+    POST https://api2.travel.com.vn/core/tour/search-tour-file-filter?page={page}&pageSize=80
+    Body: {"fromDate": "<today YYYY-MM-DD>", "keywords": "<viet-nam|nuoc-ngoai>"}
+    Auth: Bearer <token JWT tĩnh, public key của web app, exp năm 9999> + clientid.
+
+Response (đã verify 2026-06-10):
+    {status:1, code:200, totalRecord, totalPage (theo pageSize), response:{listTour:[...]}}
+Mỗi tour: pageTitle / priceFinal / tourLineName / tourLineId / departureName /
+          dayStayText / pageCode / linkShare / pageId / listDepartureDate[].date
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-import re
 from datetime import datetime
 from typing import Any, Callable
 
@@ -22,19 +32,58 @@ COMPANY = "Vietravel"
 SHEET_ID = "1sI34D88zsmSrN7Jf9fS3jh4aUvaep-blxnBR1CGq9eM"
 GID_VIETRAVEL = 620817544
 
+# ── API JSON (SPA) ──────────────────────────────────────────────────────────
+API_URL = "https://api2.travel.com.vn/core/tour/search-tour-file-filter"
+# Token JWT tĩnh của web app (exp năm 9999) — public key baked vào site travel.com.vn.
+# Cùng giá trị với scripts/debug_vietravel_api.py.
+_BEARER = (
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+    "eyJuIjoid2ViX3RyYXZlbCIsImMiOiJhYjcyOTZmMi0wNDg5LTRiNGQtODVhMi0wOTAwNmNjYjNlMGIi"
+    "LCJ3IjoiVHJhdmVsLmNvbS52bnxodHRwczovL3RyYXZlbC5jb20udm4iLCJwIjoiVHJhdmVsfFRyYXZlbCIs"
+    "InUiOiJhYjcyOTZmMi0wNDg5LTRiNGQtODVhMi0wOTAwNmNjYjNlMGJ8NDY5NGM2ODItNDZjNy00Y2M2LWEx"
+    "OTQtOTY4ZWE5NWU5Y2M5IiwiciI6IkFkbWluIiwiZXhwIjoyNTM0MDIyNzU2MDAsImlzcyI6InRyYXZlbC5j"
+    "b20udm4iLCJhdWQiOiJhYjcyOTZmMi0wNDg5LTRiNGQtODVhMi0wOTAwNmNjYjNlMGIifQ."
+    "aX3hZxdsCkV4qr_0l_Z4RsAXfkMY4VBSFIb0VTobVOQ"
+)
+_CLIENT_ID = "AB7296F2-0489-4B4D-85A2-09006CCB3E0B"
+
+# Header dùng để GỌI API (khác với HEADERS browser cũ — giữ HEADERS riêng cho
+# backward-compat với script debug HTML cũ).
+API_HEADERS = {
+    "accept": "application/json",
+    "accept-language": "vi",
+    "authorization": f"Bearer {_BEARER}",
+    "clientid": _CLIENT_ID,
+    "client-url": "https://travel.com.vn/du-lich-viet-nam.aspx",
+    "content-type": "application/json",
+    "origin": "https://travel.com.vn",
+    "referer": "https://travel.com.vn/",
+    "user-agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
+    ),
+}
+
+PAGE_SIZE = 80
+_MAX_PAGES = 100  # cap an toàn tránh loop vô hạn nếu totalPage sai
+_SLEEP_BETWEEN = 0.4  # giây — API có x-rate-limit, nghỉ nhẹ giữa các request
+
+# Markets → keyword API. SOURCES cũ (du-lich-viet-nam / du-lich-nuoc-ngoai) đổi
+# thành keyword "viet-nam" (nội địa) + "nuoc-ngoai" (outbound). Cả 2 đã verify
+# trả data (227 + 481 tour ngày 2026-06-10).
+MARKETS: list[tuple[str, str]] = [
+    ("viet-nam", "Nội địa"),
+    ("nuoc-ngoai", "Nước ngoài"),
+]
+
+# SOURCES giữ lại cho backward-compat (script debug cũ import). Không còn dùng
+# để scrape (HTML đã chết) — chỉ là tham chiếu.
 SOURCES = [
     "https://travel.com.vn/du-lich-viet-nam.aspx",
     "https://travel.com.vn/du-lich-nuoc-ngoai.aspx",
 ]
 
-# Cột A–Z (26 cột); Z = link thô cho UI
-SHEET_NUM_COLS = 26
-COL_LINK_TOUR = 9   # J
-COL_MA_TOUR = 12    # M
-COL_CAP_NHAT = 13   # N
-COL_DONG_TOUR = 14  # O — Dòng tour (Tiết kiệm/Tiêu chuẩn/Giá Tốt/ESG&LEI/Cao cấp)
-COL_LINK_RAW = 25   # Z
-
+# Header browser cũ — giữ cho backward-compat (script debug HTML import HEADERS).
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -48,79 +97,29 @@ HEADERS = {
     "Upgrade-Insecure-Requests": "1",
 }
 
-# travel.com.vn (Next.js) nhúng dữ liệu tour dạng JSON escaped trong HTML. Mỗi card bắt đầu
-# bằng \"pageId\":. Thứ tự field thay đổi theo thời gian (pageTitle/linkShare nằm SAU mảng
-# lịch khởi hành), nên trích TỪNG field độc lập thay vì 1 regex theo vị trí (bản cũ vỡ khi
-# site đổi cấu trúc → "không quét được tour"). Card hợp lệ = có linkShare.
-_PAGEID_RE = re.compile(r"^(\d+)")
-_PAGECODE_RE = re.compile(r'\\"pageCode\\":\\"([^\\"]+)\\"')
-_PAGETITLE_RE = re.compile(r'\\"pageTitle\\":\\"([^\\"]*)\\"')
-_LINKSHARE_RE = re.compile(r'\\"linkShare\\":\\"(https://travel\.com\.vn/chuong-trinh/[^\\"]+)\\"')
+# Cột A–Z (26 cột); Z = link thô cho UI
+SHEET_NUM_COLS = 26
+COL_LINK_TOUR = 9   # J
+COL_MA_TOUR = 12    # M
+COL_CAP_NHAT = 13   # N
+COL_DONG_TOUR = 14  # O — Dòng tour (Tiết kiệm/Tiêu chuẩn/Giá Tốt/ESG&LEI/Cao cấp)
+COL_LINK_RAW = 25   # Z
 
-# Dòng tour (phân khúc marketing của VTR). tourLineName cho 4 nhóm; nhóm ESG & LEI để tên rỗng
-# nên fallback theo tourLineId.
-_TOURLINE_NAME_RE = re.compile(r'\\"tourLineName\\":\\"([^\\"]*)\\"')
-_TOURLINE_ID_RE = re.compile(r'\\"tourLineId\\":(\d+)')
+# Dòng tour (phân khúc marketing của VTR). tourLineName cho 4 nhóm; nhóm ESG & LEI
+# để tên rỗng nên fallback theo tourLineId.
 _TOURLINE_BY_ID = {1: "Tour ESG & LEI", 2: "Tiêu chuẩn", 3: "Tiết kiệm", 4: "Giá Tốt", 6: "Cao cấp"}
-
-
-def _extract_dong_tour(chunk: str) -> str:
-    m = _TOURLINE_NAME_RE.search(chunk)
-    name = _decode_json_str(m.group(1)).strip() if m else ""
-    if name:
-        return name
-    mid = _TOURLINE_ID_RE.search(chunk)
-    if mid:
-        return _TOURLINE_BY_ID.get(int(mid.group(1)), "")
-    return ""
-
-_FIELD_RE = {
-    "departureName": re.compile(r'\\"departureName\\":\\"([^\\"]*)\\"'),
-    "dayStayText": re.compile(r'\\"dayStayText\\":\\"([^\\"]*)\\"'),
-    "dayNight": re.compile(r'\\"dayNight\\":\\"([^\\"]*)\\"'),
-}
-
-# VTR (Next.js) đặt departureName="$undefined" trong listDepartureDate nhưng
-# vẫn lưu departureId ở cấp card. Mapping ID → tên thành phố lấy từ live page
-# (cross-check 5 city codes & counts khớp nhau, ngày 2026-06-07).
-_DEPARTURE_NAME_RE = re.compile(r'\\"departureName\\":\\"([^\\"]*)\\"')
-_DEPARTURE_ID_RE = re.compile(r'\\"departureId\\":(\d+)')
-_DEPARTURE_ID_TO_NAME = {
-    1: "TP. Hồ Chí Minh",
-    3: "Hà Nội",
-    4: "Đà Nẵng",
-    5: "Cần Thơ",
-    8: "Nha Trang",
-}
-
-
-def _field_in_block(block: str, key: str) -> str:
-    pat = _FIELD_RE.get(key)
-    if not pat:
-        return ""
-    m = pat.search(block)
-    return _decode_json_str(m.group(1)) if m else ""
-
-
-def _decode_json_str(s: str) -> str:
-    """Decode embedded JSON string escapes to UTF-8 text."""
-    if not s:
-        return ""
-    try:
-        return json.loads(f'"{s}"')
-    except json.JSONDecodeError:
-        return (
-            s.replace("\\u0026", "&")
-            .replace('\\"', '"')
-            .replace("\\n", " ")
-            .replace("\\t", " ")
-        )
 
 
 def _hyperlink_formula(url: str) -> str:
     """Google Sheets VN dùng dấu ; trong công thức."""
     safe = (url or "").replace('"', '""')
     return f'=HYPERLINK("{safe}";"Xem chi tiết")'
+
+
+def _fmt_price(v: int | float | None) -> str:
+    if v is None:
+        return ""
+    return f"{int(v):,}".replace(",", ".")
 
 
 def enrich_market_and_route(
@@ -150,285 +149,185 @@ def enrich_market_and_route(
     return out
 
 
-def _fmt_price(v: int | None) -> str:
-    if v is None:
-        return ""
-    return f"{v:,}".replace(",", ".")
+# ── Mapping 1 tour JSON → dict (giữ ĐÚNG keys như bản cũ) ────────────────────
 
-
-_DEPARTURE_END_RE = (
-    re.compile(r'\\"departureDate\\":\\"(\d{4}-\d{2}-\d{2}T[^\\"]+)\\"'),
-    re.compile(r'\\"endDate\\":\\"(\d{4}-\d{2}-\d{2}T[^\\"]+)\\"'),
-)
-_DURATION_LABEL_RE = re.compile(r"(\d+)\s*n\s*(\d+)\s*[dđ]", re.I)
-_SAME_DAY_LABELS = frozenset({"trong ngày", "trong ngay", "1 ngày"})
-
-
-def _duration_from_departure_end(chunk: str) -> tuple[int, int] | None:
-    """Suy số ngày/đêm từ departureDate & endDate (VTR hay ghi sai dayStayText)."""
-    deps = _DEPARTURE_END_RE[0].findall(chunk)
-    ends = _DEPARTURE_END_RE[1].findall(chunk)
-    if not deps or not ends:
-        return None
-    from collections import Counter
-
-    counts: Counter[tuple[int, int]] = Counter()
-    for dep_s, end_s in zip(deps, ends):
+def _dong_tour(tour: dict[str, Any]) -> str:
+    """tourLineName; nếu rỗng → fallback theo tourLineId."""
+    name = str(tour.get("tourLineName") or "").strip()
+    if name:
+        return name
+    tid = tour.get("tourLineId")
+    if tid is not None:
         try:
-            dep = datetime.fromisoformat(dep_s)
-            end = datetime.fromisoformat(end_s)
-            days = (end.date() - dep.date()).days + 1
-            if 1 <= days <= 45:
-                counts[(days, max(days - 1, 0))] += 1
+            return _TOURLINE_BY_ID.get(int(tid), "")
+        except (TypeError, ValueError):
+            return ""
+    return ""
+
+
+def _price(tour: dict[str, Any]) -> int | None:
+    """gia = priceFinal (API đã sạch, KHÔNG dùng heuristic deposit cũ).
+    Nếu priceFinal falsy/0 → lấy min salePrice trong listDepartureDate."""
+    pf = tour.get("priceFinal")
+    try:
+        if pf and float(pf) > 0:
+            return int(float(pf))
+    except (TypeError, ValueError):
+        pass
+
+    prices: list[int] = []
+    for dep in tour.get("listDepartureDate") or []:
+        sp = (dep or {}).get("salePrice")
+        try:
+            if sp and float(sp) > 0:
+                prices.append(int(float(sp)))
+        except (TypeError, ValueError):
+            continue
+    return min(prices) if prices else None
+
+
+def _schedule(tour: dict[str, Any]) -> str:
+    """lich_kh từ listDepartureDate[].date (ISO) → "DD/MM/YYYY" nối ", ".
+
+    Format DD/MM/YYYY khớp departure_parser.parse_departure_dates (DATE_RE) →
+    tính tần suất đoàn KH chính xác (có năm explicit, ưu tiên cao nhất)."""
+    dates: list[datetime] = []
+    for dep in tour.get("listDepartureDate") or []:
+        raw = (dep or {}).get("date")
+        if not raw:
+            continue
+        try:
+            dt = datetime.fromisoformat(str(raw))
         except ValueError:
             continue
-    if not counts:
-        return None
-    return counts.most_common(1)[0][0]
-
-
-def _format_duration_label(days: int, nights: int) -> str:
-    if days <= 1:
-        return "Trong ngày"
-    return f"{days}N{nights}Đ"
-
-
-def _extract_duration(block: str, chunk: str) -> str:
-    """Thời gian tour — ưu tiên suy từ ngày KH/kết thúc khi dayStayText sai."""
-    day_stay = (_field_in_block(block, "dayStayText") or _field_in_block(block, "dayNight")).strip()
-    computed = _duration_from_departure_end(chunk)
-
-    if computed:
-        days, nights = computed
-        label = _format_duration_label(days, nights)
-        low = day_stay.lower()
-        if not day_stay or low in _SAME_DAY_LABELS:
-            return label
-        if _DURATION_LABEL_RE.search(day_stay):
-            return day_stay
-        if days >= 2:
-            return label
-
-    return day_stay
-
-
-def _extract_schedule(chunk: str) -> str:
-    """Trích toàn bộ ngày KH từ JSON nhúng trong trang (không cắt 12 ngày)."""
-    dates = re.findall(r'\\"date\\":\\"(\d{4}-\d{2}-\d{2})', chunk)
+        dates.append(dt)
     if not dates:
         return ""
-    unique = sorted(set(dates))
-    parts = []
-    for d in unique:
-        try:
-            dt = datetime.strptime(d, "%Y-%m-%d")
-            parts.append(dt.strftime("%d/%m/%Y"))
-        except ValueError:
-            parts.append(d)
-    return ", ".join(parts)
+    uniq = sorted({(d.year, d.month, d.day): d for d in dates}.values())
+    return ", ".join(d.strftime("%d/%m/%Y") for d in uniq)
 
 
-def _extract_prices(chunk: str, max_len: int = 20000) -> int | None:
-    """Trích giá tour từ salePrice JSON. min() là "from price" theo ngày KH
-    — NHƯNG block còn lẫn salePrice của widget Đặt cọc (vd Nam Mỹ Brazil-Peru-
-    Argentina: [10_990_000 (cọc), 283_990_000 (tour)]; priceFinal cũng = cọc
-    nên không dùng được). Heuristic: nếu max/min ≥ 4× ⇒ chắc chắn có deposit
-    lẫn vào, lọc bỏ values < 30% của max rồi lấy min. Tour multi-departure
-    biến động giá theo mùa thường ≤ 2-3× nên ngưỡng 4× là an toàn."""
-    sub = chunk[:max_len]
-    nums = [int(x) for x in re.findall(r'\\"salePrice\\":(\d+)', sub) if int(x) > 0]
-    if not nums:
-        return None
-    hi = max(nums)
-    lo = min(nums)
-    if hi >= lo * 4:
-        threshold = int(hi * 0.3)
-        filtered = [n for n in nums if n >= threshold]
-        if filtered:
-            return min(filtered)
-    return lo
+def _tour_to_dict(tour: dict[str, Any], keyword: str) -> dict[str, Any]:
+    """Map 1 tour JSON → dict output (keys GIỮ NGUYÊN để sheet sync hoạt động)."""
+    link = str(tour.get("linkShare") or "").strip()
+    hotel = str(tour.get("hotel") or "").strip()
+    pid = tour.get("pageId")
+    return {
+        "cong_ty": COMPANY,
+        "thi_truong": "",          # rule classify sau
+        "tuyen_tour": "",          # rule classify sau
+        "ten_tour": str(tour.get("pageTitle") or "").strip(),
+        # lich_trinh: GIỮ TRỐNG (đã fix trước — không bịa từ destination).
+        "lich_trinh": "",
+        "diem_kh": str(tour.get("departureName") or "").strip(),
+        "dong_tour": _dong_tour(tour),
+        "thoi_gian": str(tour.get("dayStayText") or "").strip(),
+        "gia": _fmt_price(_price(tour)),
+        "lich_kh": _schedule(tour),
+        "khach_san": hotel,
+        "hang_khong": "",          # API không có airline riêng
+        "link_tour": _hyperlink_formula(link) if link else "",
+        "link_url": link,
+        "page_id": str(pid) if pid is not None else "",
+        "page_code": str(tour.get("pageCode") or "").strip(),
+        "nguon": keyword,
+        "cap_nhat": fmt_vn(),  # giờ VN (GMT+7), không phải UTC của Render
+    }
 
 
-def _extract_destination(chunk: str, max_len: int = 8000) -> str:
-    sub = chunk[:max_len]
-    m = re.search(r'\\"destination\\":\\"([^\\"]*)\\"', sub)
-    if m:
-        return _decode_json_str(m.group(1))
-    m = re.search(r'\\"listDestination\\":\[(.*?)\]', sub)
-    if m:
-        items = re.findall(r'\\"([^\\"]+)\\"', m.group(1))
-        if items:
-            return " - ".join(_decode_json_str(i) for i in items[:4])
-    return ""
+def fetch_tours_from_api(keyword: str) -> list[dict[str, Any]]:
+    """Gọi API JSON, paginate tất cả trang cho 1 keyword, trả list[dict] tour.
 
-
-def _extract_departure(block: str) -> str:
-    """Điểm khởi hành — VTR đặt departureName='$undefined' trong listDepartureDate
-    (re.search() match nhầm cái này → trả rỗng cho ~100% card).
-
-    4 lớp fallback (preserve raw value tốt nhất có thể):
-      1) findall departureName + filter $undefined → giá trị valid đầu tiên
-      2) departureId → city map (5 ID mapped: HCM, HN, ĐN, CT, NT)
-      3) Parse từ pageTitle: format "Tour TP.HỒ CHÍ MINH ✈ LỆ GIANG 5N4Đ" →
-         extract "TP.HỒ CHÍ MINH"
-      4) Trả raw value của departureName dù là chuỗi lạ (vd "ĐÀ LẠT") để user
-         có thể thấy + map alias sau. KHÔNG trả "" trừ khi thật sự không có
-         dữ liệu nào.
+    Flow:
+      - POST page=0 → đọc totalPage. Loop page 0..totalPage-1 (cap _MAX_PAGES),
+        dừng sớm nếu listTour rỗng (an toàn nếu totalPage sai).
+      - Dedup theo pageId (fallback pageCode/linkShare).
+      - Sleep nhẹ giữa request tránh rate limit.
+      - KHÔNG raise — lỗi → log + trả những gì đã có (hoặc []).
     """
-    # Layer 1: departureName valid
-    candidates = [
-        _decode_json_str(v) for v in _DEPARTURE_NAME_RE.findall(block)
-        if v and v.lower() != "$undefined"
-    ]
-    if candidates:
-        return candidates[0].strip()
+    from datetime import date
 
-    # Layer 2: departureId → city map
-    m = _DEPARTURE_ID_RE.search(block)
-    if m:
-        mapped = _DEPARTURE_ID_TO_NAME.get(int(m.group(1)), "")
-        if mapped:
-            return mapped
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    body = {"fromDate": date.today().isoformat(), "keywords": keyword}
+    total_page: int | None = None
+    page = 0
 
-    # Layer 3: parse từ pageTitle pattern "Tour {DEPARTURE} ✈ {DEST}" hoặc
-    # "Tour {DEPARTURE} - {DEST}". VTR title format thường gặp.
-    title_m = _PAGETITLE_RE.search(block)
-    if title_m:
-        title = _decode_json_str(title_m.group(1))
-        # Bỏ prefix "Tour " (case-insensitive)
-        title_clean = re.sub(r"^\s*tour\s+", "", title, flags=re.IGNORECASE)
-        # Split theo các ký tự phổ biến cho departure → destination
-        # ✈ (airplane), → (arrow), - / – / — (dashes)
-        parts = re.split(r"[✈→\-–—]", title_clean, maxsplit=1)
-        if parts and parts[0].strip():
-            dep = parts[0].strip()
-            # Bỏ tail như "5N4Đ", "(VN airlines)" nếu có
-            dep = re.sub(r"\s+\d+[Nn]\d+[ĐđDd]?$", "", dep).strip()
-            dep = re.sub(r"\s*\([^)]*\)$", "", dep).strip()
-            if dep and len(dep) >= 3 and len(dep) <= 120:
-                return dep
+    while page < _MAX_PAGES:
+        if total_page is not None and page >= total_page:
+            break
+        try:
+            r = requests.post(
+                API_URL,
+                params={"page": page, "pageSize": PAGE_SIZE},
+                json=body,
+                headers=API_HEADERS,
+                timeout=30,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("VTR API request lỗi (keyword=%s page=%s): %s", keyword, page, e)
+            break
 
-    # Layer 4: raw fallback — trả candidate đầu (kể cả $undefined) thì có
-    # thông tin gì cho user thấy còn hơn rỗng. Trả "" nếu thật sự không có
-    # bất kỳ departureName nào trong block.
-    raw_candidates = [_decode_json_str(v) for v in _DEPARTURE_NAME_RE.findall(block) if v]
-    if raw_candidates:
-        for c in raw_candidates:
-            if c and c.lower() != "$undefined":
-                return c.strip()
-    return ""
+        if r.status_code != 200:
+            logger.warning(
+                "VTR API status=%s (keyword=%s page=%s, len=%s) — token hết hạn / API đổi?",
+                r.status_code, keyword, page, len(r.content),
+            )
+            break
 
+        try:
+            data = r.json()
+        except ValueError as e:
+            logger.warning("VTR API JSON parse lỗi (keyword=%s page=%s): %s", keyword, page, e)
+            break
 
-def scrape_listing_page(url: str) -> list[dict[str, Any]]:
-    """Scrape all tour cards from a Vietravel listing page."""
-    resp = requests.get(url, headers=HEADERS, timeout=90)
-    resp.raise_for_status()
-    resp.encoding = resp.apparent_encoding or "utf-8"
-    text = resp.text
+        status = data.get("status")
+        resp = data.get("response") or {}
+        list_tour = resp.get("listTour") or []
 
-    marker = '\\"pageId\\":'
-    if marker not in text:
-        logger.warning(
-            "VTR scrape: không thấy marker pageId tại %s (status=%s, len=%s) — site có thể chặn bot/đổi cấu trúc",
-            url, resp.status_code, len(text),
-        )
-        raise ValueError(f"Không tìm thấy dữ liệu tour trong trang: {url}")
+        if total_page is None:
+            total_page = data.get("totalPage")
+            try:
+                total_page = int(total_page) if total_page is not None else None
+            except (TypeError, ValueError):
+                total_page = None
 
-    tours: list[dict[str, Any]] = []
-    seen_links: set[str] = set()
+        if status != 1 or (page == 0 and not list_tour):
+            logger.warning(
+                "VTR API trả 0 tour cho keyword %r (status=%s, page=%s) — "
+                "có thể token hết hạn / API đổi / keyword không nhận.",
+                keyword, status, page,
+            )
+            break
 
-    for chunk in text.split(marker)[1:]:
-        # Card hợp lệ phải có linkShare (pageTitle/linkShare nằm sau mảng lịch KH → tìm cả chunk).
-        link_m = _LINKSHARE_RE.search(chunk)
-        if not link_m:
-            continue
-        link = link_m.group(1)
-        if link in seen_links:
-            continue
-        seen_links.add(link)
+        if not list_tour:
+            break  # hết data (totalPage có thể sai)
 
-        block = chunk[:40000]
-        title_m = _PAGETITLE_RE.search(chunk)
-        code_m = _PAGECODE_RE.search(chunk)
-        pid_m = _PAGEID_RE.match(chunk)
+        for tour in list_tour:
+            if not isinstance(tour, dict):
+                continue
+            key = (
+                str(tour.get("pageId"))
+                or str(tour.get("pageCode"))
+                or str(tour.get("linkShare"))
+            )
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            out.append(_tour_to_dict(tour, keyword))
 
-        tours.append(
-            {
-                "cong_ty": COMPANY,
-                "thi_truong": "",
-                "tuyen_tour": "",
-                "ten_tour": _decode_json_str(title_m.group(1)) if title_m else "",
-                # lich_trinh: KHÔNG bịa từ danh sách điểm đến. VTR card không có lịch
-                # trình ngày-by-ngày → để TRỐNG. (Trước đây gán _extract_destination →
-                # data sai + gây misclassify, vd "Canada" trong list điểm đến đè tuyến.)
-                "lich_trinh": "",
-                "diem_kh": _extract_departure(block),
-                "dong_tour": _extract_dong_tour(chunk),
-                "thoi_gian": _extract_duration(block, chunk),
-                "gia": _fmt_price(_extract_prices(block)),
-                "lich_kh": _extract_schedule(chunk),
-                "link_tour": _hyperlink_formula(link),
-                "link_url": link,
-                "page_id": pid_m.group(1) if pid_m else "",
-                "page_code": code_m.group(1) if code_m else "",
-                "nguon": url,
-                "cap_nhat": fmt_vn(),  # giờ VN (GMT+7), không phải UTC của Render
-            }
-        )
+        page += 1
+        if total_page is not None and page >= total_page:
+            break
 
-    if not tours:
-        logger.warning(
-            "VTR scrape: có marker pageId nhưng 0 card khớp tại %s — JSON có thể đã đổi tên field",
-            url,
-        )
+        import time
+        time.sleep(_SLEEP_BETWEEN)
 
-    return tours
+    if not out:
+        logger.warning("VTR API: 0 tour cho keyword %r — kiểm tra token/keyword/API.", keyword)
 
-
-def _fetch_dong_tour_detail(url: str) -> str:
-    """Tour KHÔNG có tier ở trang listing (vài tour cuối trang) → lấy tourLineId từ trang chi tiết.
-
-    Trang chi tiết chỉ có ĐÚNG 1 `tourLineId` = tier của chính tour đó (menu chỉ dùng tên/slug),
-    nên dùng tourLineId là chắc chắn (không lấy nhầm menu như tourLineName)."""
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=30)
-        resp.raise_for_status()
-        m = _TOURLINE_ID_RE.search(resp.text)
-        if m:
-            return _TOURLINE_BY_ID.get(int(m.group(1)), "")
-    except Exception as e:  # noqa: BLE001
-        logger.warning("VTR lấy Dòng tour từ trang chi tiết lỗi (%s): %s", url, e)
-    return ""
-
-
-def _fetch_departure_detail(url: str) -> str:
-    """Tour KHÔNG có departureName/Id ở listing card → lấy điểm KH từ trang chi tiết.
-
-    Trang chi tiết của mỗi tour có dropdown gồm 5 city options + 1 city được CHỌN
-    (city thực của tour). City được chọn xuất hiện 2 lần trong JSON (option list +
-    selected state), các city còn lại chỉ 1 lần. Vì vậy lấy city có count >= 2.
-
-    Verified bằng tmp_vtr_check2.py: tour pid-13385 → "Cần Thơ" (count=2),
-    tour pid-3526 → "Hà Nội" (count=2). Cả 2 tour này đều có $undefined ở listing.
-
-    Nếu cấu trúc đổi (không có duplicate) → trả "" để giữ behavior an toàn."""
-    from collections import Counter
-
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=30)
-        resp.raise_for_status()
-        names = [
-            _decode_json_str(v) for v in _DEPARTURE_NAME_RE.findall(resp.text)
-            if v and v.lower() != "$undefined"
-        ]
-        if not names:
-            return ""
-        for city, count in Counter(names).most_common():
-            if count >= 2:
-                return city
-    except Exception as e:  # noqa: BLE001
-        logger.warning("VTR lấy điểm KH từ trang chi tiết lỗi (%s): %s", url, e)
-    return ""
+    return out
 
 
 def scrape_all_vietravel_tours(
@@ -436,39 +335,21 @@ def scrape_all_vietravel_tours(
     *,
     classify: bool = False,
 ) -> pd.DataFrame:
-    """Scrape domestic + international listings. Phân loại TT/tuyến khi lưu DB (nhanh hơn)."""
+    """Scrape nội địa + outbound qua API JSON. Phân loại TT/tuyến khi lưu DB."""
     all_tours: list[dict[str, Any]] = []
-    n_src = len(SOURCES)
-    for i, url in enumerate(SOURCES):
+    n_mk = len(MARKETS)
+    for i, (keyword, label) in enumerate(MARKETS):
         if progress:
-            progress(12 + int(30 * i / max(n_src, 1)), f"Đang tải {url}…")
-        all_tours.extend(scrape_listing_page(url))
+            progress(12 + int(30 * i / max(n_mk, 1)), f"Đang tải thị trường {label}…")
+        tours = fetch_tours_from_api(keyword)
+        if not tours:
+            logger.warning("VTR: keyword %r (%s) trả 0 tour.", keyword, label)
+        all_tours.extend(tours)
         if progress:
-            progress(28 + int(30 * (i + 1) / max(n_src, 1)), f"Đã quét {len(all_tours)} tour")
+            progress(28 + int(30 * (i + 1) / max(n_mk, 1)), f"Đã quét {len(all_tours)} tour")
+
     if not all_tours:
         return pd.DataFrame()
-
-    # Bổ sung Dòng tour cho số ít tour mà trang listing thiếu tier (lấy từ trang chi tiết).
-    missing = [t for t in all_tours if not (t.get("dong_tour") or "").strip() and t.get("link_url")]
-    if missing:
-        if progress:
-            progress(46, f"Bổ sung Dòng tour cho {len(missing)} tour (trang chi tiết)…")
-        for t in missing[:60]:  # giới hạn an toàn — bình thường chỉ 1–3 tour
-            dt = _fetch_dong_tour_detail(t["link_url"])
-            if dt:
-                t["dong_tour"] = dt
-
-    # Bổ sung điểm KH cho tour mà listing không có departureName/Id (vd: tour miền Tây pid-13385,
-    # tour Hong Kong pid-3526 — listing card chứa toàn $undefined). Trang chi tiết luôn có city
-    # được chọn. Giới hạn 60 calls tương tự dong_tour, thực tế chỉ ~2-4 tour/lần scrape.
-    missing_dep = [t for t in all_tours if not (t.get("diem_kh") or "").strip() and t.get("link_url")]
-    if missing_dep:
-        if progress:
-            progress(47, f"Bổ sung điểm KH cho {len(missing_dep)} tour (trang chi tiết)…")
-        for t in missing_dep[:60]:
-            dep = _fetch_departure_detail(t["link_url"])
-            if dep:
-                t["diem_kh"] = dep
 
     df = pd.DataFrame(all_tours)
     if classify:
@@ -548,6 +429,8 @@ def tours_to_sheet_rows(df: pd.DataFrame) -> list[list[str]]:
         row[7] = str(r.get("gia", ""))
         row[8] = str(r.get("lich_kh", ""))
         row[COL_LINK_TOUR] = str(r.get("link_tour", ""))
+        row[10] = str(r.get("khach_san", ""))
+        row[11] = str(r.get("hang_khong", ""))
         row[COL_MA_TOUR] = str(r.get("page_code", ""))
         row[COL_CAP_NHAT] = str(r.get("cap_nhat", ""))
         row[COL_DONG_TOUR] = str(r.get("dong_tour", ""))
@@ -563,7 +446,7 @@ def _get_gspread_client():
 
 def write_to_google_sheet(df: pd.DataFrame, gid: int = GID_VIETRAVEL) -> dict[str, Any]:
     """Overwrite Vietravel worksheet with scraped rows."""
-    import gspread
+    import gspread  # noqa: F401
 
     gc = _get_gspread_client()
     sh = gc.open_by_key(SHEET_ID)
@@ -583,7 +466,7 @@ def write_to_google_sheet(df: pd.DataFrame, gid: int = GID_VIETRAVEL) -> dict[st
 
 
 def sync_vietravel_to_sheet() -> dict[str, Any]:
-    """Full pipeline: scrape travel.com.vn → write Google Sheet."""
+    """Full pipeline: scrape travel.com.vn API → write Google Sheet."""
     df = scrape_all_vietravel_tours()
     if df.empty:
         raise RuntimeError("Không quét được tour nào từ travel.com.vn")
