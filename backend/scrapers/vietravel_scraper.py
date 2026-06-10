@@ -358,7 +358,10 @@ def scrape_listing_page(url: str) -> list[dict[str, Any]]:
                 "thi_truong": "",
                 "tuyen_tour": "",
                 "ten_tour": _decode_json_str(title_m.group(1)) if title_m else "",
-                "lich_trinh": _extract_destination(block),
+                # lich_trinh: KHÔNG bịa từ danh sách điểm đến. VTR card không có lịch
+                # trình ngày-by-ngày → để TRỐNG. (Trước đây gán _extract_destination →
+                # data sai + gây misclassify, vd "Canada" trong list điểm đến đè tuyến.)
+                "lich_trinh": "",
                 "diem_kh": _extract_departure(block),
                 "dong_tour": _extract_dong_tour(chunk),
                 "thoi_gian": _extract_duration(block, chunk),
