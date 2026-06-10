@@ -258,7 +258,7 @@ def list_workspace_tours(
 
     total = q.count()
     _sortable = frozenset({
-        "id", "ten_tour", "cong_ty", "thi_truong", "tuyen_tour", "thoi_gian",
+        "id", "ten_tour", "cong_ty", "thi_truong", "tuyen_tour", "diem_kh", "thoi_gian",
         "gia", "phan_khuc", "nguon", "analyst_note", "updated_at", "created_at",
     })
     sort_field = sort_by if sort_by in _sortable else "id"

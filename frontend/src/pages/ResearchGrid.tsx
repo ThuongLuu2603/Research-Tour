@@ -21,6 +21,7 @@ type GridSortCol =
   | "cong_ty"
   | "thi_truong"
   | "tuyen_tour"
+  | "diem_kh"
   | "thoi_gian"
   | "gia"
   | "phan_khuc"
@@ -33,6 +34,7 @@ const GRID_SORT_COLUMNS: { label: string; col: GridSortCol; wide?: boolean }[] =
   { label: COL.congTy, col: "cong_ty" },
   { label: COL.thiTruong, col: "thi_truong" },
   { label: COL.tuyenTour, col: "tuyen_tour" },
+  { label: COL.diemKhoiHanh, col: "diem_kh" },
   { label: COL.thoiGian, col: "thoi_gian" },
   { label: COL.gia, col: "gia" },
   { label: "Phân khúc", col: "phan_khuc" },
@@ -1046,6 +1048,17 @@ export default function ResearchGrid() {
                       });
                       setToast(`Đã cập nhật Tuyến tour và tự match Thị trường: ${inferredMarket}`);
                     }}
+                  />
+                </td>
+                <td className="px-3 py-2">
+                  {/* Điểm khởi hành — dropdown chọn option (strict). Lưu qua override workspace. */}
+                  <EditableSelectCell
+                    disabled={!canEdit}
+                    value={tour.diem_kh}
+                    options={(opts?.diem_kh ?? []) as string[]}
+                    placeholder="Tìm điểm khởi hành…"
+                    strict
+                    onSave={(v) => mutation.mutate({ id: tour.id, patch: { diem_kh: v } })}
                   />
                 </td>
                 <td className="px-3 py-2">
