@@ -132,7 +132,38 @@ def debug_classify(ten_tour: str, lich_trinh: str = "") -> None:
     print("=" * 80)
 
 
+def _load_tour_text_by_id(tour_id: int) -> tuple[str, str] | None:
+    """Load (ten_tour, lich_trinh) thật từ DB theo id — để classify đúng input."""
+    from database import SessionLocal
+    from models import Tour
+
+    db = SessionLocal()
+    try:
+        t = db.query(Tour).filter(Tour.id == tour_id).first()
+        if not t:
+            return None
+        print(f"\n[TOUR DB] id={t.id} canonical thi_truong={t.thi_truong!r} "
+              f"tuyen_tour={t.tuyen_tour!r} manual_locked={getattr(t, 'manual_locked', None)} "
+              f"rule_id={t.classification_rule_id}")
+        return (t.ten_tour or "", t.lich_trinh or "")
+    finally:
+        db.close()
+
+
 def main(argv: list[str]) -> int:
+    # Hỗ trợ: --id <tour_id> (load tên + lịch trình thật) HOẶC truyền chuỗi trực tiếp.
+    if len(argv) >= 3 and argv[1] == "--id":
+        try:
+            tour_id = int(argv[2])
+        except ValueError:
+            print(f"tour_id không hợp lệ: {argv[2]}")
+            return 1
+        loaded = _load_tour_text_by_id(tour_id)
+        if not loaded:
+            print(f"Không tìm thấy tour id={tour_id}")
+            return 1
+        debug_classify(loaded[0], loaded[1])
+        return 0
     if len(argv) < 2:
         print(__doc__)
         return 1
