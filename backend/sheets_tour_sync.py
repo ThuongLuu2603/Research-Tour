@@ -381,7 +381,13 @@ def _apply_fields_to_tour(
     else:
         phan_khuc_dirty = _phan_khuc_inputs_changed(tour, fields)
 
-    tour.cong_ty = resolve_company_name(fields["cong_ty"])[:256]
+    # STICKY: chỉ overwrite cong_ty khi nguồn có giá trị mới (sau resolve alias).
+    # Nếu sheet/scrape row có cong_ty rỗng → giữ giá trị cũ trên DB. Tránh
+    # wipe khi 1 lần sync lỗi extract / cột A trống / Vietravel block thiếu label.
+    new_cong_ty = resolve_company_name(fields.get("cong_ty") or "")
+    if new_cong_ty and new_cong_ty.strip():
+        tour.cong_ty = new_cong_ty[:256]
+    # else: giữ tour.cong_ty hiện tại
     tour.ten_tour = fields["ten_tour"][:512]
     tour.lich_trinh = fields["lich_trinh"]
     if (preserve_classification or locked) and (tour.thi_truong or tour.tuyen_tour):
@@ -426,7 +432,10 @@ def _apply_fields_to_tour(
     if new_dong_tour:  # STICKY: chỉ ghi khi scrape có giá trị (1 lần quét lỗi không xoá tier cũ)
         tour.dong_tour = new_dong_tour[:64]
     if not locked:
-        tour.so_ngay = parse_ngay(fields["thoi_gian"])
+        # STICKY parallel với thoi_gian: chỉ recompute so_ngay khi nguồn có
+        # thoi_gian mới (parse_ngay rỗng = None → wipe so_ngay khiến phân khúc lỗi).
+        if (fields.get("thoi_gian") or "").strip():
+            tour.so_ngay = parse_ngay(fields["thoi_gian"])
     # Vietravel: phân_khuc = dòng tour. STICKY khi không có dòng_tour mới — tránh
     # tour bị mất nhãn nếu 1 lần scrape không parse được tourLineId (vd HTML đổi).
     # Trước đây: phan_khuc_dirty=True → phan_khuc="" rồi mới gán lại nếu có dong_tour

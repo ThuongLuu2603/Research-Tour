@@ -65,23 +65,44 @@ _ADMIN_DB_FIELDS = ("thi_truong", "tuyen_tour", "thoi_gian")
 
 def _admin_write_classification(db, tour, data: dict, user) -> tuple[dict, bool]:
     """Nếu user là admin: rút Thị trường/Tuyến/Thời gian khỏi ``data``, ghi thẳng DB + khóa.
-    Trả về (data còn lại để lưu override, đã_ghi_DB?). Non-admin: trả nguyên data, False."""
+    Trả về (data còn lại để lưu override, đã_ghi_DB?). Non-admin: trả nguyên data, False.
+
+    STICKY guard: empty string "" → skip (KHÔNG wipe), giống None.
+    Frontend payload thường chỉ gồm field đã edit, nhưng nếu form state stale gửi
+    chuỗi rỗng → phải bảo vệ tránh wipe dữ liệu admin đã nhập."""
     if (getattr(user, "role", "") or "") != "admin":
         return data, False
     remaining = dict(data)
     wrote = False
     if "thi_truong" in remaining:
-        tour.thi_truong = (remaining.pop("thi_truong") or "")[:128]
-        wrote = True
+        v = remaining.pop("thi_truong") or ""
+        if v.strip():
+            tour.thi_truong = v[:128]
+            wrote = True
+        # else: empty → skip (giữ giá trị cũ)
     if "tuyen_tour" in remaining:
-        tour.tuyen_tour = (remaining.pop("tuyen_tour") or "")[:256]
-        wrote = True
+        v = remaining.pop("tuyen_tour") or ""
+        if v.strip():
+            tour.tuyen_tour = v[:256]
+            wrote = True
     if "thoi_gian" in remaining:
-        tg = (remaining.pop("thoi_gian") or "")[:64]
-        tour.thoi_gian = tg
-        from seed import parse_ngay
-        tour.so_ngay = parse_ngay(tg)
-        wrote = True
+        v = (remaining.pop("thoi_gian") or "").strip()
+        if v:
+            tour.thoi_gian = v[:64]
+            from seed import parse_ngay
+            tour.so_ngay = parse_ngay(v)
+            wrote = True
+    # cong_ty / diem_kh: sticky guard tương tự — không wipe khi payload empty.
+    # (Hai field này được patch qua override workspace cho non-admin, nhưng admin
+    #  có thể có path cũ ghi trực tiếp; thêm guard để defense-in-depth.)
+    if "cong_ty" in remaining:
+        v = (remaining.get("cong_ty") or "").strip()
+        if not v:
+            remaining.pop("cong_ty", None)
+    if "diem_kh" in remaining:
+        v = (remaining.get("diem_kh") or "").strip()
+        if not v:
+            remaining.pop("diem_kh", None)
     if wrote:
         from datetime import datetime
         tour.manual_locked = True       # quy tắc + sheet không ghi đè khi tour update (tên không đổi)
