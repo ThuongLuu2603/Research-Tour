@@ -11,6 +11,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from compare_engine import SegmentStats, build_segment_stats, deduplicate_tours
+from data_sources import MIN_VALID_PRICE
 from models import Tour
 from tour_sources import apply_market_compare_source_filter, filter_tours_for_market_compare
 
@@ -98,7 +99,7 @@ def _db_fingerprint(db: Session) -> tuple[int, str | None]:
     row = (
         apply_market_compare_source_filter(
             db.query(func.count(Tour.id), func.max(Tour.updated_at)).filter(
-                Tour.gia != None, Tour.gia > 0  # noqa: E711
+                Tour.gia != None, Tour.gia >= MIN_VALID_PRICE  # noqa: E711
             )
         ).one()
     )
@@ -177,7 +178,7 @@ def load_tours(
     """
     q = apply_market_compare_source_filter(
         db.query(Tour)
-        .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+        .filter(Tour.gia != None, Tour.gia >= MIN_VALID_PRICE)  # noqa: E711
     )
     # System-wide rule: loại trừ market "Không xác định" khỏi mọi calculation.
     from tour_filters import market_filter_clause

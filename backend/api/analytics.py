@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel
 
 from api.auth import get_current_user
+from data_sources import MIN_VALID_PRICE
 from database import get_db
 from models import Tour, User
 
@@ -218,7 +219,7 @@ def price_stats(
             Tour.nguon,
             Tour.sheet_source,
         ))
-        .filter(Tour.gia != None, Tour.gia > 0)
+        .filter(Tour.gia != None, Tour.gia >= MIN_VALID_PRICE)  # noqa: E711
     )
     if nguon:
         q = q.filter(Tour.nguon.in_(nguon))
@@ -292,7 +293,7 @@ def market_intelligence(
             Tour.nguon,
             Tour.sheet_source,
         ))
-        .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+        .filter(Tour.gia != None, Tour.gia >= MIN_VALID_PRICE)  # noqa: E711
     )
     if nguon:
         q = q.filter(Tour.nguon.in_(nguon))

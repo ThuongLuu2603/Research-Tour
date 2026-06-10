@@ -8,6 +8,7 @@ from collections import defaultdict
 from sqlalchemy import bindparam, update
 from sqlalchemy.orm import Session
 
+from data_sources import MIN_VALID_PRICE
 from models import Tour
 
 # Ghi phân khúc theo LÔ NHỎ để tránh 1 transaction khổng lồ bị CockroachDB hủy
@@ -38,7 +39,7 @@ def get_cached_route_avg(db: Session) -> dict[str, float]:
         db.query(Tour)
         .options(load_only(*_PRICE_COLS))
         .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
-        .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+        .filter(Tour.gia != None, Tour.gia >= MIN_VALID_PRICE)  # noqa: E711
         .all()
     )
     fresh = build_route_market_avg_price_day(all_priced)
@@ -221,7 +222,7 @@ def recompute_all_phan_khuc(db: Session, cancel_check=None, progress=None) -> di
         db.query(Tour)
         .options(load_only(*_PRICE_COLS))
         .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
-        .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+        .filter(Tour.gia != None, Tour.gia >= MIN_VALID_PRICE)  # noqa: E711
         .all()
     )
     route_avg = build_route_market_avg_price_day(tours)
@@ -253,7 +254,7 @@ def recompute_phan_khuc_for_tour_ids(db: Session, tour_ids: list[int], cancel_ch
         db.query(Tour)
         .options(load_only(*_PRICE_COLS))
         .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
-        .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+        .filter(Tour.gia != None, Tour.gia >= MIN_VALID_PRICE)  # noqa: E711
         .all()
     )
     route_avg = build_route_market_avg_price_day(all_priced)
@@ -314,7 +315,7 @@ def recompute_missing_phan_khuc(db: Session, cancel_check=None, progress=None) -
         db.query(Tour)
         .options(load_only(*_PRICE_COLS))
         .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
-        .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+        .filter(Tour.gia != None, Tour.gia >= MIN_VALID_PRICE)  # noqa: E711
         .filter(or_(Tour.phan_khuc.is_(None), Tour.phan_khuc == "", Tour.phan_khuc == "Chưa có giá"))
         .all()
     )
@@ -324,7 +325,7 @@ def recompute_missing_phan_khuc(db: Session, cancel_check=None, progress=None) -
         db.query(Tour)
         .options(load_only(*_PRICE_COLS))
         .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
-        .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+        .filter(Tour.gia != None, Tour.gia >= MIN_VALID_PRICE)  # noqa: E711
         .all()
     )
     route_avg = build_route_market_avg_price_day(all_priced)

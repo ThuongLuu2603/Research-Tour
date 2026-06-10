@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session
 
 from compare_engine import build_segment_stats, deduplicate_tours, is_vietravel
+from data_sources import MIN_VALID_PRICE
 from models import DailySnapshot, IntelAlert, SegmentSnapshot, Tour
 from tour_sources import apply_market_compare_source_filter, filter_tours_for_market_compare
 
@@ -21,7 +22,7 @@ def capture_daily_snapshot(db: Session, tours: list[Tour] | None = None) -> Dail
         tours = filter_tours_for_market_compare(
             apply_market_compare_source_filter(
                 db.query(Tour)
-                .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+                .filter(Tour.gia != None, Tour.gia >= MIN_VALID_PRICE)  # noqa: E711
             ).all()
         )
 

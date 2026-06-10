@@ -10,6 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from compare_engine import build_segment_stats, deduplicate_tours, is_vietravel, route_for_segment
+from data_sources import MIN_VALID_PRICE
 from tour_sources import apply_market_compare_source_filter
 from departure_parser import parse_departure_dates, parse_departure_frequency
 from models import IntelAlert, RouteDailyMetrics, Tour
@@ -168,7 +169,7 @@ def build_route_aggregates_from_context(
         for t in tours:
             market = (t.thi_truong or "").strip() or "Khác"
             route = route_for_segment(t)
-            if route and t.gia and t.gia > 0:
+            if route and t.gia and t.gia >= MIN_VALID_PRICE:
                 route_tours[make_route_key(market, route)].append(t)
 
     for rk, agg in routes.items():
@@ -497,7 +498,7 @@ def get_supply_calendar(db: Session, thi_truong: str, tuyen_tour: str) -> dict:
     rk = make_route_key(thi_truong, tuyen_tour)
     tours = apply_market_compare_source_filter(
         db.query(Tour).filter(
-            Tour.gia != None, Tour.gia > 0, Tour.thi_truong == thi_truong  # noqa: E711
+            Tour.gia != None, Tour.gia >= MIN_VALID_PRICE, Tour.thi_truong == thi_truong  # noqa: E711
         )
     ).all()
     tours = deduplicate_tours(tours)

@@ -9,6 +9,7 @@ from compare_engine import (
     parse_duration_days,
     segment_key,
 )
+from data_sources import MIN_VALID_PRICE
 from departure_parser import parse_departure_frequency
 from models import Tour
 
@@ -97,7 +98,7 @@ def find_matches(tours: list[Tour], vtr_tour_id: int, limit: int = 8) -> dict:
 
 def suggest_vtr_tours(tours: list[Tour], limit: int = 20) -> list[dict]:
     tours = deduplicate_tours(tours)
-    vtr_tours = [t for t in tours if is_vietravel(t.cong_ty) and t.gia and t.gia > 0]
+    vtr_tours = [t for t in tours if is_vietravel(t.cong_ty) and t.gia and t.gia >= MIN_VALID_PRICE]
     vtr_tours.sort(key=lambda t: t.updated_at or t.created_at, reverse=True)
     return [
         {"id": t.id, "ten_tour": t.ten_tour, "thi_truong": t.thi_truong, "tuyen_tour": t.tuyen_tour, "gia": t.gia}

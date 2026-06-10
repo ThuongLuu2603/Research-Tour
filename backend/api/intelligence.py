@@ -12,6 +12,7 @@ from api.auth import get_current_user, require_admin
 from compare_engine import deduplicate_tours
 from coverage_engine import build_coverage_for_api
 from data_quality import compute_data_quality
+from data_sources import MIN_VALID_PRICE
 from database import get_db
 from insight_engine import get_home_brief
 from models import IntelAlert, SavedView, Tour, User
@@ -31,7 +32,7 @@ def _market_compare_tour_query(db: Session):
     # Postgres self-host: 1 query load full row ~5MB là vô tư, tránh 7000+ lookups.
     return apply_market_compare_source_filter(
         db.query(Tour)
-        .filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+        .filter(Tour.gia != None, Tour.gia >= MIN_VALID_PRICE)  # noqa: E711
     )
 
 

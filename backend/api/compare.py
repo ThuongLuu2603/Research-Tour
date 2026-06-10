@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from api.auth import get_current_user
 from compare_cache import get_compare_context, get_segment_by_key, load_tours
+from data_sources import MIN_VALID_PRICE
 from compare_engine import (
     METHODOLOGY,
     build_competitor_overview,
@@ -96,7 +97,7 @@ def _build_filter_options_from_cache(db: Session) -> dict:
     # Fallback: SQL DISTINCT — nhanh hơn load toàn bộ tour
     rows = (
         db.query(Tour.thi_truong, Tour.tuyen_tour, Tour.diem_kh)
-        .filter(Tour.nguon == "Vietravel", Tour.gia != None, Tour.gia > 0)
+        .filter(Tour.nguon == "Vietravel", Tour.gia != None, Tour.gia >= MIN_VALID_PRICE)
         .distinct()
         .all()
     )

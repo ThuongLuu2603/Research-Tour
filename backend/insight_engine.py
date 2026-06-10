@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from compare_engine import build_segment_stats, deduplicate_tours, is_vietravel
 from coverage_engine import build_coverage_summary
 from data_quality import compute_data_quality
+from data_sources import MIN_VALID_PRICE
 from models import DailySnapshot, IntelAlert, SegmentSnapshot, Tour
 
 
@@ -189,7 +190,7 @@ def _compute_home_brief(db: Session) -> dict:
         from db_retry import run_with_retry
 
         tours = apply_market_compare_source_filter(
-            db.query(Tour).filter(Tour.gia != None, Tour.gia > 0)  # noqa: E711
+            db.query(Tour).filter(Tour.gia != None, Tour.gia >= MIN_VALID_PRICE)  # noqa: E711
         ).all()
         daily = run_with_retry(lambda: capture_daily_snapshot(db, tours), db=db, label="brief-snapshot")
 
