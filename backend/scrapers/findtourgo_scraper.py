@@ -722,7 +722,10 @@ def _item_to_row(
         # (vd: tourLegs trống, title format không quen thuộc), ít nhất cũng có country.
         dep_country_code = (item.get("departureCountry") or "").upper()
         dep_city = _country_name_vi(dep_country_code, country_cache) if dep_country_code else ""
-    lich_trinh = _resolve_quoc_gia(item, listing_label, country_cache)
+    # lich_trinh: KHÔNG bịa từ danh sách quốc gia điểm đến. API không có lịch trình
+    # ngày-by-ngày → để TRỐNG. (Trước đây gán _resolve_quoc_gia = danh sách quốc gia
+    # → data sai + gây misclassify giống Vietravel.)
+    lich_trinh = ""
     price = _vnd_price(item)
     now = fmt_vn()  # giờ VN (GMT+7), không phải UTC của Render
 
