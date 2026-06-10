@@ -27,6 +27,7 @@ import {
   // Festival mapping rules (tab Lễ hội)
   listFestivalMappingRules, createFestivalMappingRule, updateFestivalMappingRule,
   deleteFestivalMappingRule, applyFestivalMappingRules,
+  retagFestivals,
   listFestivals, getFilterOptions,
   FestivalMappingRule, Festival,
   // Compare segment rule (tab So sánh VTR ↔ Thị trường)
@@ -320,6 +321,39 @@ export default function RulesAdminPage() {
         invalidate();
         void refreshUnmatchedList();
         setApplying(false);
+      } else if (tab === "schedule") {
+        // Định dạng Ngày KH (DSL pattern): không có apply-to-tours (lich_kh giữ
+        // text gốc; alias chỉ ảnh hưởng collect_unmatched). Chỉ invalidate cache
+        // + refetch unmatched list để admin thấy ngay rule mới khớp được text nào.
+        setSyncMsg("Đang invalidate cache + tính lại text chưa khớp…");
+        invalidate();
+        await refreshUnmatchedList();
+        setSyncMsg("Đã refresh cache & danh sách text chưa khớp (Định dạng Ngày KH).");
+        setApplying(false);
+      } else if (tab === "festival") {
+        // Lễ hội: re-apply mapping rules (location → market+route) → trigger
+        // festival_tagging.tag_tours_with_festivals để gán Tour.festival_slug.
+        setSyncMsg("Đang re-apply mapping Lễ hội + retag toàn bộ tour…");
+        const applyRes = await applyFestivalMappingRules();
+        const tagRes = await retagFestivals(false);
+        setSyncMsg(
+          `Đã apply ${applyRes.rules_applied} rules (${applyRes.tours_tagged} tour qua mapping) `
+          + `+ retag toàn bộ (${tagRes.tours_tagged} tour, ${tagRes.tours_scanned} quét).`,
+        );
+        invalidate();
+        qc.invalidateQueries({ queryKey: ["festivals"] });
+        qc.invalidateQueries({ queryKey: ["festival-coverage-gap"] });
+        setApplying(false);
+      } else if (tab === "compare") {
+        // So sánh VTR ↔ Thị trường: rule là single-row config (vtr_tiers +
+        // market_phan_khuc). Không có "apply to tours" — chỉ invalidate compare
+        // cache để trang So sánh dùng rule mới ngay.
+        setSyncMsg("Đang invalidate cache So sánh…");
+        qc.invalidateQueries({ queryKey: ["compare"] });
+        qc.invalidateQueries({ queryKey: ["compare-class-gaps"] });
+        qc.invalidateQueries({ queryKey: ["compare-segment-rule"] });
+        setSyncMsg("Đã refresh cache So sánh — mở trang So sánh để xem kết quả mới.");
+        setApplying(false);
       } else {
         setSyncMsg("Tab này không có rule áp dụng trực tiếp lên tour (chỉ invalidate cache).");
         invalidate();
@@ -336,9 +370,20 @@ export default function RulesAdminPage() {
     if (tab === "company") return "Re-apply Công ty";
     if (tab === "departure") return "Re-apply Điểm KH";
     if (tab === "duration") return "Re-apply Thời gian";
-    if (tab === "schedule") return "Refresh cache Ngày KH";
-    if (tab === "festival") return "Refresh cache Lễ hội";
+    if (tab === "schedule") return "Refresh Định dạng KH";
+    if (tab === "festival") return "Re-tag Lễ Hội";
+    if (tab === "compare") return "Refresh cache So sánh";
     return "Refresh cache";
+  }, [tab]);
+
+  const refreshTabTitle = useMemo(() => {
+    if (tab === "classify") return "Re-apply chỉ rules tuyến tour cho tab này (không động đến công ty / điểm KH / thời gian)";
+    if (tab === "company") return "Re-apply chỉ alias công ty (không động đến tuyến tour / điểm KH / thời gian)";
+    if (tab === "departure") return "Re-apply chỉ alias điểm khởi hành (không động đến tuyến tour / công ty / thời gian)";
+    if (tab === "duration") return "Re-apply chỉ alias thời gian (không động đến tuyến tour / công ty / điểm KH)";
+    if (tab === "schedule") return "Invalidate cache + refetch danh sách text chưa khớp Định dạng Ngày KH (Tour.lich_kh giữ nguyên text gốc — rule chỉ ảnh hưởng parse/match)";
+    if (tab === "festival") return "Re-apply mapping rules Lễ Hội (location → market+route) + retag toàn bộ tour với festival hiện có";
+    return "Invalidate cache trang So sánh VTR ↔ Thị trường (để compare engine dùng rule mới ngay)";
   }, [tab]);
 
   const afterRuleSaved = (label: string, opts?: { gapValues?: string[]; skipPoll?: boolean }) => {
@@ -533,28 +578,18 @@ export default function RulesAdminPage() {
             }
           />
         </div>
-        {/* Per-tab refresh button — Issue #2: mỗi tab có nút Refresh riêng biệt,
-            chỉ trigger logic của tab đó. Sticky bar global vẫn giữ cho "Áp dụng tất cả". */}
-        {(tab === "classify" || tab === "company" || tab === "departure" || tab === "duration") && (
-          <button
-            type="button"
-            onClick={onRefreshCurrentTab}
-            disabled={applying}
-            className="btn-secondary text-sm flex items-center gap-1.5 shrink-0 disabled:opacity-60"
-            title={
-              tab === "classify"
-                ? "Re-apply chỉ rules tuyến tour cho tab này (không động đến công ty / điểm KH / thời gian)"
-                : tab === "company"
-                ? "Re-apply chỉ alias công ty (không động đến tuyến tour / điểm KH / thời gian)"
-                : tab === "departure"
-                ? "Re-apply chỉ alias điểm khởi hành (không động đến tuyến tour / công ty / thời gian)"
-                : "Re-apply chỉ alias thời gian (không động đến tuyến tour / công ty / điểm KH)"
-            }
-          >
-            <RefreshCw size={14} className={applying ? "animate-spin" : ""} />
-            {refreshTabLabel}
-          </button>
-        )}
+        {/* Per-tab refresh button — Issue #3: mỗi tab (cả schedule/festival/compare)
+            có nút Refresh riêng. Sticky bar global vẫn giữ cho "Áp dụng tất cả". */}
+        <button
+          type="button"
+          onClick={onRefreshCurrentTab}
+          disabled={applying}
+          className="btn-secondary text-sm flex items-center gap-1.5 shrink-0 disabled:opacity-60"
+          title={refreshTabTitle}
+        >
+          <RefreshCw size={14} className={applying ? "animate-spin" : ""} />
+          {refreshTabLabel}
+        </button>
       </div>
 
       {tab === "classify" && (

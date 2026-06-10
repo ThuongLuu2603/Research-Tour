@@ -51,6 +51,27 @@ def _on_market_route_rules_changed(db: Session) -> None:
     invalidate_rules_changed(db)
 
 
+def _after_alias_mutation() -> None:
+    """Sau khi POST/PUT/DELETE alias (company/departure/duration/schedule) — clear
+    cả cache classification (_*_alias_pairs lru) lẫn cache unmatched (panel «Chưa khớp»).
+
+    Lý do: trước đây chỉ gọi invalidate_classification_cache() → fingerprint của
+    rules_job_store._unmatched_cache có thể vẫn hit trong cửa sổ ngắn (race read
+    fingerprint trước khi commit visible cho transaction khác). Auto-apply scope
+    chạy nền mới invalidate unmatched cache — user F5 ngay sau Gán → vẫn thấy
+    item cũ trong panel «Chưa khớp».
+
+    Gọi explicit cả hai → endpoint /unmatched lần sau recompute fresh ngay."""
+    from rules_job_store import invalidate_unmatched_cache
+
+    invalidate_classification_cache()
+    try:
+        invalidate_unmatched_cache()
+    except Exception:
+        # cache layer optional — không chặn business logic nếu lỗi
+        pass
+
+
 @router.get("/status")
 def rules_runtime_status(_: User = Depends(require_admin)):
     """Nguồn alias đang dùng lúc chạy (DB vs mặc định code khi bảng trống)."""
@@ -821,7 +842,7 @@ def create_company_rule(
     db.add(rule)
     db.commit()
     db.refresh(rule)
-    invalidate_classification_cache()
+    _after_alias_mutation()
     _auto_apply_tours(db, auto_apply, scope="company")
     return rule
 
@@ -841,7 +862,7 @@ def update_company_rule(
         setattr(rule, k, v)
     db.commit()
     db.refresh(rule)
-    invalidate_classification_cache()
+    _after_alias_mutation()
     _auto_apply_tours(db, auto_apply, scope="company")
     return rule
 
@@ -858,7 +879,7 @@ def delete_company_rule(
         raise HTTPException(404, "Rule không tồn tại")
     db.delete(rule)
     db.commit()
-    invalidate_classification_cache()
+    _after_alias_mutation()
     stats = _auto_apply_tours(db, auto_apply, scope="company")
     return {"deleted": rule_id, "tours_apply": stats}
 
@@ -913,7 +934,7 @@ def create_departure_rule(
     db.add(rule)
     db.commit()
     db.refresh(rule)
-    invalidate_classification_cache()
+    _after_alias_mutation()
     _auto_apply_tours(db, auto_apply, scope="departure")
     return rule
 
@@ -933,7 +954,7 @@ def update_departure_rule(
         setattr(rule, k, v)
     db.commit()
     db.refresh(rule)
-    invalidate_classification_cache()
+    _after_alias_mutation()
     _auto_apply_tours(db, auto_apply, scope="departure")
     return rule
 
@@ -950,7 +971,7 @@ def delete_departure_rule(
         raise HTTPException(404, "Rule không tồn tại")
     db.delete(rule)
     db.commit()
-    invalidate_classification_cache()
+    _after_alias_mutation()
     stats = _auto_apply_tours(db, auto_apply, scope="departure")
     return {"deleted": rule_id, "tours_apply": stats}
 
@@ -1044,7 +1065,7 @@ def create_duration_rule(
     db.add(rule)
     db.commit()
     db.refresh(rule)
-    invalidate_classification_cache()
+    _after_alias_mutation()
     _auto_apply_tours(db, auto_apply, scope="duration")
     return rule
 
@@ -1064,7 +1085,7 @@ def update_duration_rule(
         setattr(rule, k, v)
     db.commit()
     db.refresh(rule)
-    invalidate_classification_cache()
+    _after_alias_mutation()
     _auto_apply_tours(db, auto_apply, scope="duration")
     return rule
 
@@ -1081,7 +1102,7 @@ def delete_duration_rule(
         raise HTTPException(404, "Rule không tồn tại")
     db.delete(rule)
     db.commit()
-    invalidate_classification_cache()
+    _after_alias_mutation()
     stats = _auto_apply_tours(db, auto_apply, scope="duration")
     return {"deleted": rule_id, "tours_apply": stats}
 
@@ -1137,7 +1158,7 @@ def create_schedule_rule(
     db.add(rule)
     db.commit()
     db.refresh(rule)
-    invalidate_classification_cache()
+    _after_alias_mutation()
     _auto_apply_tours(db, auto_apply, scope="schedule")
     return rule
 
@@ -1157,7 +1178,7 @@ def update_schedule_rule(
         setattr(rule, k, v)
     db.commit()
     db.refresh(rule)
-    invalidate_classification_cache()
+    _after_alias_mutation()
     _auto_apply_tours(db, auto_apply, scope="schedule")
     return rule
 
@@ -1174,7 +1195,7 @@ def delete_schedule_rule(
         raise HTTPException(404, "Rule không tồn tại")
     db.delete(rule)
     db.commit()
-    invalidate_classification_cache()
+    _after_alias_mutation()
     stats = _auto_apply_tours(db, auto_apply, scope="schedule")
     return {"deleted": rule_id, "tours_apply": stats}
 
