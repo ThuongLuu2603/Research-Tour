@@ -60,7 +60,7 @@ class BulkOverridePatch(BaseModel):
 
 
 # Admin sửa các trường này → ghi THẲNG DB (chung) + khóa quy tắc; còn lại → override workspace (riêng user).
-_ADMIN_DB_FIELDS = ("thi_truong", "tuyen_tour", "thoi_gian")
+_ADMIN_DB_FIELDS = ("thi_truong", "tuyen_tour", "thoi_gian", "diem_kh")
 
 
 def _admin_write_classification(db, tour, data: dict, user) -> tuple[dict, bool]:
@@ -92,17 +92,19 @@ def _admin_write_classification(db, tour, data: dict, user) -> tuple[dict, bool]
             from seed import parse_ngay
             tour.so_ngay = parse_ngay(v)
             wrote = True
-    # cong_ty / diem_kh: sticky guard tương tự — không wipe khi payload empty.
-    # (Hai field này được patch qua override workspace cho non-admin, nhưng admin
-    #  có thể có path cũ ghi trực tiếp; thêm guard để defense-in-depth.)
+    # Điểm khởi hành: admin sửa → ghi THẲNG DB + khóa (giống TT/Tuyến/Thời gian).
+    # Option đến từ Quy tắc phân loại (canonical) nên ghi trực tiếp.
+    if "diem_kh" in remaining:
+        v = (remaining.pop("diem_kh") or "").strip()
+        if v:
+            tour.diem_kh = v[:256]
+            wrote = True
+        # else: empty → skip (sticky, không wipe)
+    # cong_ty: KHÔNG phải admin-DB field → vẫn qua override. Guard không wipe khi rỗng.
     if "cong_ty" in remaining:
         v = (remaining.get("cong_ty") or "").strip()
         if not v:
             remaining.pop("cong_ty", None)
-    if "diem_kh" in remaining:
-        v = (remaining.get("diem_kh") or "").strip()
-        if not v:
-            remaining.pop("diem_kh", None)
     if wrote:
         from datetime import datetime
         tour.manual_locked = True       # quy tắc + sheet không ghi đè khi tour update (tên không đổi)
@@ -196,7 +198,7 @@ def _upsert_override(db: Session, workspace_id: int, tour_id: int, user_id: int,
     return row
 
 
-def _apply_tour_filters(q, search, thi_truong, tuyen_tour, cong_ty, nguon, flagged, phan_khuc=None):
+def _apply_tour_filters(q, search, thi_truong, tuyen_tour, cong_ty, nguon, flagged, phan_khuc=None, diem_kh=None):
     if search:
         from tour_search import apply_search_filter
 
@@ -211,6 +213,8 @@ def _apply_tour_filters(q, search, thi_truong, tuyen_tour, cong_ty, nguon, flagg
         q = q.filter(Tour.nguon.in_(nguon))
     if phan_khuc:
         q = q.filter(Tour.phan_khuc.in_(phan_khuc))
+    if diem_kh:
+        q = q.filter(Tour.diem_kh.in_(diem_kh))
     if flagged is not None:
         q = q.filter(Tour.flagged == flagged)
     return q
@@ -232,6 +236,7 @@ def list_workspace_tours(
     cong_ty: list[str] = Query([]),
     nguon: list[str] = Query([]),
     phan_khuc: list[str] = Query([]),
+    diem_kh: list[str] = Query([]),
     flagged: bool | None = Query(None),
     only_overridden: bool = Query(False),
     sort_by: str = Query("id"),
@@ -244,7 +249,7 @@ def list_workspace_tours(
 
     from data_sources import DB_CANONICAL_NGUON
 
-    q = _apply_tour_filters(db.query(Tour), search, thi_truong, tuyen_tour, cong_ty, nguon, flagged, phan_khuc)
+    q = _apply_tour_filters(db.query(Tour), search, thi_truong, tuyen_tour, cong_ty, nguon, flagged, phan_khuc, diem_kh)
     q = q.filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
 
     if only_overridden:
@@ -501,6 +506,7 @@ def export_workspace_csv(
     cong_ty: list[str] = Query([]),
     nguon: list[str] = Query([]),
     phan_khuc: list[str] = Query([]),
+    diem_kh: list[str] = Query([]),
     flagged: bool | None = Query(None),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -509,7 +515,7 @@ def export_workspace_csv(
     require_permission(db, ws, user, "view")
     from data_sources import DB_CANONICAL_NGUON
 
-    q = _apply_tour_filters(db.query(Tour), search, thi_truong, tuyen_tour, cong_ty, nguon, flagged, phan_khuc)
+    q = _apply_tour_filters(db.query(Tour), search, thi_truong, tuyen_tour, cong_ty, nguon, flagged, phan_khuc, diem_kh)
     q = q.filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
     # Trước đây cap 5000 — user phản ánh DB có ~7000 tour Main + Vietravel nhưng tải về
     # chỉ thấy 5000. Tăng lên 50000 (ceiling an toàn để không OOM); CSV ~7000 tour

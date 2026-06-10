@@ -1148,7 +1148,7 @@ export interface WorkspaceInfo {
 export interface WorkspaceTourFilters {
   page?: number; page_size?: number; search?: string;
   thi_truong?: string[]; tuyen_tour?: string[]; cong_ty?: string[];
-  nguon?: string[]; phan_khuc?: string[]; flagged?: boolean; only_overridden?: boolean;
+  nguon?: string[]; phan_khuc?: string[]; diem_kh?: string[]; flagged?: boolean; only_overridden?: boolean;
   sort_by?: string; sort_dir?: string;
 }
 

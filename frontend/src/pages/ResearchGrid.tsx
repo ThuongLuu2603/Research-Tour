@@ -6,6 +6,7 @@ import {
   shareWorkspace, listWorkspaceMembers, revokeWorkspaceShare, copyWorkspaceOverrides,
   recomputeAllClassifications,
   getApplyClassificationStatus,
+  listDepartureRules,
   WorkspaceInfo,
 } from "@/lib/api";
 import { fmtVND, formatPhanKhuc, segmentColor, cn } from "@/lib/utils";
@@ -455,8 +456,8 @@ export default function ResearchGrid() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   // Issue #4: Refresh / Re-apply rules — chỉ trigger classification, KHÔNG scrape, KHÔNG import.
   const [recomputing, setRecomputing] = useState(false);
-  // Issue #7: Số ngày filter (dropdown options từ existing values)
-  const [selDays, setSelDays] = useState<string[]>([]);
+  // Filter Điểm khởi hành (thay filter Số ngày cũ) — backend filter theo diem_kh.
+  const [selDeparts, setSelDeparts] = useState<string[]>([]);
 
   const handleSort = (col: GridSortCol) => {
     if (sortBy === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -480,6 +481,15 @@ export default function ResearchGrid() {
   }, [workspaces, workspaceId]);
 
   const { data: opts } = useQuery({ queryKey: ["filter-options"], queryFn: getFilterOptions, staleTime: 60000 });
+
+  // Điểm khởi hành CHÍNH THỨC từ Quy tắc phân loại (canonical_name của DepartureAliasRule).
+  // Dùng cho cả filter + dropdown chỉnh sửa cột Điểm khởi hành (KHÔNG dùng distinct DB value).
+  const { data: departRules } = useQuery({ queryKey: ["departure-rules"], queryFn: listDepartureRules, staleTime: 60000 });
+  const departOptions = useMemo(() => {
+    const set = new Set<string>();
+    (departRules ?? []).forEach((r) => { if (r.active && r.canonical_name?.trim()) set.add(r.canonical_name.trim()); });
+    return [...set].sort((a, b) => a.localeCompare(b, "vi"));
+  }, [departRules]);
 
   const availableRoutes = useMemo(() => {
     const byMarket = (opts?.routes_by_market ?? {}) as Record<string, string[]>;
@@ -512,11 +522,11 @@ export default function ResearchGrid() {
   }, [availableRoutes]);
 
   const { data, isFetching } = useQuery({
-    queryKey: ["workspace-tours", workspaceId, page, search, selMarkets, selRoutes, selCompanies, selPhanKhuc, selNguon, onlyFlagged, sortBy, sortDir],
+    queryKey: ["workspace-tours", workspaceId, page, search, selMarkets, selRoutes, selCompanies, selPhanKhuc, selNguon, selDeparts, onlyFlagged, sortBy, sortDir],
     queryFn: () => getWorkspaceTours(workspaceId!, {
       page, page_size: PAGE_SIZE, search,
       thi_truong: selMarkets, tuyen_tour: selRoutes, cong_ty: selCompanies,
-      phan_khuc: selPhanKhuc, nguon: selNguon,
+      phan_khuc: selPhanKhuc, nguon: selNguon, diem_kh: selDeparts,
       flagged: onlyFlagged || undefined,
       sort_by: sortBy,
       sort_dir: sortDir,
@@ -527,16 +537,6 @@ export default function ResearchGrid() {
     refetchInterval: 120_000,
     refetchOnWindowFocus: true,
   });
-
-  // Issue #7: Số ngày dropdown options — distinct so_ngay từ trang hiện tại (workspace data).
-  // Backend filter-options không trả so_ngay → derive client-side. Tooltip note coord.
-  const dayOptions = useMemo(() => {
-    const set = new Set<number>();
-    (data?.items ?? []).forEach((t) => {
-      if (t.so_ngay != null && t.so_ngay > 0) set.add(t.so_ngay);
-    });
-    return [...set].sort((a, b) => a - b);
-  }, [data]);
 
   const { data: members, refetch: refetchMembers } = useQuery({
     queryKey: ["workspace-members", workspaceId],
@@ -689,14 +689,9 @@ export default function ResearchGrid() {
     setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   };
 
-  // Issue #7: client-side post-filter cho selDays (backend chưa support so_ngay filter).
-  // Áp dụng trên page hiện tại — note coord backend nếu cần cross-page filter chính xác.
-  const visibleItems = useMemo(() => {
-    const items = data?.items ?? [];
-    if (!selDays.length) return items;
-    const set = new Set(selDays.map((d) => parseFloat(d)));
-    return items.filter((t) => t.so_ngay != null && set.has(t.so_ngay));
-  }, [data, selDays]);
+  // Filter Điểm khởi hành đã chạy ở BACKEND (diem_kh param) → dùng data.items trực tiếp,
+  // không còn post-filter client-side (filter chính xác cross-page).
+  const visibleItems = data?.items ?? [];
 
   const pageIds = visibleItems.map((t) => t.id);
   const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.includes(id));
@@ -862,24 +857,21 @@ export default function ResearchGrid() {
           </button>
         ))}
 
-        {/* Issue #7: Số ngày dropdown — options từ existing values (so_ngay của tour hiện tại).
-            Backend không filter theo so_ngay → filter client-side ở render bên dưới.
-            NOTE coord backend: nếu cần filter chính xác cross-page, thêm
-              GET /workspaces/{id}/tours?so_ngay=3&so_ngay=5
-            trong WorkspaceTourFilters + backend api/workspaces.py. */}
+        {/* Filter Điểm khởi hành — options CHÍNH THỨC từ Quy tắc phân loại (departOptions).
+            Backend filter theo diem_kh (param diem_kh trong getWorkspaceTours). */}
         <select
-          className="input text-xs py-1.5 max-w-[140px]"
+          className="input text-xs py-1.5 max-w-[160px]"
           value=""
-          onChange={(e) => { if (e.target.value) toggleFilter(selDays, setSelDays, e.target.value); e.target.value = ""; }}
+          onChange={(e) => { if (e.target.value) toggleFilter(selDeparts, setSelDeparts, e.target.value); e.target.value = ""; }}
         >
-          <option value="">Số ngày{selDays.length ? ` (${selDays.length})` : ""}</option>
-          {dayOptions.filter((d) => !selDays.includes(String(d))).map((d) => (
-            <option key={d} value={String(d)}>{d} ngày</option>
+          <option value="">{COL.diemKhoiHanh}{selDeparts.length ? ` (${selDeparts.length})` : ""}</option>
+          {departOptions.filter((d) => !selDeparts.includes(d)).map((d) => (
+            <option key={d} value={d}>{d}</option>
           ))}
         </select>
-        {selDays.map((d) => (
-          <button key={d} onClick={() => toggleFilter(selDays, setSelDays, d)} className="text-xs px-2 py-1 rounded-full bg-cyan-100 text-cyan-800 flex items-center gap-1">
-            {d} ngày<X size={10} />
+        {selDeparts.map((d) => (
+          <button key={d} onClick={() => toggleFilter(selDeparts, setSelDeparts, d)} className="text-xs px-2 py-1 rounded-full bg-cyan-100 text-cyan-800 flex items-center gap-1">
+            {d}<X size={10} />
           </button>
         ))}
 
@@ -922,9 +914,9 @@ export default function ResearchGrid() {
           <Flag size={12} /> Flagged
         </button>
 
-        {(selMarkets.length > 0 || selRoutes.length > 0 || selCompanies.length > 0 || selPhanKhuc.length > 0 || selNguon.length > 0 || selDays.length > 0 || onlyFlagged || search) && (
+        {(selMarkets.length > 0 || selRoutes.length > 0 || selCompanies.length > 0 || selPhanKhuc.length > 0 || selNguon.length > 0 || selDeparts.length > 0 || onlyFlagged || search) && (
           <button
-            onClick={() => { setSelMarkets([]); setSelRoutes([]); setSelCompanies([]); setSelPhanKhuc([]); setSelNguon([]); setSelDays([]); setOnlyFlagged(false); setSearch(""); setPage(1); }}
+            onClick={() => { setSelMarkets([]); setSelRoutes([]); setSelCompanies([]); setSelPhanKhuc([]); setSelNguon([]); setSelDeparts([]); setOnlyFlagged(false); setSearch(""); setPage(1); }}
             className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1"
           >
             <X size={12} /> Xoá bộ lọc
@@ -1051,11 +1043,12 @@ export default function ResearchGrid() {
                   />
                 </td>
                 <td className="px-3 py-2">
-                  {/* Điểm khởi hành — dropdown chọn option (strict). Lưu qua override workspace. */}
+                  {/* Điểm khởi hành — dropdown option CHÍNH THỨC từ Quy tắc phân loại (departOptions).
+                      Admin sửa → backend ghi thẳng DB + khóa (như TT/Tuyến/Thời gian). */}
                   <EditableSelectCell
                     disabled={!canEdit}
                     value={tour.diem_kh}
-                    options={(opts?.diem_kh ?? []) as string[]}
+                    options={departOptions}
                     placeholder="Tìm điểm khởi hành…"
                     strict
                     onSave={(v) => mutation.mutate({ id: tour.id, patch: { diem_kh: v } })}
