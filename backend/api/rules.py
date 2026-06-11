@@ -1224,7 +1224,20 @@ def seed_duration_defaults(_: User = Depends(require_admin), db: Session = Depen
 @router.post("/duration/apply-to-tours")
 def apply_duration_rules_to_tours(_: User = Depends(require_admin), db: Session = Depends(get_db)):
     updated = apply_duration_aliases_to_tours(db)
-    return {"updated": updated, "message": f"Đã chuẩn hóa số ngày cho {updated} tour"}
+    # so_ngay đổi → giá/ngày đổi → phân khúc phải tính lại. Đồng thời FILL phân khúc
+    # cho tour còn trống ("—"). Invalidate route_avg vì so_ngay là mẫu số của giá TB.
+    filled = 0
+    try:
+        from pricing_segments import invalidate_route_avg_cache, recompute_missing_phan_khuc
+        invalidate_route_avg_cache()
+        filled = recompute_missing_phan_khuc(db)
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning("recompute phan_khuc after duration apply failed: %s", e)
+    msg = f"Đã chuẩn hóa số ngày cho {updated} tour"
+    if filled:
+        msg += f" · điền phân khúc {filled} tour"
+    return {"updated": updated, "phan_khuc_filled": filled, "message": msg}
 
 
 # ── Schedule alias rules (Ngày KH / lich_kh) ─────────────────────────────────
