@@ -228,7 +228,11 @@ def _median(values: list[float]) -> float | None:
 
 
 def _departure_weight(entry: TourEntry, vtr_dates: list, *, in_vtr_period: bool) -> float:
-    """Trọng số = số đoàn KH (ưu tiên đếm ngày cố định trong giai đoạn VTR)."""
+    """Trọng số = số đoàn KH (đếm ngày cố định trong giai đoạn VTR).
+
+    Tour KHÔNG khớp định dạng ngày (không parse ra ngày nào) → trọng số 0.0:
+    KHÔNG tính vào giá/tần suất TB. Muốn tính → cấu hình rule 'Định dạng Ngày KH'.
+    KHÔNG còn sàn 1.0 (trước đây ép tour vô-khớp vẫn count với trọng số tối thiểu)."""
     if in_vtr_period and vtr_dates:
         info = parse_departure_frequency_in_period(entry.lich_kh, vtr_dates)
         explicit = info.get("explicit_dates") or 0
@@ -241,7 +245,7 @@ def _departure_weight(entry: TourEntry, vtr_dates: list, *, in_vtr_period: bool)
     explicit = info.get("explicit_dates") or 0
     if explicit > 0:
         return float(explicit)
-    return max(float(info.get("monthly_estimate") or entry.freq_score or 1.0), 1.0)
+    return float(info.get("monthly_estimate") or 0.0)  # 0 = không khớp → không tính
 
 
 def _departure_weights(entries: list[TourEntry], vtr_dates: list, *, in_vtr_period: bool) -> list[float]:
@@ -280,8 +284,10 @@ def _route_total_price(avg_day: float | None, avg_days: float | None) -> float |
 
 
 def _smart_price_avg(entries: list[TourEntry], *, vtr: bool) -> float | None:
-    """Giá TB có trọng số; thị trường dùng robust khi biên độ giá lớn."""
-    pairs = [(e.gia, e.freq_score) for e in entries]
+    """Giá TB có trọng số = số ngày KH (freq_score). Tour KHÔNG khớp định dạng
+    ngày (freq_score=0) → trọng số 0 → KHÔNG tính vào avg (muốn tính thì cấu
+    hình rule trong Quy tắc phân loại)."""
+    pairs = [(e.gia, e.freq_score) for e in entries if e.freq_score > 0]
     if not pairs:
         return None
     if vtr or len(pairs) < 4:
@@ -290,7 +296,7 @@ def _smart_price_avg(entries: list[TourEntry], *, vtr: bool) -> float | None:
 
 
 def _smart_day_avg(entries: list[TourEntry], *, vtr: bool) -> float | None:
-    pairs = [(e.price_day, e.freq_score) for e in entries]
+    pairs = [(e.price_day, e.freq_score) for e in entries if e.freq_score > 0]
     if not pairs:
         return None
     if vtr or len(pairs) < 4:
@@ -354,11 +360,15 @@ class SegmentStats:
         vtr_dates = self._vtr_period_dates()
         if not vtr_dates:
             return self.market_entries
-        matched = [
+        # STRICT: chỉ giữ đối thủ có NGÀY KH THẬT (parse ra dd/mm/yyyy qua rule) rơi
+        # vào tháng VTR. Đối thủ không khớp định dạng ('Hàng ngày' chưa có rule...) →
+        # explicit_dates=0 → LOẠI, không tính giá/tần suất. KHÔNG fallback lấy tất cả:
+        # không khớp là không tính (muốn tính thì cấu hình rule). Recurring có rule
+        # (weekly/monthly) tự expand ra ngày → vẫn được giữ.
+        return [
             e for e in self.market_entries
-            if schedules_overlap_vtr_period(vtr_dates, e.lich_kh)
+            if parse_departure_frequency_in_period(e.lich_kh, vtr_dates).get("explicit_dates", 0) > 0
         ]
-        return matched if matched else self.market_entries
 
     @property
     def vtr_price_entries(self) -> list[TourEntry]:
@@ -438,7 +448,9 @@ class SegmentStats:
         vtr_dates = self._vtr_period_dates()
         for e in self.entries:
             if in_vtr_period and vtr_dates and not e.is_vietravel:
-                if not schedules_overlap_vtr_period(vtr_dates, e.lich_kh):
+                # STRICT (nhất quán market_entries_in_period): đối thủ phải có NGÀY
+                # KH thật trong giai đoạn VTR. Không khớp định dạng → loại.
+                if parse_departure_frequency_in_period(e.lich_kh, vtr_dates).get("explicit_dates", 0) <= 0:
                     continue
             by_co[e.cong_ty].append(e)
         result = {}
