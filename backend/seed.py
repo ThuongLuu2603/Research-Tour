@@ -363,12 +363,30 @@ def source_count(nguon: str) -> int:
         db.close()
 
 
+# Chỉ seed từ CSV ĐÓNG GÓI (repo, snapshot cũ) khi DB gần như TRỐNG (cài mới).
+# DB có >= ngưỡng này → TUYỆT ĐỐI không delete+re-insert: CSV gói là data cũ,
+# wipe sẽ phá hết enrichment (diem_kh chuẩn hóa, manual_locked, tour_overrides).
+# Root cause bug "Điểm khởi hành cứ bị trả về rỗng": mỗi restart, count (6857)
+# < EXPECTED_MIN (7500) → import_main_chunks() xóa sạch tour live + insert CSV cũ.
+# Sheet live ít tour hơn snapshot repo là BÌNH THƯỜNG (mirror-prune) — không phải
+# "incomplete". Muốn refresh data → dùng "Sync từ Sheet" (sticky guards, không wipe).
+_SEED_ONLY_IF_BELOW = 100
+
+
 def import_missing_sheets() -> dict[str, int]:
     results: dict[str, int] = {}
     for nguon, gid, snapshot in SHEET_SOURCES:
         count = source_count(nguon)
         expected = EXPECTED_MIN.get(nguon, 1)
         if count >= expected:
+            results[nguon] = count
+            continue
+        if count >= _SEED_ONLY_IF_BELOW:
+            logger.warning(
+                "%s có %s tour (< expected %s) — BỎ QUA re-seed từ CSV gói để không wipe "
+                "data live (admin edits/overrides). Dùng 'Sync từ Sheet' nếu cần refresh.",
+                nguon, count, expected,
+            )
             results[nguon] = count
             continue
         logger.info("%s incomplete (%s) — importing", nguon, count)
@@ -379,7 +397,7 @@ def import_missing_sheets() -> dict[str, int]:
             results[nguon] = source_count(nguon)
 
     main_count = source_count("Main")
-    if main_count < EXPECTED_MIN["Main"]:
+    if main_count < _SEED_ONLY_IF_BELOW:
         logger.info("Main incomplete (%s) — importing chunks", main_count)
         try:
             results["Main"] = import_main_chunks()
@@ -387,6 +405,12 @@ def import_missing_sheets() -> dict[str, int]:
             logger.error("Main failed: %s", e)
             results["Main"] = source_count("Main")
     else:
+        if main_count < EXPECTED_MIN["Main"]:
+            logger.warning(
+                "Main có %s tour (< expected %s) — BỎ QUA re-seed chunks để không wipe "
+                "data live. Sheet live ít hơn snapshot repo là bình thường (mirror-prune).",
+                main_count, EXPECTED_MIN["Main"],
+            )
         results["Main"] = main_count
 
     logger.info("Sync done — total %s — %s", tour_count(), results)
