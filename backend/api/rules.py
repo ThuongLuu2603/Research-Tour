@@ -116,13 +116,17 @@ def _alias_out_with_apply(model_cls, rule, apply_res: dict | None):
 def _unmatched_tours_query(db: Session):
     """Query tour cho collect_unmatched_values — load_only đúng cột cần đọc.
 
-    Cold path recompute panel «Chưa khớp» scan toàn bộ tour canonical; trước đây
-    load full row (lich_trinh/search_text/... Text lớn) → I/O nặng trên VPS 2vCPU.
-    Cột liệt kê = đủ cho collect_unmatched_values (resolvers + matcher.resolve +
-    is_stats_excluded_tour + is_vietravel_tab) — thêm cột mới nếu function đổi."""
+    Cold path recompute panel «Chưa khớp» scan tour; trước đây load full row
+    (lich_trinh/search_text/... Text lớn) → I/O nặng trên VPS 2vCPU. Cột liệt kê
+    = đủ cho collect_unmatched_values (resolvers + matcher.resolve +
+    is_stats_excluded_tour + is_vietravel_tab) — thêm cột mới nếu function đổi.
+
+    KHÔNG filter theo DB_CANONICAL_NGUON: collect_unmatched_values gom alias cho
+    CẢ tour FindTourGo (vtr_only=False). Text rác lệch cột như 'qatar airways',
+    'du lịch maldives', 'khách sạn 4*...' nằm trên FTG cần hiện trong panel để
+    admin chuẩn hóa. Filter canonical sẽ cắt mất chúng → regression panel rỗng."""
     from sqlalchemy.orm import load_only
 
-    from data_sources import DB_CANONICAL_NGUON
     from models import Tour
 
     cols = load_only(
@@ -141,7 +145,6 @@ def _unmatched_tours_query(db: Session):
     )
     return (
         db.query(Tour)
-        .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
         .options(cols)
         .yield_per(800)
     )
