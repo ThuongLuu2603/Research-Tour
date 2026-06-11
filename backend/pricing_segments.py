@@ -120,7 +120,8 @@ def get_cached_route_avg(db: Session) -> dict[str, float]:
     from sqlalchemy.orm import load_only
     from data_sources import DB_CANONICAL_NGUON
     _PRICE_COLS = (Tour.id, Tour.thi_truong, Tour.tuyen_tour, Tour.diem_kh,
-                   Tour.gia, Tour.thoi_gian, Tour.so_ngay, Tour.lich_kh, Tour.nguon)
+                   Tour.gia, Tour.thoi_gian, Tour.so_ngay, Tour.lich_kh,
+             Tour.ten_tour, Tour.lich_trinh, Tour.nguon)
     all_priced = (
         db.query(Tour)
         .options(load_only(*_PRICE_COLS))
@@ -158,7 +159,8 @@ def _build_market_scoped_route_avg(db: Session, thi_truong: str) -> dict[str, fl
     from sqlalchemy.orm import load_only
     from data_sources import DB_CANONICAL_NGUON
     _COLS = (Tour.id, Tour.thi_truong, Tour.tuyen_tour, Tour.diem_kh,
-             Tour.gia, Tour.thoi_gian, Tour.so_ngay, Tour.lich_kh, Tour.nguon)
+             Tour.gia, Tour.thoi_gian, Tour.so_ngay, Tour.lich_kh,
+             Tour.ten_tour, Tour.lich_trinh, Tour.nguon)
     candidates = (
         db.query(Tour)
         .options(load_only(*_COLS))
@@ -385,7 +387,8 @@ def recompute_all_phan_khuc(db: Session, cancel_check=None, progress=None) -> di
 
     _beat(progress, "Đang tính phân khúc giá (toàn bộ)…")
     _PRICE_COLS = (Tour.id, Tour.thi_truong, Tour.tuyen_tour, Tour.diem_kh,
-                   Tour.gia, Tour.thoi_gian, Tour.so_ngay, Tour.phan_khuc, Tour.nguon)
+                   Tour.gia, Tour.thoi_gian, Tour.so_ngay, Tour.phan_khuc,
+                   Tour.ten_tour, Tour.lich_trinh, Tour.nguon)
     tours = (
         db.query(Tour)
         .options(load_only(*_PRICE_COLS))
@@ -421,7 +424,8 @@ def recompute_phan_khuc_for_tour_ids(db: Session, tour_ids: list[int], cancel_ch
 
     from sqlalchemy.orm import load_only
     _PRICE_COLS = (Tour.id, Tour.thi_truong, Tour.tuyen_tour, Tour.diem_kh,
-                   Tour.gia, Tour.thoi_gian, Tour.so_ngay, Tour.phan_khuc, Tour.nguon)
+                   Tour.gia, Tour.thoi_gian, Tour.so_ngay, Tour.phan_khuc,
+                   Tour.ten_tour, Tour.lich_trinh, Tour.nguon)
     _beat(progress, "Đang tính phân khúc giá (tour thay đổi)…")
     all_priced = (
         db.query(Tour)
@@ -484,7 +488,8 @@ def recompute_missing_phan_khuc(db: Session, cancel_check=None, progress=None) -
 
     from sqlalchemy.orm import load_only
     _PRICE_COLS = (Tour.id, Tour.thi_truong, Tour.tuyen_tour, Tour.diem_kh,
-                   Tour.gia, Tour.thoi_gian, Tour.so_ngay, Tour.phan_khuc, Tour.nguon)
+                   Tour.gia, Tour.thoi_gian, Tour.so_ngay, Tour.phan_khuc,
+                   Tour.ten_tour, Tour.lich_trinh, Tour.nguon)
     _beat(progress, "Đang tính phân khúc giá (tour thiếu nhãn)…")
     # Safety net cho tour KHÔNG có giá hợp lệ (gia NULL / < MIN_VALID_PRICE):
     # bị filter khỏi query bên dưới → trước đây phan_khuc="" rỗng VĨNH VIỄN.
