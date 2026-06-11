@@ -318,75 +318,30 @@ def parse_departure_frequency_in_period(lich_kh: str, vtr_dates: list[datetime])
 
 
 def parse_departure_frequency(lich_kh: str) -> dict:
-    """
-    Estimate monthly departure slots from free-text schedule.
-    Tour có nhiều đoàn/ngày KH → freq_score cao hơn khi tính TB có trọng số.
+    """Đoàn/tháng = ĐẾM ngày khởi hành thực tế do "Quy tắc phân loại → Định dạng
+    Ngày KH" (DateFormatRule) parse ra, chia cho số tháng các ngày đó trải.
+
+    NGUỒN CHÂN LÝ = rule. KHÔNG còn heuristic hardcode ("hàng ngày"→30, "theo
+    thứ"→×4, nhân ×1.5/×3/×4...). Rule recurring (weekly/monthly_recurring) tự
+    expand 12 tháng → đếm ngày là ra rate. Không parse ra ngày nào (text không
+    khớp rule) → 0 đoàn/tháng (BỎ QUA khỏi thống kê — "không khớp thì next").
     """
     text = (lich_kh or "").strip()
     if not text:
-        return {
-            "monthly_estimate": 1.0,
-            "explicit_dates": 0,
-            "pattern": "unknown",
-            "label": "Chưa rõ lịch KH",
-        }
+        return {"monthly_estimate": 0.0, "explicit_dates": 0, "pattern": "empty",
+                "label": "Chưa rõ lịch KH"}
 
-    parts = [p.strip() for p in text.split("|") if p.strip()]
-    explicit = 0
-    extra = 0
-    patterns: list[str] = []
+    dates = parse_departure_dates(text)  # đi qua DateFormatRule trước, rồi fallback pattern
+    if not dates:
+        return {"monthly_estimate": 0.0, "explicit_dates": 0, "pattern": "unmatched",
+                "label": "Không khớp định dạng ngày KH"}
 
-    for part in parts:
-        lower = part.lower()
-        if "hàng ngày" in lower or "hang ngay" in lower or "daily" in lower:
-            patterns.append("daily")
-            explicit = max(explicit, 30)
-            continue
-        if "theo thứ" in lower or re.search(r"thứ\s*\d", lower):
-            wd = len(WEEKDAY_RE.findall(part))
-            if wd == 0:
-                wd = 2
-            patterns.append("weekly")
-            explicit = max(explicit, wd * 4)
-            continue
-
-        dates = DATE_RE.findall(part)
-        explicit += len(dates)
-        m = EXTRA_DATES_RE.search(part)
-        if m:
-            extra += int(m.group(1))
-
-    total_explicit = explicit + extra
-
-    if "daily" in patterns:
-        monthly = 30.0
-    elif total_explicit >= 24:
-        monthly = float(total_explicit)
-    elif total_explicit >= 8:
-        monthly = float(total_explicit) * 1.5
-    elif total_explicit >= 4:
-        monthly = float(total_explicit) * 3.0
-    elif total_explicit >= 1:
-        monthly = float(total_explicit) * 4.0
-    elif "weekly" in patterns:
-        monthly = 8.0
-    else:
-        monthly = 2.0
-
-    monthly = max(1.0, min(monthly, 60.0))
-
-    if "daily" in patterns:
-        label = "Hàng ngày (~30 lượt/tháng)"
-    elif total_explicit > 0:
-        label = f"~{int(monthly)} lượt KH/tháng ({total_explicit} ngày liệt kê)"
-    elif "weekly" in patterns:
-        label = f"Theo thứ (~{int(monthly)} lượt/tháng)"
-    else:
-        label = f"Ước tính ~{int(monthly)} lượt/tháng"
-
+    own_months = {(d.year, d.month) for d in dates}
+    n_months = max(len(own_months), 1)
+    monthly = round(len(dates) / n_months, 1)
     return {
-        "monthly_estimate": round(monthly, 1),
-        "explicit_dates": total_explicit,
-        "pattern": patterns[0] if patterns else ("fixed" if total_explicit else "unknown"),
-        "label": label,
+        "monthly_estimate": monthly,
+        "explicit_dates": len(dates),
+        "pattern": "from_dates",
+        "label": f"~{monthly} đoàn/tháng ({len(dates)} ngày KH)",
     }
