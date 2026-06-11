@@ -220,10 +220,15 @@ def _apply_phan_khuc_updates(db: Session, updates: list[dict], cancel_check=None
     from db_retry import run_with_retry
     from job_cancel import raise_if_cancelled
 
+    # synchronize_session=False: BẮT BUỘC cho bulk UPDATE executemany + WHERE param.
+    # SQLAlchemy mới raise InvalidRequestError ("bulk synchronize of persistent objects
+    # not supported...") khi session có persistent Tour objects (recompute_* load tour
+    # trước khi update) → mọi recompute phân khúc CRASH → toàn bộ tour rỗng phân khúc.
     stmt = (
         update(Tour)
         .where(Tour.id == bindparam("b_id"))
         .values(phan_khuc=bindparam("b_pk"))
+        .execution_options(synchronize_session=False)
     )
     total = len(updates)
     for i in range(0, total, _PHAN_KHUC_BATCH):
