@@ -54,7 +54,8 @@ class CompareSummary(BaseModel):
 
 
 def _load_vtr_tours(db: Session, thi_truong: list[str], tuyen_tour: str = "", diem_kh: str = "") -> list[Tour]:
-    ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh)
+    # Cần ctx.tours (full) → không stale.
+    ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh, allow_stale=False)
     return [t for t in ctx.tours if is_vietravel(t.cong_ty)]
 
 
@@ -190,7 +191,8 @@ def compare_summary(
                 pass
             return CompareSummary(**disk_data)
 
-    ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh)
+    # Cần ctx.tours/segments (full) cho summarize_context → không stale.
+    ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh, allow_stale=False)
     from compare_engine import summarize_context
 
     k = summarize_context(ctx.tours, ctx.segments)
@@ -320,7 +322,7 @@ def segment_detail(
         parsed = parse_segment_key(key)
         if parsed:
             market, route, depart = parsed
-            ctx = get_compare_context(db, [market], route, depart)
+            ctx = get_compare_context(db, [market], route, depart, allow_stale=False)
             seg = ctx.segment_by_key.get(key)
     if not seg:
         return {"segment_key": key, "found": False}
@@ -364,7 +366,8 @@ def weekday_distribution(
     """Phân bổ đoàn KH theo thứ trong tuần — VTR vs thị trường."""
     from compare_engine import build_weekday_distribution
 
-    ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh)
+    # Cần ctx.tours (full) → không stale.
+    ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh, allow_stale=False)
     return build_weekday_distribution(ctx.tours)
 
 
@@ -375,7 +378,8 @@ def list_competitors(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    ctx = get_compare_context(db, thi_truong)
+    # Cần ctx.segments (full) → không stale.
+    ctx = get_compare_context(db, thi_truong, allow_stale=False)
     segments = ctx.segments
     stats: dict[str, dict] = {}
     company_routes: dict[str, set] = defaultdict(set)
@@ -441,5 +445,6 @@ def competitor_detail(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    ctx = get_compare_context(db, thi_truong)
+    # Cần ctx.tours (full) → không stale.
+    ctx = get_compare_context(db, thi_truong, allow_stale=False)
     return build_competitor_overview(ctx.tours, company)

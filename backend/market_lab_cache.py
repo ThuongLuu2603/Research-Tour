@@ -86,7 +86,7 @@ def get_cached_routes(db: Session, *, force: bool = False) -> dict[str, RouteAgg
 
     t0 = time.time()
     try:
-        ctx = get_compare_context(db, [], "", "")
+        ctx = get_compare_context(db, [], "", "", allow_stale=False)  # cần segments/tours full
         routes = build_route_aggregates_from_context(
             ctx.segments, ctx.tours, include_supply_months=False,
         )

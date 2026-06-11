@@ -238,7 +238,7 @@ def _compute_home_brief(db: Session) -> dict:
             from compare_cache import get_compare_context
             from compare_engine import summarize_context
 
-            ctx = get_compare_context(db, [], "", "")
+            ctx = get_compare_context(db, [], "", "", allow_stale=False)  # cần tours/segments full
             live = summarize_context(ctx.tours, ctx.segments)
             kpis.update({
                 "total_tours": live["total_tours"],

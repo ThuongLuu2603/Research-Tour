@@ -24,6 +24,17 @@ TTL_SECONDS = int(os.getenv("COMPARE_CACHE_TTL", "21600"))
 # An toàn: mọi thay đổi qua sync đều gọi invalidate_compare_cache (xoá luôn fingerprint).
 _FINGERPRINT_TTL = int(os.getenv("COMPARE_FINGERPRINT_TTL", "600"))
 
+# --- Stale-while-revalidate snapshot trên DISK ---------------------------------
+# Lưu base context FULL (no-filter) ra disk sau mỗi build thành công. Restart /
+# RAM cold → trả snapshot NGAY (dù hơi cũ) + rebuild nền. User KHÔNG bao giờ chờ 114s.
+# Pattern tham khảo: pricing_segments._load_route_avg_snapshot_if_fresh (drift + TTL).
+_BASE_SNAPSHOT_NS = "compare_base_context"
+_BASE_SNAPSHOT_TTL_H = 24
+# Debounce: count tour lệch < 1% VÀ max(updated_at) không nhảy → SKIP rebuild, dùng snapshot.
+_SNAPSHOT_COUNT_DRIFT = float(os.getenv("COMPARE_SNAPSHOT_DRIFT", "0.01"))  # 1%
+# Inflight wait NGẮN cho lần đầu tuyệt đối (chưa có snapshot nào) — tránh treo 300s.
+_FIRST_BUILD_WAIT = float(os.getenv("COMPARE_FIRST_BUILD_WAIT", "2.0"))
+
 
 def _segments_to_rows(segments: list[SegmentStats]) -> list[dict]:
     rows: list[dict] = []
@@ -41,12 +52,19 @@ class CompareContext:
     segments: list[SegmentStats]
     segment_by_key: dict[str, SegmentStats]
     segment_rows: list[dict] = field(default_factory=list)
+    # True khi context đang được build nền + chưa có snapshot nào để trả (lần đầu
+    # tuyệt đối). Backward-compat: default False, callers cũ bỏ qua field này.
+    computing: bool = False
 
 
 _lock = threading.Lock()
 _cache: dict[tuple, tuple[float, CompareContext]] = {}
 _fingerprint_cache: tuple[float, tuple[int, str | None]] | None = None
 _inflight: dict[tuple, threading.Event] = {}
+# Single-flight cho background rebuild của BASE context (no-filter). 1 build chạy →
+# không spawn build thứ 2 trùng. Tách khỏi _inflight (per-key) vì rebuild nền chỉ
+# tái tạo base; filtered context được _filter_context dẫn xuất từ base.
+_bg_build_running = threading.Event()
 
 
 def _redis_key_for(key: tuple) -> str:
@@ -106,6 +124,124 @@ def _db_fingerprint(db: Session) -> tuple[int, str | None]:
     fp = (int(row[0] or 0), row[1].isoformat() if row[1] else None)
     _fingerprint_cache = (now, fp)
     return fp
+
+
+def _save_base_snapshot(fp: tuple[int, str | None], ctx: CompareContext) -> None:
+    """Lưu BASE context (no-filter) ra disk: segment_rows + fingerprint. Survive restart.
+
+    Chỉ persist segment_rows (Tour/SegmentStats ORM không serialize). Snapshot này
+    dùng làm 'stale' cho lần đọc kế tiếp khi RAM cold — đủ cho mọi caller dựa trên
+    segment_rows (API /segments, /summary disk-path). Callers cần ctx.tours/segments
+    đầy đủ vẫn được phục vụ bởi RAM cache warm sau khi background rebuild xong."""
+    try:
+        from persistent_cache import save_json
+
+        save_json(
+            _BASE_SNAPSHOT_NS,
+            {
+                "fp_count": fp[0],
+                "fp_updated": fp[1],
+                "segment_rows": list(ctx.segment_rows),
+            },
+            ttl_hours=_BASE_SNAPSHOT_TTL_H,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("Base snapshot save skipped: %s", e)
+
+
+def _load_base_snapshot() -> tuple[tuple[int, str | None], list[dict]] | None:
+    """Load (fingerprint, segment_rows) từ disk snapshot. None nếu không có / lỗi.
+    KHÔNG check drift ở đây — caller quyết định stale-serve vs rebuild."""
+    try:
+        from persistent_cache import load_json
+
+        snap = load_json(_BASE_SNAPSHOT_NS, max_age_hours=_BASE_SNAPSHOT_TTL_H)
+        if not isinstance(snap, dict):
+            return None
+        rows = snap.get("segment_rows")
+        if not isinstance(rows, list):
+            return None
+        fp = (int(snap.get("fp_count") or 0), snap.get("fp_updated"))
+        return fp, rows
+    except Exception as e:  # noqa: BLE001
+        logger.debug("Base snapshot load skipped: %s", e)
+        return None
+
+
+def _snapshot_is_fresh(snap_fp: tuple[int, str | None], cur_fp: tuple[int, str | None]) -> bool:
+    """Debounce theo fingerprint. True (SKIP rebuild) khi data KHÔNG đổi đáng kể:
+    max(updated_at) KHÔNG nhảy VÀ count tour lệch < ngưỡng (1%). Ngược lại → rebuild."""
+    snap_count, snap_updated = snap_fp
+    cur_count, cur_updated = cur_fp
+    if snap_updated != cur_updated:
+        return False  # có tour mới/sửa → data đổi → rebuild
+    if snap_count <= 0:
+        return False
+    drift = abs(cur_count - snap_count) / max(snap_count, 1)
+    return drift < _SNAPSHOT_COUNT_DRIFT
+
+
+def _stale_context_from_rows(rows: list[dict]) -> CompareContext:
+    """Lightweight context từ snapshot segment_rows. tours/segments rỗng — chỉ dùng
+    cho callers đọc segment_rows. Callers cần tours/segments đầy đủ sẽ trigger rebuild."""
+    return CompareContext(tours=[], segments=[], segment_by_key={}, segment_rows=list(rows))
+
+
+def _filter_rows(rows: list[dict], thi_truong: list[str], tuyen_tour: str, diem_kh: str) -> list[dict]:
+    """Lọc list segment_rows theo field (stale-serve cho filtered request khi cold).
+    Khớp ngữ nghĩa với _filter_context: thi_truong = membership chính xác,
+    tuyen_tour/diem_kh = substring case-insensitive."""
+    out = rows
+    if thi_truong:
+        markets = {m.strip() for m in thi_truong}
+        out = [r for r in out if (r.get("thi_truong") or "").strip() in markets]
+    if tuyen_tour.strip():
+        needle = tuyen_tour.strip().lower()
+        out = [r for r in out if needle in (r.get("tuyen_tour") or "").lower()]
+    if diem_kh.strip():
+        needle = diem_kh.strip().lower()
+        out = [r for r in out if needle in (r.get("diem_kh") or "").lower()]
+    return out
+
+
+def _bg_base_build_worker() -> None:
+    """Daemon: rebuild BASE context (no-filter) trên session RIÊNG, ghi RAM cache +
+    disk snapshot + Redis. Single-flight qua _bg_build_running."""
+    from database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        fp = _db_fingerprint(db)
+        base_key = _cache_key([], "", "", fp)
+        ctx = _build_context(db, [], "", "")
+        with _lock:
+            _cache[base_key] = (time.time(), ctx)
+            if len(_cache) > 32:
+                oldest = min(_cache.items(), key=lambda x: x[1][0])[0]
+                _cache.pop(oldest, None)
+        _save_base_snapshot(fp, ctx)
+        _save_to_redis(base_key, ctx)
+        logger.info("Background base rebuild done (%d segments)", len(ctx.segments))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Background base rebuild failed: %s", e)
+    finally:
+        try:
+            db.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _bg_build_running.clear()
+
+
+def _spawn_bg_base_build() -> None:
+    """Spawn 1 daemon rebuild base context nền. No-op nếu đã có build đang chạy."""
+    if _bg_build_running.is_set():
+        return  # đang chạy — single-flight
+    _bg_build_running.set()
+    try:
+        threading.Thread(target=_bg_base_build_worker, name="compare-bg-build", daemon=True).start()
+    except Exception as e:  # noqa: BLE001
+        _bg_build_running.clear()
+        logger.warning("Spawn background base build failed: %s", e)
 
 
 def _cache_key(thi_truong: list[str], tuyen_tour: str, diem_kh: str, fp: tuple[int, str | None]) -> tuple:
@@ -227,7 +363,16 @@ def get_compare_context(
     thi_truong: list[str],
     tuyen_tour: str = "",
     diem_kh: str = "",
+    allow_stale: bool = True,
 ) -> CompareContext:
+    """allow_stale=True (default): cold request được phục vụ NGAY từ disk snapshot
+    (lightweight, chỉ segment_rows) + rebuild nền → user không chờ 114s. Dùng cho
+    /segments endpoint nơi chỉ đọc segment_rows.
+
+    allow_stale=False: caller cần ctx.tours/ctx.segments đầy đủ (summarize_context,
+    home_brief KPI, report, market_lab, filter-options, weekday, competitors,
+    segment_detail). Giữ build ĐỒNG BỘ như cũ → kết quả luôn đúng. Các caller này
+    đã có disk fast-path RIÊNG chạy TRƯỚC nên hiếm khi chạm build đồng bộ."""
     fp = _db_fingerprint(db)
     key = _cache_key(thi_truong, tuyen_tour, diem_kh, fp)
     now = time.time()
@@ -243,6 +388,43 @@ def get_compare_context(
                 filtered = _filter_context(base_hit[1], thi_truong, tuyen_tour, diem_kh)
                 _cache[key] = (now, filtered)
                 return filtered
+
+    # COLD: RAM cache miss (cả base-filter-warm). Tránh build 114s đồng bộ trên
+    # request thread nếu caller chấp nhận stale (chỉ cần segment_rows).
+    if allow_stale:
+        snap = _load_base_snapshot()  # (fp, rows) | None
+        fresh = bool(snap) and _snapshot_is_fresh(snap[0], fp)
+
+        # 1) Rebuild nền nếu data đổi / chưa có snapshot (single-flight).
+        if not fresh:
+            _spawn_bg_base_build()
+
+        # 2) Có snapshot → serve NGAY từ stale rows (filter rows trong Python nếu cần).
+        if snap is not None:
+            rows = snap[1]
+            if _has_filters(thi_truong, tuyen_tour, diem_kh):
+                rows = _filter_rows(rows, thi_truong, tuyen_tour, diem_kh)
+            ctx = _stale_context_from_rows(rows)
+            ctx.computing = not fresh  # True khi đang rebuild nền
+            return ctx
+
+        # 3) Lần đầu tuyệt đối (chưa có snapshot nào): chờ NGẮN cho bg build, không
+        #    chờ 300s. Nếu xong → trả full từ _cache; chưa xong → context rỗng computing.
+        deadline = time.time() + _FIRST_BUILD_WAIT
+        base_key = _cache_key([], "", "", fp)
+        while time.time() < deadline:
+            with _lock:
+                base_hit = _cache.get(base_key)
+            if base_hit:
+                if _has_filters(thi_truong, tuyen_tour, diem_kh):
+                    return _filter_context(base_hit[1], thi_truong, tuyen_tour, diem_kh)
+                return base_hit[1]
+            time.sleep(0.1)
+        empty = CompareContext(tours=[], segments=[], segment_by_key={}, segment_rows=[])
+        empty.computing = True
+        return empty
+
+    with _lock:
         # NOTE: Redis chỉ dùng để LƯU segment_rows (cho API response cache layer khác),
         # KHÔNG restore vào _cache vì CompareContext lightweight (empty tours/segments)
         # sẽ phá callers cần ctx.tours/segments (vd summarize_context, home_brief).
@@ -262,7 +444,7 @@ def get_compare_context(
             if hit:
                 return hit[1]
         # Builder failed or timed out — try once more as owner
-        return get_compare_context(db, thi_truong, tuyen_tour, diem_kh)
+        return get_compare_context(db, thi_truong, tuyen_tour, diem_kh, allow_stale=allow_stale)
 
     try:
         if _has_filters(thi_truong, tuyen_tour, diem_kh):
@@ -288,7 +470,8 @@ def get_compare_context(
 
 
 def get_segment_by_key(db: Session, key: str) -> SegmentStats | None:
-    ctx = get_compare_context(db, [], "", "")
+    # Cần segment_by_key (full) → build đồng bộ, không stale.
+    ctx = get_compare_context(db, [], "", "", allow_stale=False)
     return ctx.segment_by_key.get(key)
 
 
@@ -329,7 +512,9 @@ def prewarm_compare_cache(db: Session) -> None:
     instant, không cần user trigger.
     """
     logger.info("Pre-warming compare cache...")
-    ctx = get_compare_context(db, [], "", "")
+    # Prewarm vốn chạy nền (sau sync) → build FULL đồng bộ để có ctx.tours/segments
+    # cho disk populate. allow_stale=False giữ hành vi cũ.
+    ctx = get_compare_context(db, [], "", "", allow_stale=False)
     logger.info("Compare cache pre-warm complete")
     # Auto-populate disk cache cho cac endpoints nặng — chạy ngầm tránh block prewarm
     try:

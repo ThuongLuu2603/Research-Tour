@@ -112,7 +112,7 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
 
     from compare_cache import get_compare_context
 
-    ctx = get_compare_context(db, [], "", "")
+    ctx = get_compare_context(db, [], "", "", allow_stale=False)  # cần tours/segments full
     tours = ctx.tours
     segments = ctx.segments
     quality = compute_data_quality(db, tours)
