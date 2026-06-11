@@ -417,7 +417,10 @@ def _apply_fields_to_tour(
     if not locked:
         new_thoi_gian = (fields.get("thoi_gian") or "").strip()
         if new_thoi_gian:
-            tour.thoi_gian = new_thoi_gian[:64]
+            # Chuẩn hóa về dạng NĐ (7N6Đ) khi khớp alias; giữ raw nếu không khớp.
+            from classification import normalize_duration_text
+            norm_tg, _ = normalize_duration_text(new_thoi_gian, None)
+            tour.thoi_gian = (norm_tg or new_thoi_gian)[:64]
         # else: giữ tour.thoi_gian hiện tại
     tour.gia_raw = fields["gia_raw"][:64]
     tour.gia = fields["gia"]

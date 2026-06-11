@@ -88,9 +88,12 @@ def _admin_write_classification(db, tour, data: dict, user) -> tuple[dict, bool]
     if "thoi_gian" in remaining:
         v = (remaining.pop("thoi_gian") or "").strip()
         if v:
-            tour.thoi_gian = v[:64]
+            # Chuẩn hóa về NĐ (7N6Đ) khi khớp alias; giữ raw nếu không khớp.
+            from classification import normalize_duration_text
             from seed import parse_ngay
-            tour.so_ngay = parse_ngay(v)
+            norm_tg, norm_sn = normalize_duration_text(v, None)
+            tour.thoi_gian = (norm_tg or v)[:64]
+            tour.so_ngay = norm_sn if norm_sn is not None else parse_ngay(v)
             wrote = True
     # Điểm khởi hành: admin sửa → ghi THẲNG DB + khóa (giống TT/Tuyến/Thời gian).
     # Option đến từ Quy tắc phân loại (canonical) nên ghi trực tiếp.

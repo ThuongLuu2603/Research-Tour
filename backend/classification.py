@@ -442,11 +442,18 @@ def apply_duration_aliases_to_tours(db) -> int:
             db.rollback()  # lô đã commit trước vẫn còn; lô này re-apply sau rollback
             n = 0
             for t in b:
-                days, matched = resolve_duration_days(t.thoi_gian, t.so_ngay)
-                if days is None:
-                    continue
-                if matched and (not t.so_ngay or float(t.so_ngay) != days):
-                    t.so_ngay = days
+                if getattr(t, "manual_locked", False):
+                    continue  # admin khóa tay Thời gian → không ghi đè
+                new_tg, new_sn = normalize_duration_text(t.thoi_gian, t.so_ngay)
+                changed = False
+                if new_sn is not None and (not t.so_ngay or float(t.so_ngay) != new_sn):
+                    t.so_ngay = new_sn
+                    changed = True
+                # Ghi đè text về dạng chuẩn NĐ khi khớp (giữ raw nếu không khớp).
+                if new_tg and new_tg != (t.thoi_gian or ""):
+                    t.thoi_gian = new_tg[:64]
+                    changed = True
+                if changed:
                     n += 1
             db.commit()
             return n
@@ -534,6 +541,22 @@ def resolve_duration_days(thoi_gian: str, so_ngay: float | None) -> tuple[float 
         d = float(m.group(1))
         return (d, False) if 0 < d <= 45 else (None, False)
     return None, False
+
+
+def normalize_duration_text(thoi_gian: str, so_ngay: float | None) -> tuple[str, float | None]:
+    """Chuẩn hóa thời gian → nhãn NĐ chuẩn (vd '7 ngày 6 đêm' → '7N6Đ') khi KHỚP
+    Quy tắc phân loại; GIỮ raw nếu không khớp (TUYỆT ĐỐI không trả rỗng).
+
+    Trả (text_chuẩn, so_ngay). Dùng khi ghi DB để cột Thời gian trong Sản phẩm &
+    Data hiển thị đúng dạng chuẩn như tab «Thời gian» của Quy tắc phân loại.
+    """
+    days, matched = resolve_duration_days(thoi_gian or "", so_ngay)
+    if days is not None and matched and 0 < days <= 45:
+        from duration_format import format_duration_label
+        label = format_duration_label(days)
+        if label and label != "—":
+            return label, round(float(days), 1)
+    return (thoi_gian or ""), so_ngay
 
 
 def _tour_title_hint(t) -> str:
@@ -1309,12 +1332,18 @@ def apply_alias_rule_targeted(db, kind: str, alias: str, *, cap: int = 2000) -> 
                 if resolved and resolved != (t.diem_kh or ""):
                     t.diem_kh = resolved[:256]
                     n += 1
-            else:  # duration → so_ngay
+            else:  # duration → so_ngay + chuẩn hóa text NĐ
                 if getattr(t, "manual_locked", False):
                     continue  # admin khóa tay Thời gian → rule không ghi đè
-                days, matched = resolve_duration_days(t.thoi_gian, t.so_ngay)
-                if days is not None and matched and (not t.so_ngay or float(t.so_ngay) != days):
-                    t.so_ngay = days
+                new_tg, new_sn = normalize_duration_text(t.thoi_gian, t.so_ngay)
+                hit = False
+                if new_sn is not None and (not t.so_ngay or float(t.so_ngay) != new_sn):
+                    t.so_ngay = new_sn
+                    hit = True
+                if new_tg and new_tg != (t.thoi_gian or ""):
+                    t.thoi_gian = new_tg[:64]
+                    hit = True
+                if hit:
                     n += 1
         db.commit()
         return n, len(rows), capped
@@ -1621,10 +1650,15 @@ def _apply_all_rules_to_tours_locked(
                 dep_n += 1
                 derived_dirty = True
 
-            days, matched = resolve_duration_days(t.thoi_gian, t.so_ngay)
-            if days is not None and matched and (not t.so_ngay or float(t.so_ngay) != days):
-                t.so_ngay = days
-                dur_n += 1
+            # Chuẩn hóa Thời gian: khớp alias → ghi text dạng NĐ (7N6Đ) + so_ngay;
+            # không khớp → giữ raw. Bỏ qua tour admin khóa tay.
+            if not getattr(t, "manual_locked", False):
+                new_tg, new_sn = normalize_duration_text(t.thoi_gian, t.so_ngay)
+                if new_sn is not None and (not t.so_ngay or float(t.so_ngay) != new_sn):
+                    t.so_ngay = new_sn
+                    dur_n += 1
+                if new_tg and new_tg != (t.thoi_gian or ""):
+                    t.thoi_gian = new_tg[:64]
 
             if derived_dirty:
                 from tour_search import update_tour_derived_fields
