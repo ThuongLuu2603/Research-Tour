@@ -292,7 +292,12 @@ def parse_departure_frequency_in_period(lich_kh: str, vtr_dates: list[datetime])
     in_period = [d for d in explicit if (d.year, d.month) in months]
 
     if in_period:
-        n_months = max(len(months), 1)
+        # BUG FIX: chia số ngày của TOUR NÀY cho số tháng RIÊNG mà tour có khởi hành,
+        # KHÔNG chia cho TỔNG số tháng của cả vtr_dates (gồm mọi tour VTR trong segment).
+        # Trước đây n_months = len(months) → tour chạy 2 tháng nhưng segment trải 7 tháng
+        # → 8 ngày / 7 = 1.1 (deflate). Đúng phải 8 ngày / 2 tháng = 4 đoàn/tháng.
+        own_months = {(d.year, d.month) for d in in_period}
+        n_months = max(len(own_months), 1)
         monthly = max(1.0, round(len(in_period) / n_months, 1))
         return {
             "monthly_estimate": monthly,
