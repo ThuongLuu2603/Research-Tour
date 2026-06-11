@@ -107,6 +107,61 @@ def invalidate_unmatched_cache() -> None:
         _unmatched_cache.clear()
 
 
+def remove_from_unmatched_cache(db, scope_field: str, value: str) -> bool:
+    """Incremental update sau khi GÁN alias: xóa đúng dòng ``value`` khỏi cache
+    unmatched thay vì vứt cả cache → panel «Chưa khớp» GET sau = instant (không
+    full scan) và đã mất dòng vừa gán.
+
+    Vì cache key chứa fingerprint (tours, rules) và sau khi insert rule + targeted
+    apply CẢ HAI fingerprint đều đổi, entry cũ sẽ thành mồ côi (miss vĩnh viễn).
+    → Mutate data in-place rồi REKEY entry sang fingerprint hiện tại (cần ``db``
+    để đọc fingerprint — gọi SAU khi đã commit rule + targeted apply).
+
+    scope_field: key trong dict unmatched — "cong_ty" | "diem_kh" | "thoi_gian" | "lich_kh".
+    Trả True nếu có cache được giữ lại (rekey thành công); False = cache trống
+    (GET sau recompute cold như cũ). Lỗi bất kỳ → fallback invalidate toàn bộ (an toàn).
+    """
+    val = (value or "").strip().lower()
+    if not val or not scope_field:
+        invalidate_unmatched_cache()
+        return False
+    try:
+        tour_fp = _tour_fingerprint(db)
+        rules_fp = _rules_fingerprint(db)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("remove_from_unmatched_cache: fingerprint failed (%s) → invalidate", e)
+        invalidate_unmatched_cache()
+        return False
+
+    kept = False
+    with _lock:
+        if not _unmatched_cache:
+            return False
+        # Giữ entry MỚI NHẤT per scope (bỏ key fingerprint cũ), rekey sang fp hiện tại.
+        latest: dict[str, tuple[float, Any]] = {}
+        for (scope, _tfp, _rfp), (ts, data) in _unmatched_cache.items():
+            cur = latest.get(scope)
+            if cur is None or ts > cur[0]:
+                latest[scope] = (ts, data)
+        _unmatched_cache.clear()
+        for scope, (ts, data) in latest.items():
+            if isinstance(data, dict):
+                rows = data.get(scope_field)
+                if isinstance(rows, list):
+                    data[scope_field] = [
+                        r
+                        for r in rows
+                        if not (
+                            isinstance(r, dict)
+                            and str(r.get("value", "")).strip().lower() == val
+                        )
+                    ]
+            # Giữ nguyên ts gốc → TTL 600s vẫn áp dụng từ lần compute thật.
+            _unmatched_cache[(scope, tour_fp, rules_fp)] = (ts, data)
+            kept = True
+    return kept
+
+
 def _tour_fingerprint(db) -> tuple[int, str | None]:
     from sqlalchemy import func
 

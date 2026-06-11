@@ -159,21 +159,88 @@ export default function RulesAdminPage() {
     qc.invalidateQueries({ queryKey: ["filter-options"] });
   };
 
-  const assignCompanyAlias = async (canonical: string, alias: string) => {
-    await createCompanyRule({ canonical_name: canonical, alias });
-    invalidate();
-    setSyncMsg(`Đã gán alias "${alias}" → ${canonical}`);
+  /**
+   * Optimistic remove 1 dòng khỏi panel "Chưa khớp" (react-query cache) ngay
+   * khi user bấm Gán — không chờ backend recompute. Trả về hàm rollback
+   * (re-insert đúng vị trí cũ) để gọi khi mutation lỗi.
+   */
+  const removeUnmatchedFromCache = (value: string) => {
+    if (!unmatchedScope) return () => {};
+    const key = ["rules-unmatched", unmatchedScope];
+    let removed: UnmatchedItem | undefined;
+    let removedIdx = 0;
+    qc.setQueryData<{ scope: string; items: UnmatchedItem[] }>(key, (old) => {
+      if (!old) return old;
+      const idx = old.items.findIndex((i) => i.value === value);
+      if (idx < 0) return old;
+      removed = old.items[idx];
+      removedIdx = idx;
+      return { ...old, items: old.items.filter((_, i) => i !== idx) };
+    });
+    return () => {
+      if (!removed) return;
+      qc.setQueryData<{ scope: string; items: UnmatchedItem[] }>(key, (old) => {
+        if (!old || old.items.some((i) => i.value === value)) return old;
+        const items = [...old.items];
+        items.splice(Math.min(removedIdx, items.length), 0, removed!);
+        return { ...old, items };
+      });
+    };
   };
-  const assignDepartureAlias = async (canonical: string, alias: string) => {
-    await createDepartureRule({ canonical_name: canonical, alias });
-    invalidate();
-    setSyncMsg(`Đã gán alias "${alias}" → ${canonical}`);
+
+  const errDetail = (e: unknown) =>
+    String((e as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail || (e as Error)?.message || e);
+
+  /**
+   * Gán alias từ panel "Chưa khớp" — pattern chung cho company/departure/duration:
+   * 1. Optimistic: xóa dòng khỏi cache unmatched ngay + ẩn (hiddenGapValues) để
+   *    refetch nền (backend recompute chậm) không trả dòng về panel.
+   * 2. Lỗi → rollback (trả dòng về) + toast lỗi rõ ràng.
+   * 3. Thành công → toast kèm số tour đã cập nhật (backend mới trả {applied: N};
+   *    backend cũ không có field này → toast thường).
+   * 4. Invalidate queries liên quan chạy nền, không block UI.
+   * Trả về true/false để caller (per-row button) biết có nên clear input không.
+   */
+  const assignAliasFromUnmatched = async (
+    alias: string,
+    create: () => Promise<{ applied?: number } | undefined>,
+    okLabel: string,
+  ): Promise<boolean> => {
+    const restore = removeUnmatchedFromCache(alias);
+    setHiddenGapValues((prev) => new Set([...prev, alias]));
+    try {
+      const res = await create();
+      const applied = typeof res?.applied === "number" ? res.applied : null;
+      setSyncMsg(applied != null ? `${okLabel} + cập nhật ${applied} tour` : okLabel);
+      invalidate();
+      void refreshUnmatchedList();
+      return true;
+    } catch (e) {
+      restore();
+      unmarkGapsHandled([alias]);
+      setSyncMsg(`Gán alias "${alias}" thất bại: ${errDetail(e)}`);
+      return false;
+    }
   };
-  const assignDurationAlias = async (days: number, alias: string) => {
-    await createDurationRule({ canonical_days: days, alias });
-    invalidate();
-    setSyncMsg(`Đã gán "${alias}" → ${days}N`);
-  };
+
+  const assignCompanyAlias = (canonical: string, alias: string) =>
+    assignAliasFromUnmatched(
+      alias,
+      () => createCompanyRule({ canonical_name: canonical, alias }),
+      `Đã gán alias "${alias}" → ${canonical}`,
+    );
+  const assignDepartureAlias = (canonical: string, alias: string) =>
+    assignAliasFromUnmatched(
+      alias,
+      () => createDepartureRule({ canonical_name: canonical, alias }),
+      `Đã gán alias "${alias}" → ${canonical}`,
+    );
+  const assignDurationAlias = (days: number, alias: string) =>
+    assignAliasFromUnmatched(
+      alias,
+      () => createDurationRule({ canonical_days: days, alias }),
+      `Đã gán "${alias}" → ${days}N`,
+    );
   const appendKeywordToRouteRule = async (rule: RouteRule, raw: string) => {
     const add = parseRouteKeywordList(keywordForRouteDrop(raw) || raw);
     if (!add.length) {
@@ -221,8 +288,7 @@ export default function RulesAdminPage() {
     qc.invalidateQueries({ queryKey: ["route-rules"] });
   };
 
-  const showErr = (e: unknown) =>
-    setSyncMsg(String((e as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail || (e as Error)?.message || e));
+  const showErr = (e: unknown) => setSyncMsg(errDetail(e));
 
   const finishApplyPoll = (st: { running?: boolean; error?: string; message?: string; stale?: boolean; last_result?: unknown }) => {
     setApplying(false);
@@ -832,11 +898,26 @@ function SideUnmatchedAlias({
 }: {
   items: UnmatchedItem[];
   canonicalOptions: string[];
-  onAssign: (canonical: string, alias: string) => void | Promise<void>;
+  onAssign: (canonical: string, alias: string) => Promise<boolean>;
   label: string;
 }) {
   const [pending, setPending] = useState<Record<string, string>>({});
+  // Per-row pending: user gán liên tiếp nhiều dòng → mỗi dòng tự quản spinner riêng
+  const [busy, setBusy] = useState<Set<string>>(() => new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const runAssign = async (item: UnmatchedItem) => {
+    const c = (pending[item.value] ?? "").trim();
+    if (!c || busy.has(item.value)) return;
+    setBusy((prev) => new Set(prev).add(item.value));
+    try {
+      const ok = await onAssign(c, item.value);
+      // Lỗi → giữ input để user sửa / thử lại (dòng đã được rollback về panel)
+      if (ok) setPending((p) => { const n = { ...p }; delete n[item.value]; return n; });
+    } finally {
+      setBusy((prev) => { const n = new Set(prev); n.delete(item.value); return n; });
+    }
+  };
 
   if (!items.length) return (
     <div className="card p-6 flex flex-col items-center justify-center text-center text-gray-400 min-h-[160px]">
@@ -900,14 +981,11 @@ function SideUnmatchedAlias({
               </td>
               <td className="px-2 py-1.5">
                 <button type="button"
-                  className="btn-primary text-[10px] py-1 px-2 whitespace-nowrap"
-                  disabled={!(pending[item.value] ?? "").trim()}
-                  onClick={async () => {
-                    const c = (pending[item.value] ?? "").trim();
-                    if (!c) return;
-                    await onAssign(c, item.value);
-                    setPending((p) => { const n = { ...p }; delete n[item.value]; return n; });
-                  }}>Gán</button>
+                  className="btn-primary text-[10px] py-1 px-2 whitespace-nowrap disabled:opacity-60"
+                  disabled={!(pending[item.value] ?? "").trim() || busy.has(item.value)}
+                  onClick={() => void runAssign(item)}>
+                  {busy.has(item.value) ? <RefreshCw size={10} className="animate-spin" /> : "Gán"}
+                </button>
               </td>
             </tr>
           ))}
@@ -921,7 +999,7 @@ function SideUnmatchedAlias({
 }
 
 // ── Side panel "Chưa khớp" cho tab Thời gian ────────────────────────────────
-function SideUnmatchedDuration({ items, onAssign }: { items: UnmatchedItem[]; onAssign: (days: number, alias: string) => void }) {
+function SideUnmatchedDuration({ items, onAssign }: { items: UnmatchedItem[]; onAssign: (days: number, alias: string) => Promise<boolean> }) {
   if (!items.length) return (
     <div className="card p-6 flex flex-col items-center justify-center text-center text-gray-400 min-h-[160px]">
       <Check size={24} className="text-green-500 mb-2" />
@@ -950,8 +1028,21 @@ function SideUnmatchedDuration({ items, onAssign }: { items: UnmatchedItem[]; on
   );
 }
 
-function SideUnmatchedDurationRow({ item, onAssign }: { item: UnmatchedItem; onAssign: (days: number, alias: string) => void }) {
+function SideUnmatchedDurationRow({ item, onAssign }: { item: UnmatchedItem; onAssign: (days: number, alias: string) => Promise<boolean> }) {
   const [days, setDays] = useState("");
+  // Per-row pending — không disable cả panel khi đang gán 1 dòng
+  const [busy, setBusy] = useState(false);
+  const runAssign = async () => {
+    const d = parseFloat(days);
+    if (Number.isNaN(d) || busy) return;
+    setBusy(true);
+    try {
+      const ok = await onAssign(d, item.value);
+      if (ok) setDays(""); // lỗi → giữ input để thử lại (dòng đã rollback về panel)
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <tr className="border-t border-amber-100 bg-amber-50/30">
       <td className="px-2 py-1.5">
@@ -965,8 +1056,11 @@ function SideUnmatchedDurationRow({ item, onAssign }: { item: UnmatchedItem; onA
         </span>
       </td>
       <td className="px-2 py-1.5">
-        <button type="button" className="btn-primary text-[10px] py-1 px-2" disabled={!days || Number.isNaN(parseFloat(days))}
-          onClick={() => onAssign(parseFloat(days), item.value)}>Gán</button>
+        <button type="button" className="btn-primary text-[10px] py-1 px-2 disabled:opacity-60"
+          disabled={!days || Number.isNaN(parseFloat(days)) || busy}
+          onClick={() => void runAssign()}>
+          {busy ? <RefreshCw size={10} className="animate-spin" /> : "Gán"}
+        </button>
       </td>
     </tr>
   );
@@ -983,7 +1077,7 @@ function AliasTable({
   editDraft: Record<string, string>;
   dropTarget: string | null;
   setDropTarget: (k: string | null) => void;
-  onDropAssign: (canonical: string, alias: string) => void | Promise<void>;
+  onDropAssign: (canonical: string, alias: string) => Promise<boolean>;
   onStartEdit: (r: CompanyRule | DepartureRule) => void;
   onDraftChange: (d: Record<string, string>) => void;
   onCancel: () => void;
@@ -993,9 +1087,23 @@ function AliasTable({
   hideUnmatched?: boolean;
 }) {
   const [pending, setPending] = useState<Record<string, string>>({});
+  // Per-row pending khi gán alias từ section "Chưa khớp"
+  const [busyAssign, setBusyAssign] = useState<Set<string>>(() => new Set());
   // id rule giờ là string (CockroachDB unique_rowid() > 2^53)
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [expandedUnmatched, setExpandedUnmatched] = useState<Set<string>>(() => new Set());
+
+  const runAssign = async (item: UnmatchedItem) => {
+    const c = (pending[item.value] ?? "").trim();
+    if (!c || busyAssign.has(item.value)) return;
+    setBusyAssign((prev) => new Set(prev).add(item.value));
+    try {
+      const ok = await onDropAssign(c, item.value);
+      if (ok) setPending((p) => { const n = { ...p }; delete n[item.value]; return n; });
+    } finally {
+      setBusyAssign((prev) => { const n = new Set(prev); n.delete(item.value); return n; });
+    }
+  };
 
   return (
     <div className="card overflow-auto max-h-[560px]">
@@ -1103,16 +1211,11 @@ function AliasTable({
                   <td className="px-3 py-2">
                     <button
                       type="button"
-                      className="btn-primary text-[10px] py-1 px-2"
-                      disabled={!(pending[item.value] ?? "").trim()}
-                      onClick={async () => {
-                        const c = (pending[item.value] ?? "").trim();
-                        if (!c) return;
-                        await onDropAssign(c, item.value);
-                        setPending((p) => { const n = { ...p }; delete n[item.value]; return n; });
-                      }}
+                      className="btn-primary text-[10px] py-1 px-2 disabled:opacity-60"
+                      disabled={!(pending[item.value] ?? "").trim() || busyAssign.has(item.value)}
+                      onClick={() => void runAssign(item)}
                     >
-                      Gán
+                      {busyAssign.has(item.value) ? <RefreshCw size={10} className="animate-spin" /> : "Gán"}
                     </button>
                   </td>
                 </tr>

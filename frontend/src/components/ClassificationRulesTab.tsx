@@ -12,7 +12,7 @@ import {
 import { buildRouteKeywordConflicts, conflictHintForKeyword, parseRouteKeywordList } from "@/lib/rulesUnmatched";
 import { InfoTip } from "@/components/InfoTip";
 import { cn } from "@/lib/utils";
-import { ChevronDown, ChevronRight, Database, GripVertical, Plus, Trash2, Search, Users, Star, Pencil, Check, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Database, GripVertical, Plus, RefreshCw, Trash2, Search, Users, Star, Pencil, Check, X } from "lucide-react";
 import {
   dropHandlers,
   dragAliasProps,
@@ -144,7 +144,10 @@ export function ClassificationRulesTab({
     staleTime: 30_000,
   });
   const [selectedGaps, setSelectedGaps] = useState<Set<string>>(() => new Set());
+  // assigning = bulk "Gán N dòng"; assigningRows = per-row pending (gán liên tiếp
+  // nhiều dòng → mỗi dòng tự quản spinner riêng, không disable cả panel)
   const [assigning, setAssigning] = useState(false);
+  const [assigningRows, setAssigningRows] = useState<Set<string>>(() => new Set());
   const [quickAdding, setQuickAdding] = useState(false);
 
   const applyResultMessage = (
@@ -248,7 +251,7 @@ export function ClassificationRulesTab({
     const d = rowDraft(title, item);
     if (!d.market || !d.route || !d.routeKw) return;
     onMarkGapsHandled([title]);
-    setAssigning(true);
+    setAssigningRows((prev) => new Set(prev).add(title));
     setActionFeedback({ kind: "loading", text: `Đang gán «${d.routeKw}» → ${d.route}…` });
     try {
       const r = await assignClassification({
@@ -274,7 +277,7 @@ export function ClassificationRulesTab({
       setActionFeedback({ kind: "err", text: "Gán thất bại — xem thông báo phía trên." });
       throw e;
     } finally {
-      setAssigning(false);
+      setAssigningRows((prev) => { const n = new Set(prev); n.delete(title); return n; });
     }
   };
 
@@ -697,7 +700,7 @@ export function ClassificationRulesTab({
                 return (
                   <tr key={title} className={cn("border-t bg-amber-50/40 align-top", selectedGaps.has(title) && "ring-1 ring-primary-400")}>
                     <td className="px-1 py-2 text-center">
-                      <input type="checkbox" className="rounded" checked={selectedGaps.has(title)} disabled={!ready || assigning}
+                      <input type="checkbox" className="rounded" checked={selectedGaps.has(title)} disabled={!ready || assigning || assigningRows.has(title)}
                         title={ready ? "Chọn để gán hàng loạt" : "Điền đủ thị trường, tuyến, keyword"}
                         onChange={() => toggleGapSelect(title)} />
                     </td>
@@ -721,10 +724,12 @@ export function ClassificationRulesTab({
                       </span>
                     </td>
                     <td className="px-2 py-2">
-                      <button type="button" className="btn-primary text-[10px] py-1 px-2 w-full"
-                        disabled={assigning || !ready}
+                      <button type="button" className="btn-primary text-[10px] py-1 px-2 w-full disabled:opacity-60"
+                        disabled={!ready || assigningRows.has(title)}
                         onClick={() => assignOne(title, item).catch(onError)}>
-                        Gán
+                        {assigningRows.has(title)
+                          ? <RefreshCw size={10} className="animate-spin mx-auto" />
+                          : "Gán"}
                       </button>
                     </td>
                   </tr>

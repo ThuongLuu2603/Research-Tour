@@ -547,14 +547,39 @@ export default function ResearchGrid() {
   const mutation = useMutation({
     mutationFn: ({ id, patch }: { id: string; patch: Partial<Tour> }) =>
       patchWorkspaceTour(workspaceId!, id, patch),
-    onSuccess: () => {
-      // Backend đã recompute phân khúc ĐỒNG BỘ trong PATCH response (cache route_avg
-      // 60s → sub-second). Chỉ cần 1 invalidate, KHÔNG cần setTimeout 2s race như trước.
-      qc.invalidateQueries({ queryKey: ["workspace-tours"] });
+    // OPTIMISTIC UPDATE: cell đổi giá trị NGAY khi bấm lưu (không chờ server +
+    // refetch ~1-2s như trước). Server trả merged tour (gồm phân khúc recompute,
+    // manual_locked) → thay row bằng data chính xác. Lỗi → rollback.
+    onMutate: async ({ id, patch }) => {
+      await qc.cancelQueries({ queryKey: ["workspace-tours"] });
+      const prev = qc.getQueriesData({ queryKey: ["workspace-tours"] });
+      qc.setQueriesData({ queryKey: ["workspace-tours"] }, (old: { items?: Tour[] } | undefined) => {
+        if (!old?.items) return old;
+        return { ...old, items: old.items.map((t) => (t.id === id ? { ...t, ...patch } : t)) };
+      });
+      return { prev };
+    },
+    onSuccess: (serverTour: Tour) => {
+      // Thay row bằng response server (phân khúc mới, badge khóa admin...) — không
+      // cần refetch cả trang để thấy thay đổi.
+      if (serverTour?.id) {
+        qc.setQueriesData({ queryKey: ["workspace-tours"] }, (old: { items?: Tour[] } | undefined) => {
+          if (!old?.items) return old;
+          return { ...old, items: old.items.map((t) => (t.id === serverTour.id ? { ...t, ...serverTour } : t)) };
+        });
+      }
       setToast("Cập nhật thành công");
     },
-    onError: (e: { response?: { data?: { detail?: string } } }) => {
+    onError: (e: { response?: { data?: { detail?: string } } }, _vars, ctx) => {
+      // Rollback giá trị optimistic về trước khi edit.
+      (ctx as { prev?: Array<[readonly unknown[], unknown]> } | undefined)?.prev?.forEach(
+        ([key, data]) => qc.setQueryData(key as readonly unknown[], data),
+      );
       setToast(e.response?.data?.detail || "Lỗi lưu tour");
+    },
+    onSettled: () => {
+      // Đồng bộ nền (không làm UI chờ — UI đã hiện giá trị đúng từ optimistic/server).
+      qc.invalidateQueries({ queryKey: ["workspace-tours"] });
     },
   });
 

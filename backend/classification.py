@@ -1246,6 +1246,83 @@ def apply_departure_aliases_to_tours(db) -> int:
     return count
 
 
+def apply_alias_rule_targeted(db, kind: str, alias: str, *, cap: int = 2000) -> dict:
+    """Targeted apply NGAY sau khi gán alias — KHÔNG full scan (UX: tour hiệu lực tức thì).
+
+    Chỉ load tour có field chứa alias (ILIKE %alias%, cap ``cap`` row) rồi chạy đúng
+    resolver per-tour (resolve_company_name / resolve_departure_point /
+    resolve_duration_days) → tái dùng nguyên logic full apply (multi-leg preserve,
+    sticky, alias ordering) — không lệch kết quả.
+
+    kind: "company" | "departure" | "duration" (schedule không ghi field tour).
+    Sticky: chỉ ghi khi resolved non-empty và != giá trị cũ.
+    manual_locked: thoi_gian/so_ngay bị khóa tay → SKIP (cùng design
+    _apply_rule_result_to_tour); cong_ty/diem_kh không thuộc phạm vi khóa.
+
+    Trả {"applied": N, "candidates": M, "capped": bool} — capped=True nghĩa là
+    còn tour vượt cap, cron/apply-to-tours sẽ xử lý phần còn lại.
+
+    LƯU Ý: caller phải invalidate_classification_cache() TRƯỚC khi gọi để
+    resolver reload alias pairs mới từ DB (các _*_alias_pairs là lru_cache).
+    """
+    from sqlalchemy import func
+    from sqlalchemy.orm import load_only
+
+    from db_retry import run_with_retry
+    from models import Tour
+
+    alias_l = (alias or "").strip().lower()
+    if not alias_l or kind not in ("company", "departure", "duration"):
+        return {"applied": 0, "candidates": 0, "capped": False}
+
+    if kind == "company":
+        col = Tour.cong_ty
+        cols = load_only(Tour.id, Tour.cong_ty)
+    elif kind == "departure":
+        col = Tour.diem_kh
+        cols = load_only(Tour.id, Tour.diem_kh)
+    else:  # duration
+        col = Tour.thoi_gian
+        cols = load_only(Tour.id, Tour.thoi_gian, Tour.so_ngay, Tour.manual_locked)
+
+    def _do():
+        db.rollback()  # session sạch cho mỗi attempt (pattern run_with_retry)
+        rows = (
+            _canonical_tour_query(db)
+            .options(cols)
+            .filter(func.lower(col).contains(alias_l, autoescape=True))
+            .order_by(Tour.id)
+            .limit(cap + 1)
+            .all()
+        )
+        capped = len(rows) > cap
+        rows = rows[:cap]
+        n = 0
+        for t in rows:
+            if kind == "company":
+                resolved = resolve_company_name(t.cong_ty)
+                if resolved and resolved != (t.cong_ty or ""):
+                    t.cong_ty = resolved[:256]
+                    n += 1
+            elif kind == "departure":
+                resolved = resolve_departure_point(t.diem_kh)
+                if resolved and resolved != (t.diem_kh or ""):
+                    t.diem_kh = resolved[:256]
+                    n += 1
+            else:  # duration → so_ngay
+                if getattr(t, "manual_locked", False):
+                    continue  # admin khóa tay Thời gian → rule không ghi đè
+                days, matched = resolve_duration_days(t.thoi_gian, t.so_ngay)
+                if days is not None and matched and (not t.so_ngay or float(t.so_ngay) != days):
+                    t.so_ngay = days
+                    n += 1
+        db.commit()
+        return n, len(rows), capped
+
+    applied, scanned, capped = run_with_retry(_do, db=db, label=f"targeted-alias-{kind}")
+    return {"applied": int(applied), "candidates": int(scanned), "capped": bool(capped)}
+
+
 # ── Schedule (lich_kh) alias rules ───────────────────────────────────────────
 
 # Mặc định seed khi bảng trống: các text lạ phổ biến → "" (bỏ qua khỏi

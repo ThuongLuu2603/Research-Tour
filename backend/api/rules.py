@@ -51,25 +51,100 @@ def _on_market_route_rules_changed(db: Session) -> None:
     invalidate_rules_changed(db)
 
 
-def _after_alias_mutation() -> None:
+def _after_alias_mutation(
+    db: Session | None = None,
+    field: str | None = None,
+    value: str | None = None,
+) -> None:
     """Sau khi POST/PUT/DELETE alias (company/departure/duration/schedule) — clear
-    cả cache classification (_*_alias_pairs lru) lẫn cache unmatched (panel «Chưa khớp»).
+    cache classification (_*_alias_pairs lru) + cập nhật cache unmatched (panel «Chưa khớp»).
 
-    Lý do: trước đây chỉ gọi invalidate_classification_cache() → fingerprint của
-    rules_job_store._unmatched_cache có thể vẫn hit trong cửa sổ ngắn (race read
-    fingerprint trước khi commit visible cho transaction khác). Auto-apply scope
-    chạy nền mới invalidate unmatched cache — user F5 ngay sau Gán → vẫn thấy
-    item cũ trong panel «Chưa khớp».
+    Hai chế độ cho cache unmatched:
+    - Có (db, field, value) — sau CREATE alias: incremental remove — chỉ XÓA dòng
+      ``value`` khỏi cache (rekey fingerprint mới) → panel GET sau INSTANT + đã mất
+      dòng vừa gán, không full recompute (vài giây trên VPS 2vCPU).
+      field: "cong_ty" | "diem_kh" | "thoi_gian" | "lich_kh".
+    - Không args — UPDATE/DELETE rule: fallback invalidate toàn bộ (an toàn, vì
+      sửa/xóa alias có thể làm value cũ QUAY LẠI panel — không thể remove-only).
 
-    Gọi explicit cả hai → endpoint /unmatched lần sau recompute fresh ngay."""
-    from rules_job_store import invalidate_unmatched_cache
+    Classification lru cache LUÔN bị clear (rule pairs phải reload từ DB)."""
+    from rules_job_store import invalidate_unmatched_cache, remove_from_unmatched_cache
 
     invalidate_classification_cache()
     try:
-        invalidate_unmatched_cache()
+        if db is not None and field and value:
+            remove_from_unmatched_cache(db, field, value)
+        else:
+            invalidate_unmatched_cache()
     except Exception:
         # cache layer optional — không chặn business logic nếu lỗi
-        pass
+        try:
+            invalidate_unmatched_cache()
+        except Exception:
+            pass
+
+
+def _targeted_alias_apply(db: Session, kind: str, alias: str) -> dict:
+    """Targeted apply ngay sau khi gán alias — query hẹp (ILIKE %alias%, cap 2000),
+    KHÔNG full scan → nhanh (<1s). Lỗi không chặn response (rule đã commit).
+
+    Trả {"applied": N, "candidates": M, "capped": bool}."""
+    from classification import apply_alias_rule_targeted
+
+    # Resolver dùng _*_alias_pairs (lru) — phải clear TRƯỚC để thấy rule vừa insert.
+    invalidate_classification_cache()
+    try:
+        return apply_alias_rule_targeted(db, kind, alias)
+    except Exception as e:  # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "targeted alias apply failed (kind=%s, alias=%r): %s", kind, alias, e
+        )
+        return {"applied": 0, "candidates": 0, "capped": False, "error": str(e)[:200]}
+
+
+def _alias_out_with_apply(model_cls, rule, apply_res: dict | None):
+    """Build response Out từ ORM rule + gắn kết quả targeted apply (applied/capped)."""
+    out = model_cls.model_validate(rule)
+    if apply_res:
+        out.applied = int(apply_res.get("applied") or 0)
+        out.capped = bool(apply_res.get("capped"))
+    return out
+
+
+def _unmatched_tours_query(db: Session):
+    """Query tour cho collect_unmatched_values — load_only đúng cột cần đọc.
+
+    Cold path recompute panel «Chưa khớp» scan toàn bộ tour canonical; trước đây
+    load full row (lich_trinh/search_text/... Text lớn) → I/O nặng trên VPS 2vCPU.
+    Cột liệt kê = đủ cho collect_unmatched_values (resolvers + matcher.resolve +
+    is_stats_excluded_tour + is_vietravel_tab) — thêm cột mới nếu function đổi."""
+    from sqlalchemy.orm import load_only
+
+    from data_sources import DB_CANONICAL_NGUON
+    from models import Tour
+
+    cols = load_only(
+        Tour.id,
+        Tour.nguon,
+        Tour.sheet_source,   # is_vietravel_tab
+        Tour.ten_tour,       # title hint + matcher + stats exclusions
+        Tour.lich_trinh,     # matcher.resolve
+        Tour.thi_truong,
+        Tour.tuyen_tour,
+        Tour.cong_ty,        # alias company
+        Tour.diem_kh,        # alias departure
+        Tour.thoi_gian,      # alias duration
+        Tour.so_ngay,
+        Tour.lich_kh,        # alias schedule + DateFormatRule DSL
+    )
+    return (
+        db.query(Tour)
+        .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
+        .options(cols)
+        .yield_per(800)
+    )
 
 
 @router.get("/status")
@@ -812,6 +887,10 @@ class CompanyRuleOut(_RuleIdAsStrMixin, BaseModel):
     alias: str
     active: bool
     sort_order: int
+    # Targeted apply sau Gán: số tour đã cập nhật ngay + capped=True nếu còn tour
+    # vượt cap 2000 (cron/apply-to-tours xử lý tiếp). Frontend toast "áp dụng cho N tour".
+    applied: int = 0
+    capped: bool = False
     model_config = {"from_attributes": True}
 
 
@@ -842,9 +921,13 @@ def create_company_rule(
     db.add(rule)
     db.commit()
     db.refresh(rule)
-    _after_alias_mutation()
+    alias_val = rule.alias
+    # Targeted apply: chỉ tour có cong_ty chứa alias (cap 2000) — tour hiệu lực ngay.
+    apply_res = _targeted_alias_apply(db, "company", alias_val)
+    # Incremental: xóa đúng dòng alias khỏi cache panel «Chưa khớp» (instant).
+    _after_alias_mutation(db, "cong_ty", alias_val)
     _auto_apply_tours(db, auto_apply, scope="company")
-    return rule
+    return _alias_out_with_apply(CompanyRuleOut, rule, apply_res)
 
 
 @router.put("/company/{rule_id}", response_model=CompanyRuleOut)
@@ -862,9 +945,12 @@ def update_company_rule(
         setattr(rule, k, v)
     db.commit()
     db.refresh(rule)
+    alias_val = rule.alias
+    apply_res = _targeted_alias_apply(db, "company", alias_val)
+    # Update có thể làm value cũ QUAY LẠI panel → full invalidate (an toàn).
     _after_alias_mutation()
     _auto_apply_tours(db, auto_apply, scope="company")
-    return rule
+    return _alias_out_with_apply(CompanyRuleOut, rule, apply_res)
 
 
 @router.delete("/company/{rule_id}")
@@ -904,6 +990,9 @@ class DepartureRuleOut(_RuleIdAsStrMixin, BaseModel):
     alias: str
     active: bool
     sort_order: int
+    # Targeted apply sau Gán (xem CompanyRuleOut).
+    applied: int = 0
+    capped: bool = False
     model_config = {"from_attributes": True}
 
 
@@ -934,9 +1023,13 @@ def create_departure_rule(
     db.add(rule)
     db.commit()
     db.refresh(rule)
-    _after_alias_mutation()
+    alias_val = rule.alias
+    # Targeted apply: tour có diem_kh chứa alias → resolve_departure_point per-tour
+    # (giữ nguyên multi-leg preserve logic), cap 2000.
+    apply_res = _targeted_alias_apply(db, "departure", alias_val)
+    _after_alias_mutation(db, "diem_kh", alias_val)
     _auto_apply_tours(db, auto_apply, scope="departure")
-    return rule
+    return _alias_out_with_apply(DepartureRuleOut, rule, apply_res)
 
 
 @router.put("/departure/{rule_id}", response_model=DepartureRuleOut)
@@ -954,9 +1047,12 @@ def update_departure_rule(
         setattr(rule, k, v)
     db.commit()
     db.refresh(rule)
+    alias_val = rule.alias
+    apply_res = _targeted_alias_apply(db, "departure", alias_val)
+    # Update → full invalidate (value cũ có thể quay lại panel).
     _after_alias_mutation()
     _auto_apply_tours(db, auto_apply, scope="departure")
-    return rule
+    return _alias_out_with_apply(DepartureRuleOut, rule, apply_res)
 
 
 @router.delete("/departure/{rule_id}")
@@ -1035,6 +1131,9 @@ class DurationRuleOut(_RuleIdAsStrMixin, BaseModel):
     alias: str
     active: bool
     sort_order: int
+    # Targeted apply sau Gán (xem CompanyRuleOut).
+    applied: int = 0
+    capped: bool = False
     model_config = {"from_attributes": True}
 
 
@@ -1065,9 +1164,12 @@ def create_duration_rule(
     db.add(rule)
     db.commit()
     db.refresh(rule)
-    _after_alias_mutation()
+    alias_val = rule.alias
+    # Targeted apply: tour có thoi_gian chứa alias → recompute so_ngay (skip manual_locked).
+    apply_res = _targeted_alias_apply(db, "duration", alias_val)
+    _after_alias_mutation(db, "thoi_gian", alias_val)
     _auto_apply_tours(db, auto_apply, scope="duration")
-    return rule
+    return _alias_out_with_apply(DurationRuleOut, rule, apply_res)
 
 
 @router.put("/duration/{rule_id}", response_model=DurationRuleOut)
@@ -1085,9 +1187,12 @@ def update_duration_rule(
         setattr(rule, k, v)
     db.commit()
     db.refresh(rule)
+    alias_val = rule.alias
+    apply_res = _targeted_alias_apply(db, "duration", alias_val)
+    # Update → full invalidate (value cũ có thể quay lại panel).
     _after_alias_mutation()
     _auto_apply_tours(db, auto_apply, scope="duration")
-    return rule
+    return _alias_out_with_apply(DurationRuleOut, rule, apply_res)
 
 
 @router.delete("/duration/{rule_id}")
@@ -1127,6 +1232,10 @@ class ScheduleRuleOut(_RuleIdAsStrMixin, BaseModel):
     alias: str
     active: bool
     sort_order: int
+    # Schedule alias KHÔNG ghi field tour (chỉ dùng lúc parse/thống kê) → applied luôn 0.
+    # Field giữ cho đồng nhất shape với company/departure/duration.
+    applied: int = 0
+    capped: bool = False
     model_config = {"from_attributes": True}
 
 
@@ -1158,7 +1267,9 @@ def create_schedule_rule(
     db.add(rule)
     db.commit()
     db.refresh(rule)
-    _after_alias_mutation()
+    # Schedule alias KHÔNG ghi field tour (chỉ dùng lúc parse/thống kê lich_kh)
+    # → không targeted apply; chỉ incremental remove khỏi panel «Chưa khớp».
+    _after_alias_mutation(db, "lich_kh", rule.alias)
     _auto_apply_tours(db, auto_apply, scope="schedule")
     return rule
 
@@ -1458,13 +1569,11 @@ def route_rule_stats(_: User = Depends(require_admin), db: Session = Depends(get
 def unmatched_summary(_: User = Depends(require_admin), db: Session = Depends(get_db)):
     """Số lượng chưa khớp per scope — dùng cho badge trên tab."""
     from classification import collect_classify_gaps, collect_unmatched_values
-    from data_sources import DB_CANONICAL_NGUON
-    from models import Tour
     from rules_job_store import get_unmatched_cached
 
     def _load_all():
-        tours = db.query(Tour).filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON))).yield_per(800)
-        return collect_unmatched_values(tours, vtr_only=False)
+        # load_only cột cần — cold path nhanh hơn (xem _unmatched_tours_query)
+        return collect_unmatched_values(_unmatched_tours_query(db), vtr_only=False)
 
     def _load_classify():
         return {"classify": collect_classify_gaps(db)}
@@ -1506,8 +1615,6 @@ def list_unmatched_rules(
 ):
     """Tour chưa khớp quy tắc — thị trường/tuyến: mỗi dòng một tên tour."""
     from classification import collect_unmatched_values
-    from data_sources import DB_CANONICAL_NGUON
-    from models import Tour
     from rules_job_store import get_unmatched_cached, invalidate_unmatched_cache
 
     if scope == "classify":
@@ -1524,12 +1631,8 @@ def list_unmatched_rules(
         return {"scope": scope, "items": data["classify"]}
 
     def _load() -> dict:
-        tours = (
-            db.query(Tour)
-            .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
-            .yield_per(800)
-        )
-        return collect_unmatched_values(tours, vtr_only=False)
+        # load_only cột cần — cold path nhanh hơn (xem _unmatched_tours_query)
+        return collect_unmatched_values(_unmatched_tours_query(db), vtr_only=False)
 
     if fresh:
         invalidate_unmatched_cache()
