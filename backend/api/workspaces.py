@@ -108,7 +108,14 @@ def _admin_write_classification(db, tour, data: dict, user) -> tuple[dict, bool]
     if wrote:
         from datetime import datetime
         tour.manual_locked = True       # quy tắc + sheet không ghi đè khi tour update (tên không đổi)
-        tour.phan_khuc = ""             # buộc tính lại phân khúc giá
+        if (tour.nguon or "") == "Vietravel":
+            # VTR: phân khúc = Dòng tour, recompute SKIP Vietravel → nếu blank ở
+            # đây thì rỗng đến lần scrape sau. Giữ nguyên (hoặc đồng bộ lại từ
+            # dong_tour nếu có) thay vì wipe.
+            if (tour.dong_tour or "").strip():
+                tour.phan_khuc = (tour.dong_tour or "").strip()[:64]
+        else:
+            tour.phan_khuc = ""         # buộc tính lại phân khúc giá (recompute ngay sau PATCH)
         tour.updated_at = datetime.utcnow()
     return remaining, wrote
 

@@ -597,7 +597,18 @@ def _upsert_tours(db: Session, df, nguon: str, job_id: int, emit_job_id: int) ->
         )
 
         if existing:
+            # STICKY: scrape row thiếu giá trị → GIỮ giá trị cũ trên DB, tuyệt đối
+            # không wipe bằng "". Áp dụng cho diem_kh/thoi_gian (yêu cầu sticky
+            # tuyệt đối) + cong_ty/thi_truong/tuyen_tour (cùng convention với
+            # sheets_tour_sync._apply_fields_to_tour).
+            _STICKY_FIELDS = ("diem_kh", "thoi_gian", "cong_ty", "thi_truong", "tuyen_tour")
             for k, v in data.items():
+                if k in _STICKY_FIELDS and not (str(v or "").strip()):
+                    continue  # giữ giá trị cũ
+                if k == "so_ngay" and v is None and not data.get("thoi_gian"):
+                    continue  # thoi_gian sticky → đừng wipe so_ngay theo
+                if k == "phan_khuc" and (existing.nguon or "") == "Vietravel":
+                    continue  # VTR: phân khúc = Dòng tour, recompute skip VTR → không blank
                 setattr(existing, k, v)
             if not existing.external_id:
                 from tour_identity import compute_external_id

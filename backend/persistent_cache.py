@@ -90,6 +90,21 @@ def load_json(namespace: str, max_age_hours: int | None = None) -> dict | list |
         return None
 
 
+def delete_json(namespace: str) -> bool:
+    """Xoá file JSON cache của namespace (đánh dấu stale ngay lập tức).
+
+    Dùng khi data nguồn biến động lớn (sync/scrape) → snapshot disk không còn
+    đáng tin, phải force rebuild ở lần đọc kế tiếp."""
+    try:
+        path = CACHE_DIR / f"{namespace}.json"
+        if path.exists():
+            path.unlink()
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.debug("Persistent delete %s failed: %s", namespace, e)
+        return False
+
+
 def save_text(namespace: str, content: str, ttl_hours: int = 24) -> bool:
     """Save HTML/text ra disk. Trả True nếu thành công."""
     try:

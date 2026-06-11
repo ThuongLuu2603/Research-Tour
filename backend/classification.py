@@ -489,6 +489,26 @@ def is_duration_alias_matched(thoi_gian: str, so_ngay: float | None) -> bool:
     return False
 
 
+def is_duration_text_alias_matched(thoi_gian: str) -> bool:
+    """Text thời gian đã được chuẩn hóa chưa — CHỈ xét text, KHÔNG xét so_ngay.
+
+    Dùng cho panel «Chưa khớp» tab Thời gian: tour có so_ngay parse được (vd
+    "9 ngày 8 đêm" → 9 qua parse_ngay) vẫn cần hiện text raw nếu chưa có alias
+    trong DurationAliasRule để admin chuẩn hóa. Matched khi:
+      - text khớp alias chính thức (DurationAliasRule), HOẶC
+      - text đã đúng định dạng NĐ chuẩn (parse_duration_nd: 5N4Đ, 1N, 0.5N...).
+    """
+    from duration_format import parse_duration_nd
+
+    text = re.sub(r"\s+", " ", (thoi_gian or "").strip().lower())
+    if not text:
+        return False
+    for alias, _days in _duration_alias_pairs():
+        if alias == text or alias in text:
+            return True
+    return parse_duration_nd(text.replace(" ", "")) is not None
+
+
 def resolve_duration_days(thoi_gian: str, so_ngay: float | None) -> tuple[float | None, bool]:
     """Trả về (số ngày chuẩn, đã khớp alias/so_ngay). NĐ: 5N4Đ→5, 5N5Đ→5.5, 0.5N→0.5."""
     from duration_format import parse_duration_nd
@@ -823,10 +843,19 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
         if raw_dep_for_alias and not is_departure_alias_matched(raw_dep_for_alias):
             diem_kh[raw_dep_for_alias] = diem_kh.get(raw_dep_for_alias, 0) + 1
         raw_tg_for_alias = (t.thoi_gian or "").strip()
-        days_for_alias, matched_for_alias = resolve_duration_days(raw_tg_for_alias, t.so_ngay)
-        if days_for_alias is None or (raw_tg_for_alias and not matched_for_alias):
-            key = raw_tg_for_alias or (f"so_ngay={t.so_ngay}" if t.so_ngay else "—")
-            thoi_gian[key] = thoi_gian.get(key, 0) + 1
+        if raw_tg_for_alias:
+            # CHỈ xét text vs DurationAliasRule / định dạng NĐ chuẩn. Trước đây dùng
+            # resolve_duration_days(text, so_ngay) — so_ngay parse được (vd "9 ngày
+            # 8 đêm" → 9) bị coi là matched → panel «Chưa khớp» tab Thời gian luôn
+            # rỗng, admin không thấy text raw cần chuẩn hóa alias.
+            if not is_duration_text_alias_matched(raw_tg_for_alias):
+                thoi_gian[raw_tg_for_alias] = thoi_gian.get(raw_tg_for_alias, 0) + 1
+        else:
+            # Không có text: chỉ flag khi so_ngay cũng không dùng được.
+            days_for_alias, _ = resolve_duration_days("", t.so_ngay)
+            if days_for_alias is None:
+                key = f"so_ngay={t.so_ngay}" if t.so_ngay else "—"
+                thoi_gian[key] = thoi_gian.get(key, 0) + 1
 
         # Ngày KH (lich_kh): gom giá trị chưa được DSL DateFormatRule match.
         # Trước đây gate bằng parse_departure_dates() (hardcoded fallback) → bị "cứu"
