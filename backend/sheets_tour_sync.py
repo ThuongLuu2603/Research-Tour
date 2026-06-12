@@ -154,9 +154,14 @@ def _row_to_fields(row: list[str], *, nguon: str = "") -> dict | None:
         return None
     gia_raw = row[7] if len(row) > 7 else ""
     link = ""
-    if len(row) > COL_LINK_RAW - 1:
+    # Cột X (index 23) = URL THẬT của Main. Cột J (index 9) là CÔNG THỨC
+    # =if(X..="";""; HYPERLINK(X..;"Xem chi tiết")) → gspread get_all_values() trả
+    # display "Xem chi tiết", MẤT url; công thức trỏ tới cột X chứa url thật → đọc X.
+    if len(row) > 23:
+        link = _extract_url(row[23])
+    if not link and len(row) > COL_LINK_RAW - 1:   # Z (25): Vietravel raw url
         link = _extract_url(row[COL_LINK_RAW - 1])
-    if not link and len(row) > 9:
+    if not link and len(row) > 9:                  # J (9): fallback (formula display, thường rỗng)
         link = _extract_url(row[9])
     # Main: cột B/C (thị trường, tuyến) không import — gán bằng quy tắc tuyến sau.
     sheet_tt = "" if nguon == "Main" else (row[1] if len(row) > 1 else "").strip()
