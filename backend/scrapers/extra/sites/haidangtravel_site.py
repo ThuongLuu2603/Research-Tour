@@ -115,16 +115,18 @@ def _parse_cards(html: str) -> list[dict]:
     return rows
 
 
-def _fetch_detail(url: str) -> tuple[str, str, str, str]:
-    """Trang chi tiết → (điểm KH, phương tiện, thời gian, lịch KH tuần). Lỗi → ('','','','')."""
+def _fetch_detail(url: str) -> tuple[str, str, str, str, str]:
+    """Trang chi tiết → (điểm KH, phương tiện, thời gian, lịch KH, khách sạn).
+    Khách sạn = field JSON-LD "Tiêu chuẩn" (vd '3 sao', '4 sao'). Lỗi → ('',)*5."""
     html = _fetch(url, requests.Session())
     if not html:
-        return "", "", "", ""
+        return "", "", "", "", ""
     dep = _ld_prop(html, "Điểm khởi hành")
     trans = _ld_prop(html, "Phương tiện")
     dur = _norm_duration(_ld_prop(html, "Thời lượng") or _first(r"Thời gian:\s*([^<\n]{2,20})", html))
     sched = _extract_schedule(html)
-    return dep, trans, dur, sched
+    hotel = _ld_prop(html, "Tiêu chuẩn")
+    return dep, trans, dur, sched, hotel
 
 
 def _extract_schedule(html: str) -> str:
@@ -187,9 +189,9 @@ def scrape(progress: Callable[[int, str], None] | None = None) -> pd.DataFrame:
             for fut in as_completed(futs):
                 r = futs[fut]
                 try:
-                    dep, trans, dur, sched = fut.result()
+                    dep, trans, dur, sched, hotel = fut.result()
                 except Exception:  # noqa: BLE001
-                    dep, trans, dur, sched = "", "", "", ""
+                    dep, trans, dur, sched, hotel = "", "", "", "", ""
                 if dep:
                     r["diem_kh"] = dep
                 if trans:
@@ -198,6 +200,11 @@ def scrape(progress: Callable[[int, str], None] | None = None) -> pd.DataFrame:
                     r["thoi_gian"] = dur
                 if sched:
                     r["lich_kh"] = sched
+                if hotel:
+                    r["khach_san"] = hotel
+
+    # BỎ tour không có ngày khởi hành (thỏa thuận / không ghi lịch) — theo yêu cầu.
+    all_rows = [r for r in all_rows if r["lich_kh"].strip()]
 
     try:
         from classification import classify_route_fields
