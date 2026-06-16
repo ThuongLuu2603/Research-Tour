@@ -72,7 +72,17 @@ def _fetch_detail_fields(url: str) -> tuple[str, str, str]:
         return "", "", ""
     tg = _norm_duration(_first(r"Thời gian\s*<span[^>]*>([^<]+)</span>", html))
     dep = _first(r"Nơi Khởi hành[:：]?\s*<span[^>]*>([^<]+)</span>", html)
-    air = _first(r"Máy bay\s*<span[^>]*>([^<]+)</span>", html)
+    # Phương tiện: NHÃN = loại (Máy bay / Ô Tô / Máy bay - Tàu thủy…), SPAN = tên hãng
+    # (thường rỗng). Lấy tên hãng nếu có; không thì lấy loại phương tiện (đỡ trống).
+    mt = re.search(
+        r'<h3[^>]*>\s*((?:Máy bay|Ô\s?[Tt]ô|Tàu|Xe|Thuyền|Cano|Phương tiện)[^<]*?)\s*'
+        r'<span class="[^"]*tour-info-ex\d+-ajax[^"]*">([^<]*)</span>',
+        html, re.I | re.S,
+    )
+    air = ""
+    if mt:
+        typ, name = mt.group(1).strip(), mt.group(2).strip()
+        air = name or typ
     return tg, dep, air
 
 
