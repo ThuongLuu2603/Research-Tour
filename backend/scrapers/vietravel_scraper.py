@@ -18,6 +18,7 @@ Mỗi tour: pageTitle / priceFinal / tourLineName / tourLineId / departureName /
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from datetime import datetime
 from typing import Any, Callable
 
@@ -235,6 +236,64 @@ def _tour_to_dict(tour: dict[str, Any], keyword: str) -> dict[str, Any]:
     }
 
 
+def _variant_external_id(page_code: str, link: str, ten: str, price: int | None) -> str:
+    """external_id ổn định cho 1 BIẾN THỂ GIÁ của chương trình: base + '#<giá>'.
+    Cùng (chương trình, giá) → cùng id qua các lần chạy; khác giá → id khác → tách dòng DB."""
+    from tour_identity import compute_external_id
+
+    base = compute_external_id("Vietravel", ma_tour=page_code, link_url=link, ten_tour=ten)
+    return f"{base}#{int(price)}" if price else base
+
+
+def _price_groups_from_departures(tour: dict[str, Any]) -> dict[int, list[datetime]]:
+    """Gom listDepartureDate theo salePrice → {giá(int): [ngày]}. Ngày không có giá → bỏ."""
+    groups: dict[int, list[datetime]] = defaultdict(list)
+    for dep in tour.get("listDepartureDate") or []:
+        if not isinstance(dep, dict):
+            continue
+        sp = dep.get("salePrice")
+        raw = dep.get("date")
+        try:
+            price = int(float(sp)) if sp and float(sp) > 0 else None
+        except (TypeError, ValueError):
+            price = None
+        if price is None or not raw:
+            continue
+        try:
+            dt = datetime.fromisoformat(str(raw))
+        except ValueError:
+            continue
+        groups[price].append(dt)
+    return groups
+
+
+def _tour_to_rows(tour: dict[str, Any], keyword: str) -> list[dict[str, Any]]:
+    """1 chương trình → NHIỀU dòng: ngày CÙNG giá gộp 1 dòng, KHÁC giá tách dòng riêng.
+
+    Mỗi dòng giữ chung mọi field (tên/điểm KH/thời gian/link/mã tour…), chỉ khác `gia`
+    + `lich_kh` (các ngày của mức giá đó) + `external_id` (định danh riêng theo giá).
+    Không có giá-theo-ngày (listDepartureDate rỗng) → 1 dòng fallback (giá = priceFinal/min)."""
+    base = _tour_to_dict(tour, keyword)
+    groups = _price_groups_from_departures(tour)
+    if not groups:
+        base["external_id"] = _variant_external_id(
+            base["page_code"], base["link_url"], base["ten_tour"], None
+        )
+        return [base]
+
+    rows: list[dict[str, Any]] = []
+    for price in sorted(groups, key=lambda p: min(groups[p])):  # theo ngày sớm nhất
+        dates = sorted({(d.year, d.month, d.day): d for d in groups[price]}.values())
+        row = dict(base)
+        row["gia"] = _fmt_price(price)
+        row["lich_kh"] = ", ".join(d.strftime("%d/%m/%Y") for d in dates)
+        row["external_id"] = _variant_external_id(
+            base["page_code"], base["link_url"], base["ten_tour"], price
+        )
+        rows.append(row)
+    return rows
+
+
 def fetch_tours_from_api(keyword: str) -> list[dict[str, Any]]:
     """Gọi API JSON, paginate tất cả trang cho 1 keyword, trả list[dict] tour.
 
@@ -315,7 +374,7 @@ def fetch_tours_from_api(keyword: str) -> list[dict[str, Any]]:
                 continue
             if key:
                 seen.add(key)
-            out.append(_tour_to_dict(tour, keyword))
+            out.extend(_tour_to_rows(tour, keyword))  # tách dòng theo giá
 
         page += 1
         if total_page is not None and page >= total_page:

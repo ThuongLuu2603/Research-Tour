@@ -281,7 +281,16 @@ def _find_db_tour(
     fields: dict,
     external_id: str,
     lookup: dict[str, dict[str, Tour]] | None = None,
+    *,
+    external_only: bool = False,
 ) -> Tour | None:
+    # external_only: dòng mang external_id tường minh (vd biến thể giá Vietravel chia sẻ
+    # CÙNG ma_tour/link/tên) → CHỈ match theo external_id, KHÔNG fallback ma/link/tên
+    # (nếu không các biến thể giá sẽ gom nhầm về cùng 1 tour).
+    if external_only:
+        if lookup is not None:
+            return lookup["external"].get(external_id)
+        return db.query(Tour).filter(Tour.external_id == external_id).first()
     if lookup is not None:
         tour = lookup["external"].get(external_id)
         if tour:
@@ -591,13 +600,16 @@ def _merge_dataframe_to_db_locked(
             skipped += 1
             continue
 
-        external_id = compute_external_id(
+        # Scraper có thể cấp external_id tường minh (Vietravel tách dòng theo giá:
+        # cùng ma_tour nhưng khác giá → định danh riêng '#<giá>'). Có → match external-only.
+        explicit_ext = str(row.get("external_id") or "").strip()
+        external_id = explicit_ext or compute_external_id(
             nguon,
             ma_tour=fields.get("ma_tour", ""),
             link_url=fields.get("link_url", ""),
             ten_tour=fields.get("ten_tour", ""),
         )
-        tour = _find_db_tour(db, nguon, fields, external_id, lookup)
+        tour = _find_db_tour(db, nguon, fields, external_id, lookup, external_only=bool(explicit_ext))
         is_new = tour is None
         needs_classify = is_new or (tour is not None and _needs_route_reclassification(tour, fields))
 
