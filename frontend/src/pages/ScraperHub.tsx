@@ -159,7 +159,7 @@ function ScraperCard({
   const isRunning = trigger.isPending || (progress && !progress.done);
 
   return (
-    <div className="card p-5 space-y-4">
+    <div className="card p-4 space-y-3">
       <div className="flex items-start justify-between gap-2">
         <div>
           <h3 className="font-semibold text-gray-900">{label}</h3>
@@ -424,10 +424,11 @@ function ExtraSourcesSection() {
     refetchOnWindowFocus: false,
   });
 
-  const list = sources ?? [];
+  // Ẩn site mẫu "example" (template, 0 tour) khỏi UI — chỉ là khung code.
+  const list = (sources ?? []).filter((s) => s.key !== "example");
 
   return (
-    <div className="card p-5 space-y-3">
+    <div className="card p-4 space-y-2">
       <div>
         <h3 className="font-semibold text-gray-800 flex items-center gap-2">
           <Globe size={18} className="text-primary-600" />
@@ -463,6 +464,8 @@ export default function ScraperHub() {
   const [schedHour, setSchedHour] = useState(7);
   const [schedMin, setSchedMin] = useState(0);
   const [savedSched, setSavedSched] = useState(false);
+  const [jobPage, setJobPage] = useState(0);   // Job History phân trang
+  const JOBS_PER_PAGE = 10;
 
   const { data: jobs, refetch: refetchJobs } = useQuery({
     queryKey: ["scrape-jobs"],
@@ -555,7 +558,7 @@ export default function ScraperHub() {
   };
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -568,7 +571,7 @@ export default function ScraperHub() {
       </div>
 
       {/* Data import — no Render Shell needed on free tier */}
-      <div className={cn("card p-5 border-2", dataStatus?.complete ? "border-green-200 bg-green-50/40" : "border-amber-300 bg-amber-50/50")}>
+      <div className={cn("card p-4 border", dataStatus?.complete ? "border-green-200 bg-green-50/40" : "border-amber-300 bg-amber-50/50")}>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h3 className="font-semibold text-gray-800 flex items-center gap-2">
@@ -642,23 +645,23 @@ export default function ScraperHub() {
         )}
       </div>
 
-      {/* Scraper cards */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ScraperCard
-          scraper="vietravel"
-          label="Vietravel — travel.com.vn"
-          desc="DB trước → xuất tab Sheet Vietravel"
-          showSyncFromSheet
-        />
-        <ScraperCard
-          scraper="findtourgo"
-          label="FindTourGo — OTA Aggregator"
-          desc="Phân loại thị trường/tuyến → ghi tab FindTourGo (không lưu DB)"
-        />
+      {/* Nguồn thu thập: Vietravel + FindTourGo + website khác — gom 1 nhóm cho gọn */}
+      <div className="space-y-3">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <ScraperCard
+            scraper="vietravel"
+            label="Vietravel — travel.com.vn"
+            desc="DB trước → xuất tab Sheet Vietravel"
+            showSyncFromSheet
+          />
+          <ScraperCard
+            scraper="findtourgo"
+            label="FindTourGo — OTA Aggregator"
+            desc="Phân loại thị trường/tuyến → ghi tab FindTourGo (không lưu DB)"
+          />
+        </div>
+        <ExtraSourcesSection />
       </div>
-
-      {/* Scrape website tour khác */}
-      <ExtraSourcesSection />
 
       {/* Auto schedule */}
       <div className="card p-5 space-y-4">
@@ -685,8 +688,9 @@ export default function ScraperHub() {
             {(schedule?.jobs ?? [
               { label: "1. Scrape Vietravel", time_vn: `${String(schedHour).padStart(2, "0")}:${String(schedMin).padStart(2, "0")}`, is_trigger: true },
               { label: "2. Scrape FindTourGo → Sheet", time_vn: "→ sau bước trước", is_trigger: false },
+              { label: "2b. Scrape website khác → Sheet", time_vn: "→ sau bước trước", is_trigger: false },
               { label: "3. Sync Main → DB", time_vn: "→ sau bước trước", is_trigger: false },
-              { label: "4. Sync All Sheets → DB", time_vn: "→ sau bước trước", is_trigger: false },
+              { label: "4. Tag tour theo lễ hội", time_vn: "→ sau bước trước", is_trigger: false },
               { label: "5. Snapshot BGĐ", time_vn: "→ sau bước trước", is_trigger: false },
             ]).map((j) => {
               const isTrigger = "is_trigger" in j ? (j as { is_trigger?: boolean }).is_trigger : true;
@@ -739,9 +743,39 @@ export default function ScraperHub() {
       )}
 
       {/* Job history */}
+      {(() => {
+      const allJobs = jobs ?? [];
+      const pageCount = Math.max(1, Math.ceil(allJobs.length / JOBS_PER_PAGE));
+      const curPage = Math.min(jobPage, pageCount - 1);
+      const pagedJobs = allJobs.slice(curPage * JOBS_PER_PAGE, (curPage + 1) * JOBS_PER_PAGE);
+      return (
       <div className="card overflow-auto">
-        <div className="px-5 py-3 border-b border-gray-200">
-          <h3 className="font-semibold text-gray-800">Job History (30 gần nhất)</h3>
+        <div className="px-5 py-3 border-b border-gray-200 flex items-center justify-between gap-2">
+          <h3 className="font-semibold text-gray-800">
+            Job History
+            <span className="text-xs font-normal text-gray-400 ml-2">{allJobs.length} job</span>
+          </h3>
+          {pageCount > 1 && (
+            <div className="flex items-center gap-2 text-xs">
+              <button
+                type="button"
+                className="btn-secondary px-2 py-1 disabled:opacity-40"
+                disabled={curPage <= 0}
+                onClick={() => setJobPage((p) => Math.max(0, p - 1))}
+              >
+                ‹ Trước
+              </button>
+              <span className="text-gray-500 whitespace-nowrap">Trang {curPage + 1}/{pageCount}</span>
+              <button
+                type="button"
+                className="btn-secondary px-2 py-1 disabled:opacity-40"
+                disabled={curPage >= pageCount - 1}
+                onClick={() => setJobPage((p) => Math.min(pageCount - 1, p + 1))}
+              >
+                Sau ›
+              </button>
+            </div>
+          )}
         </div>
         <table className="w-full text-sm">
           <thead>
@@ -752,7 +786,7 @@ export default function ScraperHub() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {(jobs ?? []).map((job: ScrapeJob) => {
+            {pagedJobs.map((job: ScrapeJob) => {
               const stale = isJobLikelyStale(job);
               return (
               <tr key={job.id} className={cn("hover:bg-blue-50 transition-colors", stale && "bg-amber-50/80")}>
@@ -791,12 +825,14 @@ export default function ScraperHub() {
               </tr>
             );
             })}
-            {(jobs ?? []).length === 0 && (
+            {allJobs.length === 0 && (
               <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400 text-sm">Chưa có job nào. Bấm "Chạy ngay" để bắt đầu.</td></tr>
             )}
           </tbody>
         </table>
       </div>
+      );
+      })()}
     </div>
   );
 }

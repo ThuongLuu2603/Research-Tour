@@ -62,6 +62,7 @@ def _job_plan(hour: int | None = None, minute: int | None = None) -> list[tuple[
     return [
         ("daily_vietravel", "1. Scrape Vietravel", h, m),
         ("daily_findtourgo", "2. Scrape FindTourGo → Sheet", None, None),
+        ("daily_extra_scrapers", "2b. Scrape website khác → Sheet", None, None),
         ("daily_main_sheet_sync", "3. Sync Main → DB", None, None),
         ("daily_festival_tagging", "4. Tag tour theo lễ hội", None, None),
         ("daily_intel_snapshot", "5. Snapshot BGĐ", None, None),
@@ -524,6 +525,7 @@ def _run_enabled_extra_scrapers() -> None:
                 _wait_for_scraper_to_finish(key)
         except Exception as e:  # noqa: BLE001
             logger.exception("[CHAIN 2b] Extra site %s lỗi: %s", key, e)
+    _mark_job("daily_extra_scrapers")  # ghi last_run cho dòng "2b" trong Lịch tự động
 
 
 def _run_daily_chain():
