@@ -874,6 +874,7 @@ def _merge_sheet_source_to_db_locked(
     # GIỮ external_id gốc → không churn, không mất override.
     parsed: list[tuple[int, dict | None, str | None]] = []
     base_counts: Counter = Counter()
+    ten_counts: Counter = Counter()
     for row_num, row in enumerate(data_rows, start=1):
         fields = _row_to_fields(row, nguon=nguon)
         base_id = None
@@ -885,20 +886,35 @@ def _merge_sheet_source_to_db_locked(
                 ten_tour=fields.get("ten_tour", ""),
             )
             base_counts[base_id] += 1
+            ten_key = (fields.get("ten_tour") or "").strip().lower()
+            if ten_key:
+                ten_counts[ten_key] += 1
         parsed.append((row_num + 1, fields, base_id))
-    collide_ids = {b for b, c in base_counts.items() if c > 1}
+    collide_base = {b for b, c in base_counts.items() if c > 1}
+    collide_ten = {t for t, c in ten_counts.items() if c > 1}
 
     for row_num, (row_idx, fields, base_id) in enumerate(parsed, start=1):
         if not fields:
             skipped += 1
             continue
-        if base_id in collide_ids:
-            # Biến thể giá: định danh = base + hash(giá|lịch KH). Match external-only để
-            # KHÔNG fallback theo tên/link gom nhầm các biến thể về cùng 1 tour.
-            disc = hashlib.sha1(
-                f"{fields.get('gia_raw', '')}|{fields.get('lich_kh', '')}".encode("utf-8")
-            ).hexdigest()[:8]
-            external_id = f"{base_id}#{disc}"
+        ten_key = (fields.get("ten_tour") or "").strip().lower()
+        base_collide = base_id in collide_base
+        # Mơ hồ = nhiều dòng cùng base (cùng link/mã) HOẶC cùng TÊN tour. Cả 2 đều khiến
+        # _find_db_tour fallback (link/tên) gom nhầm các biến thể giá về 1 tour. Vd:
+        #  - cùng base: POSTUM cùng link Google Sheet, khác giá → tách bằng disc(giá|lịch).
+        #  - khác base, cùng tên: You&Me 3 link #g{giá} khác nhau nhưng cùng tên → trước
+        #    đây bị source_ten gom còn 1. Giờ match external-only → giữ đủ 3 dòng.
+        ambiguous = base_collide or (ten_key in collide_ten)
+        if ambiguous:
+            if base_collide:
+                # Cùng base → cần discriminator để phân biệt từng mức giá.
+                disc = hashlib.sha1(
+                    f"{fields.get('gia_raw', '')}|{fields.get('lich_kh', '')}".encode("utf-8")
+                ).hexdigest()[:8]
+                external_id = f"{base_id}#{disc}"
+            else:
+                # Khác base sẵn (link đã khác) → giữ base, chỉ cần chặn fallback theo tên.
+                external_id = base_id
             tour = _find_db_tour(db, nguon, fields, external_id, lookup, external_only=True)
         else:
             external_id = base_id
