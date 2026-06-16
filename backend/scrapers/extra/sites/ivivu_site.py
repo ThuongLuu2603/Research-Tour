@@ -1,21 +1,33 @@
 """Extra scraper: iVIVU.com (https://www.ivivu.com/du-lich/).
 
-ivivu là SPA, KHÔNG render tour trong HTML — load qua API JSON nội bộ:
-  POST https://apiportal.ivivu.com/web_prot/mercurius-tour/api/TourDataSearchApi/TourSearchWithIdsV2
-  body: {"DepartureTime": "YYYY-MM-DD", "TourIds": "id1,id2,..."}
-  -> trả mảng tour: Code/Name/Time/Departured/Contract[].PriceAdult/DepartureDate[].
+ivivu là SPA, KHÔNG render tour trong HTML — load qua API JSON nội bộ
+(host apiportal.ivivu.com, server openresty, KHÔNG Cloudflare → gọi thẳng được):
 
-`TourIds` là danh sách tour của trang du-lich (frontend nạp sẵn). Ta nhúng seed
-list (_SEED_TOUR_IDS) để chạy được ngay; mỗi lần chạy POST lại -> GIÁ + LỊCH KH
-luôn mới (API realtime), chỉ tập tour là cố định. Khi biết endpoint trả danh sách
-ID, set _TOUR_IDS_URL để tự bắt tour mới (xem _fetch_tour_ids).
+  1) POST .../TourDataSearchApi/TourSearchWithIdsV2
+     body {"DepartureTime":"YYYY-MM-DD","TourIds":"id1,id2,..."}
+     -> mảng tour: Code/Name/Time/Departured/DepartureDate[]. (Code = "TO"+id_url)
 
-KHÔNG bịa lịch trình: API này không trả itinerary -> lich_trinh = "".
+  2) POST .../TourDataSearchApi/TourSearchByListDate  (giá TỪNG NGÀY)
+     body {"TourCode":"<id_url>","DepartureTime":[dates],"Version":"v2"}
+     -> mảng contract: PriceAdultAvg (giá/người) + DepartureTime[] cho từng ngày.
+
+GỘP DÒNG THEO GIÁ: 1 tour có nhiều ngày KH giá khác nhau -> các ngày CÙNG giá gộp
+1 dòng, KHÁC giá tách dòng riêng (yêu cầu user).
+
+`TourIds` là tập tour của trang du-lich (frontend nạp sẵn) -> nhúng seed list;
+mỗi run gọi lại API nên GIÁ/LỊCH KH luôn mới. Set _TOUR_IDS_URL khi biết endpoint
+trả danh sách ID để tự bắt tour mới.
+
+KHÔNG bịa lịch trình (API không trả itinerary -> lich_trinh="").
 """
 from __future__ import annotations
 
 import datetime as _dt
 import logging
+import re
+import unicodedata
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
 import pandas as pd
@@ -28,13 +40,14 @@ logger = logging.getLogger(__name__)
 
 _API_BASE = "https://apiportal.ivivu.com/web_prot/mercurius-tour/api/TourDataSearchApi"
 _SEARCH_URL = f"{_API_BASE}/TourSearchWithIdsV2"
+_BYDATE_URL = f"{_API_BASE}/TourSearchByListDate"
 
-# Nếu sau này biết request trả về danh sách TourIds (GET/POST), điền URL vào đây để
-# scraper tự lấy tour mới thay vì dùng seed cứng. None = dùng _SEED_TOUR_IDS.
+# Nếu sau này biết request trả danh sách TourIds, điền URL vào đây để auto bắt tour mới.
 _TOUR_IDS_URL: str | None = None
 
 _COMPANY = "iVIVU.com"
-_BATCH = 300          # số ID / 1 POST (API nhận cả ~600 trong 1 request, chia nhỏ cho chắc)
+_BATCH = 300          # số ID / 1 POST TourSearchWithIdsV2
+_DETAIL_WORKERS = 6   # số luồng gọi TourSearchByListDate song song
 _TIMEOUT = 60
 
 _HEADERS = {
@@ -84,46 +97,88 @@ _SEED_TOUR_IDS = (
 )
 
 
-def _fmt_price(contracts: list[dict]) -> str:
-    """Giá đại diện = PriceAdult nhỏ nhất (>0) trong Contract -> '3.990.000'."""
-    vals: list[float] = []
-    for c in contracts or []:
-        for k in ("PriceAdult", "PriceAdultAvg"):
-            v = c.get(k)
-            if isinstance(v, (int, float)) and v > 0:
-                vals.append(float(v))
-                break
-    if not vals:
+def _strip_accents(s: str) -> str:
+    s = s.replace("đ", "d").replace("Đ", "D")
+    nfkd = unicodedata.normalize("NFD", s)
+    return "".join(c for c in nfkd if unicodedata.category(c) != "Mn")
+
+
+def _slug(name: str) -> str:
+    """'Tour Trung Quốc 5N4Đ: HCM - Lệ Giang' -> 'tour-trung-quoc-5n4d-hcm-le-giang'."""
+    s = _strip_accents(name or "").lower()
+    s = re.sub(r"[^a-z0-9]+", "-", s)
+    return s.strip("-")
+
+
+def _url_id(code: str) -> str:
+    """Code 'TO4252' -> '4252' (số trong URL & TourCode của API detail)."""
+    return re.sub(r"\D", "", code or "")
+
+
+def _fmt_price(v) -> str:
+    if not isinstance(v, (int, float)) or v <= 0:
         return ""
-    return f"{int(round(min(vals))):,}".replace(",", ".")
+    return f"{int(round(v)):,}".replace(",", ".")
 
 
-def _fmt_dates(raw: list[str]) -> str:
-    """['2026-06-18T00:00:00', ...] -> '18/06/2026, 19/06/2026, ...' (bỏ trùng, giữ thứ tự)."""
-    out: list[str] = []
-    seen: set[str] = set()
-    for s in raw or []:
-        d = str(s)[:10]  # 'YYYY-MM-DD'
-        try:
-            y, m, day = d.split("-")
-            ddmm = f"{int(day):02d}/{int(m):02d}/{y}"
-        except Exception:  # noqa: BLE001
-            continue
-        if ddmm not in seen:
-            seen.add(ddmm)
-            out.append(ddmm)
+def _to_ddmmyyyy(s: str) -> str:
+    d = str(s)[:10]
+    try:
+        y, m, day = d.split("-")
+        return f"{int(day):02d}/{int(m):02d}/{y}"
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _join_dates(iso_dates) -> str:
+    out, seen = [], set()
+    for d in sorted(iso_dates):
+        v = _to_ddmmyyyy(d)
+        if v and v not in seen:
+            seen.add(v)
+            out.append(v)
     return ", ".join(out)
 
 
+def _price_groups(session: requests.Session, url_id: str, iso_dates: list[str]) -> list[tuple[float, list[str]]]:
+    """Gọi TourSearchByListDate -> gom ngày theo PriceAdultAvg. Trả [(price, [date_iso]), ...]
+    sắp theo ngày sớm nhất. [] nếu lỗi/không có (caller fallback)."""
+    if not url_id or not iso_dates:
+        return []
+    body = {"TourCode": url_id, "DepartureTime": iso_dates, "Version": "v2"}
+    try:
+        r = session.post(_BYDATE_URL, json=body, headers=_HEADERS, timeout=_TIMEOUT)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("ivivu detail %s lỗi: %s", url_id, e)
+        return []
+    if not isinstance(data, list):
+        return []
+    groups: dict[float, list[str]] = defaultdict(list)
+    for c in data:
+        if not isinstance(c, dict):
+            continue
+        price = c.get("PriceAdultAvg")
+        if not isinstance(price, (int, float)) or price <= 0:
+            price = c.get("PriceAdult")
+        if not isinstance(price, (int, float)) or price <= 0:
+            continue
+        dt = (c.get("DepartureTime") or [None])[0] or c.get("AllotmentDate")
+        if not dt:
+            continue
+        groups[float(price)].append(str(dt)[:10])
+    # sắp nhóm theo ngày sớm nhất trong nhóm
+    return sorted(groups.items(), key=lambda kv: min(kv[1]))
+
+
 def _fetch_tour_ids(session: requests.Session) -> str:
-    """Lấy chuỗi TourIds. Mặc định seed cứng; nếu set _TOUR_IDS_URL thì lấy động."""
     if not _TOUR_IDS_URL:
         return _SEED_TOUR_IDS
     try:
         r = session.get(_TOUR_IDS_URL, headers=_HEADERS, timeout=_TIMEOUT)
         r.raise_for_status()
         data = r.json()
-        # TODO: tùy shape thật của endpoint -> rút list id. Hiện chưa biết -> fallback seed.
         if isinstance(data, list) and data and isinstance(data[0], (int, str)):
             return ",".join(str(x) for x in data)
         ids = data.get("TourIds") or data.get("Ids") or data.get("ids")
@@ -136,62 +191,117 @@ def _fetch_tour_ids(session: requests.Session) -> str:
     return _SEED_TOUR_IDS
 
 
-def _row_from_tour(t: dict) -> dict:
-    return {
-        "cong_ty": _COMPANY,
-        "thi_truong": "",                         # để rule phân loại tự gán
-        "tuyen_tour": "",
-        "ten_tour": (t.get("Name") or "").strip(),
-        "lich_trinh": "",                         # API không trả itinerary -> KHÔNG bịa
-        "diem_kh": (t.get("Departured") or "").strip(),
-        "thoi_gian": (t.get("Time") or "").strip(),
-        "gia": _fmt_price(t.get("Contract") or []),
-        "lich_kh": _fmt_dates(t.get("DepartureDate") or []),
-        "link_url": "",                           # API không trả URL; xem ghi chú cuối file
-        "ma_tour": (t.get("Code") or "").strip(),
-        "khach_san": "",
-        "hang_khong": "",
-    }
-
-
-def scrape(progress: Callable[[int, str], None] | None = None) -> pd.DataFrame:
-    if progress:
-        progress(5, "iVIVU: chuẩn bị danh sách tour")
-
-    session = requests.Session()
-    ids_csv = _fetch_tour_ids(session)
-    all_ids = [x for x in (ids_csv or "").split(",") if x.strip()]
-    if not all_ids:
-        if progress:
-            progress(100, "iVIVU: không có TourIds")
-        return pd.DataFrame(columns=STANDARD_COLUMNS)
-
-    # DepartureTime = hôm nay (lấy mọi lịch KH từ nay trở đi).
+def _fetch_base_tours(session: requests.Session, all_ids: list[str],
+                      progress: Callable[[int, str], None] | None) -> list[dict]:
     dep = _dt.date.today().strftime("%Y-%m-%d")
-
-    rows: list[dict] = []
+    tours: list[dict] = []
     batches = [all_ids[i:i + _BATCH] for i in range(0, len(all_ids), _BATCH)]
     for bi, batch in enumerate(batches):
         if progress:
-            progress(10 + int(80 * bi / max(len(batches), 1)),
-                     f"iVIVU: tải lô {bi + 1}/{len(batches)} ({len(batch)} tour)")
+            progress(5 + int(20 * bi / max(len(batches), 1)),
+                     f"iVIVU: danh sách tour lô {bi + 1}/{len(batches)}")
         body = {"DepartureTime": dep, "TourIds": ",".join(batch)}
         try:
             r = session.post(_SEARCH_URL, json=body, headers=_HEADERS, timeout=_TIMEOUT)
             r.raise_for_status()
             data = r.json()
         except Exception as e:  # noqa: BLE001
-            logger.warning("ivivu: lô %s lỗi: %s", bi + 1, e)
+            logger.warning("ivivu: lô base %s lỗi: %s", bi + 1, e)
             continue
-        if not isinstance(data, list):
-            continue
-        for t in data:
-            if isinstance(t, dict) and (t.get("Name") or "").strip():
-                rows.append(_row_from_tour(t))
+        if isinstance(data, list):
+            for t in data:
+                if isinstance(t, dict) and (t.get("Name") or "").strip():
+                    tours.append(t)
+    return tours
+
+
+def _rows_for_tour(t: dict) -> list[dict]:
+    """1 tour -> nhiều dòng (1 dòng / mức giá). Dùng session riêng cho thread an toàn."""
+    from classification import classify_route_fields
+
+    name = (t.get("Name") or "").strip()
+    code = (t.get("Code") or "").strip()
+    uid = _url_id(code)
+    time_s = (t.get("Time") or "").strip()
+    dep = (t.get("Departured") or "").strip()
+    base_dates = [str(d)[:10] for d in (t.get("DepartureDate") or [])]
+    link = f"https://www.ivivu.com/du-lich/{_slug(name)}/{uid}" if uid else ""
+    try:
+        thi_truong, tuyen = classify_route_fields(name, "")
+    except Exception:  # noqa: BLE001
+        thi_truong, tuyen = "", ""
+
+    def _base_row(gia: str, lich_kh: str) -> dict:
+        return {
+            "cong_ty": _COMPANY,
+            "thi_truong": thi_truong,
+            "tuyen_tour": tuyen,
+            "ten_tour": name,
+            "lich_trinh": "",            # API không trả itinerary -> KHÔNG bịa
+            "diem_kh": dep,
+            "thoi_gian": time_s,
+            "gia": gia,
+            "lich_kh": lich_kh,
+            "link_url": link,
+            "ma_tour": code,
+            "khach_san": "",
+            "hang_khong": "",
+        }
+
+    sess = requests.Session()
+    groups = _price_groups(sess, uid, base_dates)
+    if groups:
+        return [_base_row(_fmt_price(price), _join_dates(dates)) for price, dates in groups]
+    # Fallback: detail lỗi/trống -> 1 dòng giá đại diện từ base Contract.
+    contracts = t.get("Contract") or []
+    pvals = [c.get("PriceAdultAvg") or c.get("PriceAdult") for c in contracts
+             if isinstance(c, dict)]
+    pvals = [p for p in pvals if isinstance(p, (int, float)) and p > 0]
+    return [_base_row(_fmt_price(min(pvals)) if pvals else "", _join_dates(base_dates))]
+
+
+def scrape(progress: Callable[[int, str], None] | None = None) -> pd.DataFrame:
+    if progress:
+        progress(3, "iVIVU: bắt đầu")
+
+    session = requests.Session()
+    all_ids = [x for x in (_fetch_tour_ids(session) or "").split(",") if x.strip()]
+    if not all_ids:
+        if progress:
+            progress(100, "iVIVU: không có TourIds")
+        return pd.DataFrame(columns=STANDARD_COLUMNS)
+
+    tours = _fetch_base_tours(session, all_ids, progress)
+    if not tours:
+        if progress:
+            progress(100, "iVIVU: API không trả tour nào")
+        return pd.DataFrame(columns=STANDARD_COLUMNS)
+
+    # Warm cache rule phân loại 1 lần ở main thread (tránh race khi load lazy).
+    try:
+        from classification import classify_route_fields
+        classify_route_fields(tours[0].get("Name") or "", "")
+    except Exception:  # noqa: BLE001
+        pass
+
+    rows: list[dict] = []
+    done = 0
+    total = len(tours)
+    with ThreadPoolExecutor(max_workers=_DETAIL_WORKERS) as ex:
+        futs = {ex.submit(_rows_for_tour, t): t for t in tours}
+        for fut in as_completed(futs):
+            done += 1
+            try:
+                rows.extend(fut.result())
+            except Exception as e:  # noqa: BLE001
+                logger.warning("ivivu: tour lỗi: %s", e)
+            if progress and (done % 20 == 0 or done == total):
+                progress(25 + int(73 * done / total),
+                         f"iVIVU: giá từng ngày {done}/{total} tour")
 
     df = pd.DataFrame(rows, columns=STANDARD_COLUMNS)
     if progress:
-        progress(100, f"iVIVU xong: {len(df)} tour")
+        progress(100, f"iVIVU xong: {len(df)} dòng ({total} tour)")
     return df
 
 
