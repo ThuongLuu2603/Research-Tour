@@ -430,8 +430,8 @@ def _sheet_headers() -> list[str]:
     headers[7] = "Giá"
     headers[8] = "Lịch khởi hành"
     headers[COL_LINK_TOUR] = "Link tour"
-    headers[10] = "Khách sạn"
-    headers[11] = "Hàng không"
+    headers[10] = "Hàng không"
+    headers[11] = "Khách sạn"
     headers[COL_MA_TOUR] = "Mã tour"
     headers[COL_CAP_NHAT] = "Cập nhật"
     headers[COL_DONG_TOUR] = "Dòng tour"
@@ -488,8 +488,8 @@ def tours_to_sheet_rows(df: pd.DataFrame) -> list[list[str]]:
         row[7] = str(r.get("gia", ""))
         row[8] = str(r.get("lich_kh", ""))
         row[COL_LINK_TOUR] = str(r.get("link_tour", ""))
-        row[10] = str(r.get("khach_san", ""))
-        row[11] = str(r.get("hang_khong", ""))
+        row[10] = str(r.get("hang_khong", ""))
+        row[11] = str(r.get("khach_san", ""))
         row[COL_MA_TOUR] = str(r.get("page_code", ""))
         row[COL_CAP_NHAT] = str(r.get("cap_nhat", ""))
         row[COL_DONG_TOUR] = str(r.get("dong_tour", ""))

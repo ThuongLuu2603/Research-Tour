@@ -181,8 +181,9 @@ def _row_to_fields(row: list[str], *, nguon: str = "") -> dict | None:
         "lich_kh": (row[8] if len(row) > 8 else "").strip(),
         "link_url": link,
         "ma_tour": (row[12] if len(row) > 12 else "").strip(),
-        "khach_san": _clean_field(row[10] if len(row) > 10 else ""),
-        "hang_khong": _clean_field(row[11] if len(row) > 11 else ""),
+        # Cột K (10) = Hàng không, L (11) = Khách sạn (đã đổi thứ tự: hàng không trước).
+        "hang_khong": _clean_field(row[10] if len(row) > 10 else ""),
+        "khach_san": _clean_field(row[11] if len(row) > 11 else ""),
         # Dòng tour ở cột O (index 14) — chỉ tab Vietravel có; Main không có cột này.
         **({"dong_tour": (row[14] if len(row) > 14 else "").strip()} if nguon == "Vietravel" else {}),
     }
