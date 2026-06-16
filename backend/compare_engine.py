@@ -124,19 +124,27 @@ def segment_key(tour: Tour) -> str | None:
 
 
 def _dedup_key(t: Tour) -> str:
-    """Chỉ gộp trùng mã/link thật — không gộp mọi tour cùng CTY chỉ vì link placeholder."""
+    """Chỉ gộp trùng mã/link thật — không gộp mọi tour cùng CTY chỉ vì link placeholder.
+
+    GIÁ nằm trong khóa: các biến thể GIÁ của cùng 1 chương trình (Vietravel/FindTourGo
+    tách dòng theo giá — cùng mã/link nhưng KHÁC giá) là tour KHÁC nhau, KHÔNG được gộp
+    (nếu gộp sẽ mất mức giá rẻ nhất + tính sai giá TB/tần suất). Cùng mã+cùng giá = trùng thật."""
     from link_utils import normalize_tour_link
 
     ma = (t.ma_tour or "").strip().lower()
     link = normalize_tour_link(t.link_url)
     company = (t.cong_ty or "").strip().lower()
+    try:
+        gia_part = f"|g:{int(t.gia)}" if t.gia else ""
+    except (TypeError, ValueError):
+        gia_part = ""
     if ma:
-        return f"{company}|ma:{ma}"
+        return f"{company}|ma:{ma}{gia_part}"
     if link:
-        return f"{company}|{link.lower()}"
+        return f"{company}|{link.lower()}{gia_part}"
     ten = re.sub(r"\s+", " ", (t.ten_tour or "").strip().lower())[:160]
     if ten:
-        return f"{company}|name:{ten}"
+        return f"{company}|name:{ten}{gia_part}"
     return f"{company}|id:{t.id}"
 
 
