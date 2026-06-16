@@ -119,6 +119,7 @@ export interface Tour {
   phan_khuc: string; dong_tour?: string; nguon: string; analyst_note: string; flagged: boolean;
   has_override?: boolean; canonical_id?: number;
   manual_locked?: boolean;  // admin đã chỉnh TT/Tuyến/Thời gian → ghi thẳng DB + khóa
+  freq_monthly?: number;    // TB tần suất đoàn KH/tháng (tính từ lich_kh qua rule)
   sheet_sync?: { ok: boolean; message: string; row?: number } | null;
 }
 

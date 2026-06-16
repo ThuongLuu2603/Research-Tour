@@ -63,6 +63,14 @@ class EffectiveTour:
         if (getattr(self.tour, "nguon", "") or "") == "Vietravel" and (out["dong_tour"] or "").strip():
             out["phan_khuc"] = (out["dong_tour"] or "").strip()
         out["has_override"] = self.has_override
+        # TB tần suất / tháng: số đoàn KH/tháng của tour (đếm ngày từ lich_kh qua rule
+        # Định dạng Ngày KH; parse_departure_dates đã memoize nên rẻ). 0 = lich_kh
+        # không khớp định dạng ngày.
+        try:
+            from departure_parser import parse_departure_frequency
+            out["freq_monthly"] = parse_departure_frequency(getattr(self.tour, "lich_kh", "") or "")["monthly_estimate"]
+        except Exception:  # noqa: BLE001
+            out["freq_monthly"] = 0.0
         # CockroachDB unique_rowid() > 2^53 (JS MAX_SAFE_INTEGER). Serialize as
         # string để frontend không round mất last digits → PATCH 404.
         out["id"] = str(self.tour.id)

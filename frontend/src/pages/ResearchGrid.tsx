@@ -990,6 +990,7 @@ export default function ResearchGrid() {
                   onSort={handleSort}
                 />
               ))}
+              <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-600 whitespace-nowrap" title="Trung bình số đoàn khởi hành / tháng — tính từ Lịch KH qua rule Định dạng Ngày KH">TB TS/tháng</th>
               <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap">Flag</th>
               <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap">{COL.linkTour}</th>
             </tr>
@@ -1095,6 +1096,14 @@ export default function ResearchGrid() {
                 <td className="px-3 py-2 text-xs text-gray-500">{tour.nguon}</td>
                 <td className="px-3 py-2">
                   <EditableCell disabled={!canEdit} value={tour.analyst_note} onSave={(v) => mutation.mutate({ id: tour.id, patch: { analyst_note: v } })} />
+                </td>
+                <td className="px-3 py-2 text-right text-xs whitespace-nowrap"
+                    title={tour.lich_kh ? `Lịch KH: ${tour.lich_kh}` : undefined}>
+                  {tour.freq_monthly && tour.freq_monthly > 0 ? (
+                    <span className="font-medium text-gray-800">{tour.freq_monthly.toFixed(1)}</span>
+                  ) : (
+                    <span className="text-gray-400">—</span>
+                  )}
                 </td>
                 <td className="px-3 py-2">
                   <button
