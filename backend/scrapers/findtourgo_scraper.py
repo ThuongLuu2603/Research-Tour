@@ -7,6 +7,7 @@ from __future__ import annotations
 import concurrent.futures
 import os
 import re
+from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
@@ -748,6 +749,67 @@ def _item_to_row(
     }
 
 
+def _rate_vnd_map(item: dict[str, Any]) -> dict[Any, int]:
+    """tourRates[] → {rateId: giá VND}. Ưu tiên exchangePrices VND; fallback rate.salePrice
+    chỉ khi currency tour = VND (giống _vnd_price)."""
+    out: dict[Any, int] = {}
+    cur_vnd = (item.get("currency") or "").upper() == "VND"
+    for r in item.get("tourRates") or []:
+        rid = r.get("id")
+        if rid is None:
+            continue
+        vnd = 0
+        for ep in r.get("exchangePrices") or []:
+            if ep.get("currency") == "VND":
+                vnd = int(ep.get("salePrice") or ep.get("regularPrice") or 0)
+                break
+        if not vnd and cur_vnd:
+            vnd = int(r.get("salePrice") or r.get("regularPrice") or 0)
+        if vnd > 0:
+            out[rid] = vnd
+    return out
+
+
+def _schedule_price(sch: dict[str, Any], rate_map: dict[Any, int], fallback: int) -> int:
+    """Giá VND của 1 lịch: min giá các rate trong rateConfig; không có → fallback (giá top-level)."""
+    prices = [rate_map[rid] for rid in (sch.get("rateConfig") or []) if rate_map.get(rid, 0) > 0]
+    return min(prices) if prices else fallback
+
+
+def _item_to_rows(item: dict[str, Any], base: dict[str, Any]) -> list[dict[str, Any]]:
+    """1 tour → nhiều dòng nếu các lịch có GIÁ KHÁC nhau (gom lịch theo giá rate).
+
+    Chỉ tách khi ≥2 mức giá phân biệt; tour 1 giá giữ nguyên 1 dòng (mã tour sạch).
+    Tour nhiều giá: mỗi dòng gia=giá nhóm, lich_kh=ngày của các lịch cùng giá,
+    ma_tour='{code}-G{i}' + link gắn '#g{giá}' (để Sheet→Main→DB KHÔNG gộp các biến thể)."""
+    schedules = item.get("tourSchedules") or []
+    rate_map = _rate_vnd_map(item)
+    fallback = _vnd_price(item)
+    if not schedules or not rate_map:
+        return [base]
+
+    groups: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for sch in schedules:
+        groups[_schedule_price(sch, rate_map, fallback)].append(sch)
+    distinct = sorted(p for p in groups if p > 0)
+    if len(distinct) <= 1:
+        return [base]
+
+    base_ma = base.get("ma_tour") or ""
+    base_url = base.get("link_url") or ""
+    rows: list[dict[str, Any]] = []
+    for i, price in enumerate(distinct, start=1):
+        row = dict(base)
+        row["gia"] = _fmt_price(price)
+        row["lich_kh"] = _format_departure_dates(groups[price])
+        row["ma_tour"] = f"{base_ma}-G{i}" if base_ma else base_ma
+        url2 = f"{base_url}#g{price}" if base_url else base_url
+        row["link_url"] = url2
+        row["link_tour"] = _hyperlink_formula(url2) if url2 else ""
+        rows.append(row)
+    return rows
+
+
 def _country_page_url(code: str, slug: str | None = None) -> str:
     slug = slug or COUNTRY_SLUG_OVERRIDE.get(code) or (code or "").lower()
     return f"{SITE_BASE}/country/{slug}?currency=VND"
@@ -907,10 +969,11 @@ def scrape_all_findtourgo_tours(
                 continue
             if tour_code:
                 seen_codes.add(tour_code)
-            row = _item_to_row(item, label, country_cache, city_cache, sess, detail_city_cache)
-            row["page_url"] = page_url
-            row["listing_code"] = code
-            rows.append(row)
+            base = _item_to_row(item, label, country_cache, city_cache, sess, detail_city_cache)
+            for row in _item_to_rows(item, base):  # tách dòng theo giá (tour nhiều giá)
+                row["page_url"] = page_url
+                row["listing_code"] = code
+                rows.append(row)
         if progress:
             progress(
                 15 + int(55 * (i + 1) / max(n_src, 1)),
