@@ -327,8 +327,32 @@ export interface ScrapeJob {
   triggered_by: string; started_at: string; finished_at: string | null;
 }
 
-export const triggerScrape = async (scraper: "vietravel" | "findtourgo"): Promise<ScrapeJob> => {
+// scraper: "vietravel" | "findtourgo" | <key của site extra> (xem listExtraSources)
+export const triggerScrape = async (scraper: string): Promise<ScrapeJob> => {
   const { data } = await api.post("/scraper/trigger", { scraper });
+  return data;
+};
+
+// ── Extra sources (website tour khác) ──────────────────────────────────────────
+export interface ExtraSource {
+  key: string;
+  name: string;
+  enabled: boolean;
+  last_status: string | null;
+  last_run_at: string | null;
+  last_count: number | null;
+}
+
+export const listExtraSources = async (): Promise<ExtraSource[]> => {
+  const { data } = await api.get("/scraper/extra-sources");
+  return Array.isArray(data) ? data : [];
+};
+
+export const toggleExtraSource = async (
+  key: string,
+  enabled: boolean,
+): Promise<{ key: string; enabled: boolean }> => {
+  const { data } = await api.post(`/scraper/extra-sources/${key}/toggle`, { enabled });
   return data;
 };
 

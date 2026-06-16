@@ -4,9 +4,10 @@ import {
   triggerScrape, getScrapeJobs, getScrapeJob, getSchedule, updateSchedule, getDataStatus, syncMainSheetLive,
   syncVietravelFromSheet,
   cancelScrapeJob, reconcileStaleScrapeJobs, ScrapeJob,
+  listExtraSources, toggleExtraSource, ExtraSource,
 } from "@/lib/api";
 import { fmtDate, parseAppDate, statusColor, cn } from "@/lib/utils";
-import { Play, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Database, Square, ArrowDownToLine } from "lucide-react";
+import { Play, Clock, CheckCircle, XCircle, Loader2, RefreshCw, Database, Square, ArrowDownToLine, Globe } from "lucide-react";
 
 interface ProgressEvent { pct: number; msg: string; done: boolean; added?: number; updated?: number; error?: boolean }
 
@@ -250,6 +251,213 @@ function fmtRunningDuration(job: ScrapeJob): string {
   return `${h.toFixed(1)} giờ`;
 }
 
+/** 1 dòng cho 1 website tour khác: checkbox bật/tắt + tên + trạng thái lần cuối + nút Chạy ngay.
+ *  Tái dùng cơ chế SSE→polling của ScraperCard (rút gọn) cho nút "Chạy ngay". */
+function ExtraSourceRow({ src }: { src: ExtraSource }) {
+  const qc = useQueryClient();
+  const [progress, setProgress] = useState<ProgressEvent | null>(null);
+  const esRef = useRef<EventSource | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const doneRef = useRef(false);
+
+  const stopWatchers = () => {
+    esRef.current?.close();
+    esRef.current = null;
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
+  useEffect(() => () => stopWatchers(), []);
+
+  const finish = () => {
+    doneRef.current = true;
+    stopWatchers();
+    qc.invalidateQueries({ queryKey: ["scrape-jobs"] });
+    qc.invalidateQueries({ queryKey: ["extra-sources"] });
+  };
+
+  const pollJobStatus = (jobId: string) => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      if (doneRef.current) { stopWatchers(); return; }
+      try {
+        const job = await getScrapeJob(jobId);
+        const running = job.status === "running" || job.status === "pending";
+        if (doneRef.current) { stopWatchers(); return; }
+        setProgress({
+          pct: !running ? 100 : job.progress_pct,
+          msg: job.message || (running ? "Đang chạy…" : job.status),
+          done: !running,
+          error: job.status === "failed",
+          added: job.tours_added,
+          updated: job.tours_updated,
+        });
+        if (!running) finish();
+      } catch { /* retry */ }
+    }, 3000);
+  };
+
+  const toggle = useMutation({
+    mutationFn: (enabled: boolean) => toggleExtraSource(src.key, enabled),
+    // optimistic update
+    onMutate: async (enabled: boolean) => {
+      await qc.cancelQueries({ queryKey: ["extra-sources"] });
+      const prev = qc.getQueryData<ExtraSource[]>(["extra-sources"]);
+      qc.setQueryData<ExtraSource[]>(["extra-sources"], (old) =>
+        (old ?? []).map((s) => (s.key === src.key ? { ...s, enabled } : s)),
+      );
+      return { prev };
+    },
+    onError: (_e, _enabled, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["extra-sources"], ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["extra-sources"] }),
+  });
+
+  const trigger = useMutation({
+    mutationFn: () => triggerScrape(src.key),
+    onSuccess: (job) => {
+      stopWatchers();
+      doneRef.current = false;
+      setProgress({ pct: 0, msg: "Đang khởi động...", done: false });
+      const token = localStorage.getItem("access_token") || "";
+      const es = new EventSource(
+        `/api/scraper/jobs/${job.id}/stream?token=${encodeURIComponent(token)}`,
+      );
+      esRef.current = es;
+      es.onmessage = (e) => {
+        try {
+          const ev: ProgressEvent = JSON.parse(e.data);
+          if (doneRef.current) return;
+          setProgress(ev);
+          if (ev.done) finish();
+        } catch { /* ping */ }
+      };
+      es.onerror = () => {
+        es.close();
+        esRef.current = null;
+        if (doneRef.current) return;
+        pollJobStatus(job.id);
+      };
+      pollJobStatus(job.id);
+    },
+    onError: (err: any) => {
+      setProgress({ pct: 0, msg: err.response?.data?.detail ?? "Lỗi không xác định", done: true, error: true });
+    },
+  });
+
+  const isRunning = trigger.isPending || (progress && !progress.done);
+
+  return (
+    <div className="py-3 first:pt-0 last:pb-0">
+      <div className="flex flex-wrap items-center gap-3">
+        <label
+          className="flex items-center gap-2 cursor-pointer"
+          title="Bật = tự chạy trong chuỗi auto hàng ngày (sau FindTourGo)"
+        >
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            checked={src.enabled}
+            disabled={toggle.isPending}
+            onChange={(e) => toggle.mutate(e.target.checked)}
+          />
+          <span className="font-medium text-gray-800 text-sm">{src.name}</span>
+        </label>
+
+        <div className="flex items-center gap-2 text-xs text-gray-500">
+          {src.last_status ? (
+            <>
+              <JobStatusBadge status={src.last_status} />
+              <span className="whitespace-nowrap">{src.last_run_at ? fmtDate(src.last_run_at) : "—"}</span>
+              {src.last_count != null && (
+                <span className="text-gray-400">· {src.last_count.toLocaleString("vi-VN")} tour</span>
+              )}
+            </>
+          ) : (
+            <span className="text-gray-400 italic">Chưa chạy lần nào</span>
+          )}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => trigger.mutate()}
+          disabled={!!isRunning}
+          className="btn-secondary text-xs ml-auto shrink-0"
+        >
+          {isRunning ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+          {isRunning ? "Đang chạy..." : "Chạy ngay"}
+        </button>
+      </div>
+
+      {progress && (
+        <div className="space-y-1.5 mt-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className={cn("font-medium", progress.error ? "text-red-600" : progress.done ? "text-green-600" : "text-primary-600")}>
+              {progress.msg}
+            </span>
+            <span className="text-gray-500">{progress.pct}%</span>
+          </div>
+          <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+            <div
+              className={cn("h-full rounded-full transition-all duration-300", progress.error ? "bg-red-500" : progress.done ? "bg-green-500" : "bg-primary-600")}
+              style={{ width: `${progress.pct}%` }}
+            />
+          </div>
+          {progress.done && !progress.error && (
+            <p className="text-xs text-green-600 font-medium">
+              ✓ Thêm {progress.added ?? 0} tour mới · Cập nhật {progress.updated ?? 0} tour
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExtraSourcesSection() {
+  const { data: sources, isLoading } = useQuery({
+    queryKey: ["extra-sources"],
+    queryFn: listExtraSources,
+    retry: false,                 // endpoint chưa deploy (404) → không retry, fallback []
+    refetchOnWindowFocus: false,
+  });
+
+  const list = sources ?? [];
+
+  return (
+    <div className="card p-5 space-y-3">
+      <div>
+        <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+          <Globe size={18} className="text-primary-600" />
+          Scrape website tour khác
+        </h3>
+        <p className="text-xs text-gray-500 mt-1">
+          Tick = site tự chạy trong chuỗi auto hàng ngày (sau FindTourGo). Dữ liệu ghi vào 1 tab
+          Google Sheet chung — bạn tự merge sang Main. Mỗi site là 1 scraper code riêng.
+        </p>
+      </div>
+
+      {isLoading ? (
+        <p className="text-sm text-gray-400 flex items-center gap-2">
+          <Loader2 size={14} className="animate-spin" /> Đang tải...
+        </p>
+      ) : list.length === 0 ? (
+        <p className="text-sm text-gray-400 italic">
+          Chưa có website nào. Thêm scraper trong backend/scrapers/extra/sites/.
+        </p>
+      ) : (
+        <div className="divide-y divide-gray-100">
+          {list.map((src) => (
+            <ExtraSourceRow key={src.key} src={src} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ScraperHub() {
   const qc = useQueryClient();
   const [schedHour, setSchedHour] = useState(7);
@@ -448,6 +656,9 @@ export default function ScraperHub() {
           desc="Phân loại thị trường/tuyến → ghi tab FindTourGo (không lưu DB)"
         />
       </div>
+
+      {/* Scrape website tour khác */}
+      <ExtraSourcesSection />
 
       {/* Auto schedule */}
       <div className="card p-5 space-y-4">

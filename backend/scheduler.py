@@ -499,8 +499,35 @@ def _wait_for_scraper_to_finish(scraper_name: str) -> bool:
     return False
 
 
+def _run_enabled_extra_scrapers() -> None:
+    """Chạy tuần tự các extra scraper site ĐANG BẬT (intersect registry keys).
+
+    Mỗi site: queue ScrapeJob(scraper_name=key) + đợi xong (giống FindTourGo).
+    1 site lỗi → log warning + tiếp site sau (không chặn chain)."""
+    try:
+        from extra_scrapers_store import get_enabled_keys
+        from scrapers.extra import get_all
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Không nạp được extra scrapers: %s", e)
+        return
+
+    registry_keys = {s.key for s in get_all()}
+    enabled = [k for k in get_enabled_keys() if k in registry_keys]
+    if not enabled:
+        logger.info("[CHAIN 2b] Không có extra site nào bật — bỏ qua")
+        return
+
+    for key in enabled:
+        logger.info("[CHAIN 2b] Extra site: %s", key)
+        try:
+            if _queue_scrape(key, triggered_by="scheduler") is not None:
+                _wait_for_scraper_to_finish(key)
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[CHAIN 2b] Extra site %s lỗi: %s", key, e)
+
+
 def _run_daily_chain():
-    """Chuỗi tự động: Vietravel → FindTourGo → Sync Main → Snapshot.
+    """Chuỗi tự động: Vietravel → FindTourGo → Extra sites (bật) → Sync Main → Festival → Snapshot.
 
     Mỗi bước chạy NGAY sau khi bước trước hoàn tất (thay vì chờ cron giờ cố định).
     Bước scrape là async (queue) nên dùng polling DB; bước sync/snapshot chạy inline.
@@ -513,27 +540,35 @@ def _run_daily_chain():
     logger.info("[CHAIN] Bắt đầu chuỗi tự động hàng ngày")
 
     # 1. Scrape Vietravel (ghi DB trước rồi export Sheet)
-    logger.info("[CHAIN 1/4] Scrape Vietravel")
+    logger.info("[CHAIN 1/5] Scrape Vietravel")
     try:
         _auto_scrape("vietravel")
         _wait_for_scraper_to_finish("vietravel")
     except Exception as e:  # noqa: BLE001
-        logger.exception("[CHAIN 1/4] Vietravel scrape lỗi: %s", e)
+        logger.exception("[CHAIN 1/5] Vietravel scrape lỗi: %s", e)
 
     # 2. Scrape FindTourGo → Sheet (sheet code auto-merge sang tab Main)
-    logger.info("[CHAIN 2/4] Scrape FindTourGo")
+    logger.info("[CHAIN 2/5] Scrape FindTourGo")
     try:
         _auto_scrape("findtourgo")
         _wait_for_scraper_to_finish("findtourgo")
     except Exception as e:  # noqa: BLE001
-        logger.exception("[CHAIN 2/4] FindTourGo scrape lỗi: %s", e)
+        logger.exception("[CHAIN 2/5] FindTourGo scrape lỗi: %s", e)
+
+    # 2b. Extra scraper sites ĐANG BẬT (user tự code) → ghi tab Sheet chung.
+    # Mỗi site lỗi → log + tiếp site sau (không chặn chain). Chạy tuần tự như FindTourGo.
+    logger.info("[CHAIN 2b] Extra scraper sites (auto)")
+    try:
+        _run_enabled_extra_scrapers()
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[CHAIN 2b] Extra scrapers lỗi: %s", e)
 
     # 3. Sync tab Main → DB (mang FTG + manual edits vào DB)
-    logger.info("[CHAIN 3/4] Sync Main → DB")
+    logger.info("[CHAIN 3/5] Sync Main → DB")
     try:
         _sync_main_sheet()
     except Exception as e:  # noqa: BLE001
-        logger.exception("[CHAIN 3/4] Sync Main lỗi: %s", e)
+        logger.exception("[CHAIN 3/5] Sync Main lỗi: %s", e)
 
     # 4. Festival tour tagging (T3 Phase 2) — gắn tour với lễ sau khi data mới.
     logger.info("[CHAIN 4/5] Festival tour tagging")

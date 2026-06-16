@@ -18,6 +18,16 @@ from models import ScrapeJob, Tour, User
 
 router = APIRouter(prefix="/api/scraper", tags=["scraper"])
 
+
+def _iso_utc(v: datetime | None) -> str | None:
+    if v is None:
+        return None
+    if v.tzinfo is None:
+        v = v.replace(tzinfo=timezone.utc)
+    else:
+        v = v.astimezone(timezone.utc)
+    return v.isoformat().replace("+00:00", "Z")
+
 # Active job progress messages: job_id → list[str]
 _progress_queues: dict[int, asyncio.Queue] = {}
 
@@ -25,7 +35,18 @@ _progress_queues: dict[int, asyncio.Queue] = {}
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class TriggerRequest(BaseModel):
-    scraper: str  # "vietravel" | "findtourgo"
+    scraper: str  # "vietravel" | "findtourgo" | <extra registry key>
+
+
+def _valid_scraper_names() -> set[str]:
+    """Tên scraper hợp lệ = built-in ∪ extra registry keys."""
+    names = {"vietravel", "findtourgo"}
+    try:
+        from scrapers.extra import get_all
+        names |= {s.key for s in get_all()}
+    except Exception:
+        pass
+    return names
 
 
 class JobOut(BaseModel):
@@ -73,8 +94,11 @@ def trigger_scrape(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if req.scraper not in ("vietravel", "findtourgo"):
-        raise HTTPException(status_code=400, detail="scraper phải là 'vietravel' hoặc 'findtourgo'")
+    if req.scraper not in _valid_scraper_names():
+        raise HTTPException(
+            status_code=400,
+            detail="scraper không hợp lệ — phải là 'vietravel', 'findtourgo' hoặc 1 extra site đã đăng ký",
+        )
 
     from scrape_job_utils import reconcile_stale_scrape_jobs
 
@@ -232,6 +256,55 @@ def scraper_registry(_: User = Depends(get_current_user)):
     return {"items": list_scrapers()}
 
 
+class ToggleRequest(BaseModel):
+    enabled: bool
+
+
+@router.get("/extra-sources")
+def list_extra_sources(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Danh sách extra scraper site (user tự code) + trạng thái auto + lần chạy gần nhất."""
+    from scrapers.extra import get_all
+    from extra_scrapers_store import get_enabled_keys
+
+    enabled = set(get_enabled_keys())
+    out = []
+    for s in get_all():
+        last = (
+            db.query(ScrapeJob)
+            .filter(ScrapeJob.scraper_name == s.key)
+            .order_by(ScrapeJob.started_at.desc())
+            .first()
+        )
+        out.append({
+            "key": s.key,
+            "name": s.name,
+            "enabled": s.key in enabled,
+            "last_status": last.status if last else None,
+            "last_run_at": _iso_utc(last.started_at) if last else None,
+            "last_count": (last.tours_total if last else None),
+        })
+    return out
+
+
+@router.post("/extra-sources/{key}/toggle")
+def toggle_extra_source(
+    key: str,
+    req: ToggleRequest,
+    _: User = Depends(get_current_user),
+):
+    """Bật/tắt extra site khỏi chuỗi auto hàng ngày. Nút chạy tay vẫn luôn dùng được."""
+    from scrapers.extra import get as get_extra
+    from extra_scrapers_store import set_enabled
+
+    if get_extra(key) is None:
+        raise HTTPException(status_code=404, detail=f"Extra site '{key}' không tồn tại")
+    set_enabled(key, req.enabled)
+    return {"key": key, "enabled": req.enabled}
+
+
 @router.get("/schedule")
 def get_schedule(_: User = Depends(get_current_user)):
     from scheduler import get_schedule_config
@@ -377,12 +450,20 @@ def _run_job(job_id: int, scraper_name: str):
 
         _emit(job_id, 5, f"Bắt đầu quét {scraper_name}...")
 
-        timeout = _SCRAPE_TIMEOUT_SEC.get(scraper_name, 3600)
+        from scrapers.extra import get as _get_extra
+
+        extra = None if scraper_name in ("vietravel", "findtourgo") else _get_extra(scraper_name)
+        if extra is not None:
+            timeout = extra.timeout_sec
+        else:
+            timeout = _SCRAPE_TIMEOUT_SEC.get(scraper_name, 3600)
 
         def _work():
             if scraper_name == "vietravel":
                 return _run_vietravel(db, job_id, job)
-            return _run_findtourgo(db, job_id, job)
+            if scraper_name == "findtourgo":
+                return _run_findtourgo(db, job_id, job)
+            return _run_extra(db, job_id, job, scraper_name)
 
         with ThreadPoolExecutor(max_workers=1) as pool:
             fut = pool.submit(_work)
@@ -526,6 +607,42 @@ def _run_findtourgo(db: Session, job_id: int, job: ScrapeJob):
     write_to_google_sheet(df)
     _emit(job_id, 95, f"Đã ghi {len(df)} tour lên tab FindTourGo")
     return 0, len(df), 0
+
+
+def _run_extra(db: Session, job_id: int, job: ScrapeJob, key: str):
+    """Chạy 1 extra scraper (user tự code) → ghi tab Google Sheet CHUNG (per-source replace).
+
+    KHÔNG lưu DB — user tự merge sang Main. Trả (added=0, updated=len(df), deleted=0)
+    để cột Job History hiển thị số tour đã ghi."""
+    from scrapers.extra import get as _get_extra
+    from scrapers.extra.sheet_writer import write_extra_source
+
+    scraper = _get_extra(key)
+    if scraper is None:
+        raise RuntimeError(f"Extra scraper '{key}' không tồn tại trong registry")
+
+    def _progress(pct: int, msg: str) -> None:
+        _emit(job_id, pct, msg)
+
+    _emit(job_id, 8, f"Bắt đầu quét {scraper.name}…")
+    df = scraper.scrape(progress=_progress)
+    n = 0 if df is None else len(df)
+
+    from db_retry import run_with_retry
+
+    def _set_total():
+        db.rollback()
+        j = db.query(ScrapeJob).filter(ScrapeJob.id == job_id).first()
+        if j:
+            j.tours_total = n
+            db.commit()
+
+    run_with_retry(_set_total, db=db, label="job-set-total-extra")
+
+    _emit(job_id, 85, f"Đã quét {n} tour — ghi tab chung (nguồn={key})…")
+    write_extra_source(df, key)
+    _emit(job_id, 95, f"Đã ghi {n} tour (nguồn={key}) lên tab chung")
+    return 0, n, 0
 
 
 def _parse_price(raw: str) -> float | None:
