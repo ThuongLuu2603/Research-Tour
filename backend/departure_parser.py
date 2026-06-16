@@ -4,6 +4,7 @@ from __future__ import annotations
 import calendar as _calendar
 import re
 from datetime import datetime, timedelta
+from functools import lru_cache
 
 DATE_RE = re.compile(r"\b(\d{1,2}/\d{1,2}/(?:\d{2}|\d{4}))\b")
 # DD/MM thuần (không có năm) — "04/06", "11/06". Lookahead chặn nuốt nhầm DD/MM/YYYY.
@@ -134,8 +135,32 @@ def vtr_period_label(vtr_dates: list[datetime]) -> str:
     return f"T{m0}/{y0}–T{m1}/{y1}"
 
 
+@lru_cache(maxsize=16384)
+def _parse_departure_dates_cached(lich_kh: str, token: int) -> tuple:
+    """Memo theo (lich_kh, token DateFormatRule). lich_kh lặp rất nhiều trong dataset
+    (hàng nghìn tour share cùng chuỗi lịch) → cache full kết quả parse → compare build
+    nhanh hơn nhiều lần. token bump khi rule đổi → tự invalidate."""
+    return tuple(_parse_departure_dates_impl(lich_kh))
+
+
 def parse_departure_dates(lich_kh: str) -> list[datetime]:
-    """Trích ngày khởi hành từ lich_kh — hỗ trợ nhiều format Vietnamese.
+    """Trích ngày khởi hành từ lich_kh — CACHED (memo theo lich_kh + token rule).
+
+    parse_departure_frequency / _in_period gọi hàm này lặp nhiều lần/tour trong
+    compare build → cache tránh re-parse regex + match rule mỗi lần.
+    """
+    if not lich_kh or not lich_kh.strip():
+        return []
+    try:
+        import date_format_rules
+        token = date_format_rules._cache_token
+    except Exception:  # noqa: BLE001
+        token = 0
+    return list(_parse_departure_dates_cached(lich_kh, token))
+
+
+def _parse_departure_dates_impl(lich_kh: str) -> list[datetime]:
+    """Logic parse thật (gọi qua cache wrapper parse_departure_dates).
 
     Pattern được nhận:
       1. "17/06/2026", "17/06/26"                  — DD/MM/YYYY chuẩn
@@ -144,10 +169,6 @@ def parse_departure_dates(lich_kh: str) -> list[datetime]:
       4. "04/06, 11/06, 18/06, 25/06"               — chuỗi DD/MM
       5. "Thứ 4 và thứ 7 hàng tuần"                 — expand 12 tháng
       6. "Tối thứ 5 hàng tuần"                      — expand 12 tháng
-
-    Pattern-based rules (DateFormatRule) được thử TRƯỚC — admin có thể thêm
-    rule mới qua tab "Định dạng Ngày KH". Nếu không rule nào match → fallback
-    hardcoded logic dưới đây (backward compat).
     """
     text = lich_kh or ""
     if not text.strip():
