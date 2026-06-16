@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
 import pandas as pd
@@ -52,6 +53,26 @@ def _fmt_thoi_gian(name: str) -> str:
     """'...9N8D' / '4N3Đ' → '9N8Đ'. Không thấy → ''."""
     m = re.search(r"(\d{1,2})\s*[Nn]\s*(\d{1,2})\s*[ĐđDd]", name or "")
     return f"{int(m.group(1))}N{int(m.group(2))}Đ" if m else ""
+
+
+def _norm_duration(s: str) -> str:
+    """'5 ngày 5 đêm' → '5N5Đ'; '4 ngày' → '4N'. Không thấy → ''."""
+    m = re.search(r"(\d+)\s*ngày\s*(\d+)\s*đêm", s or "", re.I)
+    if m:
+        return f"{m.group(1)}N{m.group(2)}Đ"
+    m = re.search(r"(\d+)\s*ngày", s or "", re.I)
+    return f"{m.group(1)}N" if m else ""
+
+
+def _fetch_detail_fields(url: str) -> tuple[str, str]:
+    """Vào trang chi tiết lấy (thời gian, điểm KH) khi card danh sách thiếu. Dùng session
+    riêng cho thread-safe. Lỗi/bị chặn → ('','')."""
+    html = _fetch(url, requests.Session())
+    if not html:
+        return "", ""
+    tg = _norm_duration(_first(r"Thời gian\s*<span[^>]*>([^<]+)</span>", html))
+    dep = _first(r"Nơi Khởi hành[:：]?\s*<span[^>]*>([^<]+)</span>", html)
+    return tg, dep
 
 
 def _fetch(url: str, session: requests.Session) -> str:
@@ -126,10 +147,32 @@ def scrape(progress: Callable[[int, str], None] | None = None) -> pd.DataFrame:
                 if c["link_url"] in seen_links:
                     continue
                 seen_links.add(c["link_url"])
+                # CHỈ giữ tour CÓ ngày khởi hành; bỏ tour "Liên hệ" (theo yêu cầu).
+                if not c["lich_kh"].strip():
+                    continue
                 all_rows.append(c)
                 new += 1
             if new == 0:
                 break  # trang lặp lại tour cũ → dừng
+
+    # Chỉ vào trang CHI TIẾT cho tour CÒN THIẾU số ngày / điểm KH (đa số đã đủ từ card).
+    # Fetch SONG SONG → nhanh (vài giây) thay vì tuần tự.
+    need = [r for r in all_rows if not r["thoi_gian"].strip() or not r["diem_kh"].strip()]
+    if need:
+        if progress:
+            progress(94, f"Top Ten: bổ sung chi tiết {len(need)} tour (song song)…")
+        with ThreadPoolExecutor(max_workers=12) as ex:
+            futs = {ex.submit(_fetch_detail_fields, r["link_url"]): r for r in need}
+            for fut in as_completed(futs):
+                r = futs[fut]
+                try:
+                    tg, dep = fut.result()
+                except Exception:  # noqa: BLE001
+                    tg, dep = "", ""
+                if not r["thoi_gian"].strip() and tg:
+                    r["thoi_gian"] = tg
+                if not r["diem_kh"].strip() and dep:
+                    r["diem_kh"] = dep
 
     # Phân loại thị trường/tuyến từ tên (như các nguồn khác).
     try:
@@ -142,7 +185,7 @@ def scrape(progress: Callable[[int, str], None] | None = None) -> pd.DataFrame:
 
     df = pd.DataFrame(all_rows, columns=STANDARD_COLUMNS)
     if progress:
-        progress(100, f"Top Ten xong: {len(df)} tour")
+        progress(100, f"Top Ten xong: {len(df)} tour (chỉ tour có ngày KH)")
     return df
 
 
