@@ -28,7 +28,8 @@ _FINGERPRINT_TTL = int(os.getenv("COMPARE_FINGERPRINT_TTL", "600"))
 # Lưu base context FULL (no-filter) ra disk sau mỗi build thành công. Restart /
 # RAM cold → trả snapshot NGAY (dù hơi cũ) + rebuild nền. User KHÔNG bao giờ chờ 114s.
 # Pattern tham khảo: pricing_segments._load_route_avg_snapshot_if_fresh (drift + TTL).
-_BASE_SNAPSHOT_NS = "compare_base_context"
+# v2: bump khi đổi logic build segment (vd dedup theo giá) → bỏ snapshot cũ, build lại.
+_BASE_SNAPSHOT_NS = "compare_base_context_v2"
 _BASE_SNAPSHOT_TTL_H = 24
 # Debounce: count tour lệch < 1% VÀ max(updated_at) không nhảy → SKIP rebuild, dùng snapshot.
 _SNAPSHOT_COUNT_DRIFT = float(os.getenv("COMPARE_SNAPSHOT_DRIFT", "0.01"))  # 1%
