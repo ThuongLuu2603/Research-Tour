@@ -7,14 +7,13 @@
 Mỗi card `<div class="tour-item">`: h3>a (tên+link), .price, "Mã tour", "Nơi Khởi
 hành", và <select> chứa các option NGÀY KH dd/mm/yyyy (hoặc "Liên hệ" = không có).
 
-CLOUDFLARE: site dùng Turnstile chặn IP datacenter (VPS có thể 403). Fetch trực
-tiếp trước; nếu bị chặn → fallback ScraperAPI (env SCRAPERAPI_KEY). IP nhà mạng qua
-thẳng được. KHÔNG bịa lịch trình → lich_trinh="".
+CLOUDFLARE: site dùng Turnstile có thể chặn IP datacenter (VPS). CHỈ fetch trực
+tiếp (KHÔNG dùng ScraperAPI/proxy theo yêu cầu). IP nhà mạng qua thẳng được; nếu
+VPS bị chặn → trả rỗng + log cảnh báo. KHÔNG bịa lịch trình → lich_trinh="".
 """
 from __future__ import annotations
 
 import logging
-import os
 import re
 from typing import Callable
 
@@ -56,7 +55,7 @@ def _fmt_thoi_gian(name: str) -> str:
 
 
 def _fetch(url: str, session: requests.Session) -> str:
-    """GET trực tiếp; bị Cloudflare/403/trang rỗng → thử ScraperAPI (nếu có key)."""
+    """GET trực tiếp. Bị Cloudflare/403/trang rỗng → trả '' + log (KHÔNG dùng proxy)."""
     try:
         r = session.get(url, headers=_HEADERS, timeout=_TIMEOUT)
         html = r.text
@@ -64,26 +63,13 @@ def _fetch(url: str, session: requests.Session) -> str:
         blocked = (r.status_code != 200) or any(m in low for m in _CF_MARKERS) or len(html) < 3000
         if not blocked:
             return html
-        logger.warning("TopTen: fetch trực tiếp bị chặn (status=%s, len=%s) → thử ScraperAPI",
-                       r.status_code, len(html))
-    except Exception as e:  # noqa: BLE001
-        logger.warning("TopTen: fetch trực tiếp lỗi (%s) → thử ScraperAPI", e)
-
-    key = (os.getenv("SCRAPERAPI_KEY") or "").strip()
-    if not key:
-        logger.warning("TopTen: KHÔNG có SCRAPERAPI_KEY → không vượt được Cloudflare trên VPS")
-        return ""
-    try:
-        r = session.get(
-            "https://api.scraperapi.com/",
-            params={"api_key": key, "url": url},
-            timeout=90,
+        logger.warning(
+            "TopTen: bị chặn (status=%s, len=%s, cloudflare?). IP này (VPS?) không qua "
+            "được — cần chạy từ IP nhà mạng. KHÔNG fallback proxy theo cấu hình.",
+            r.status_code, len(html),
         )
-        if r.status_code == 200 and len(r.text) > 3000:
-            return r.text
-        logger.warning("TopTen: ScraperAPI trả status=%s len=%s", r.status_code, len(r.text))
     except Exception as e:  # noqa: BLE001
-        logger.warning("TopTen: ScraperAPI lỗi: %s", e)
+        logger.warning("TopTen: fetch lỗi: %s", e)
     return ""
 
 
