@@ -28,8 +28,8 @@ EXTRA_SHEET_HEADER = [
     "Lịch khởi hành",  # lich_kh
     "Link",            # link_url
     "Mã tour",         # ma_tour
+    "Hàng không",      # hang_khong (đặt TRƯỚC khách sạn)
     "Khách sạn",       # khach_san
-    "Hàng không",      # hang_khong
     "Nguồn",           # nguon (source_key) — cột cuối phân biệt site
 ]
 
@@ -46,8 +46,8 @@ _DF_FIELDS = [
     "lich_kh",
     "link_url",
     "ma_tour",
-    "khach_san",
     "hang_khong",
+    "khach_san",
 ]
 _NGUON_COL_IDX = len(_DF_FIELDS)  # cột "Nguồn" = index 13 (cột thứ 14)
 _NUM_COLS = len(EXTRA_SHEET_HEADER)

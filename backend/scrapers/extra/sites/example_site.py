@@ -34,8 +34,8 @@ STANDARD_COLUMNS = [
     "lich_kh",      # Lịch khởi hành (các ngày dd/mm/yyyy)
     "link_url",     # URL tour (link thô)
     "ma_tour",      # Mã tour (định danh tour của site đó)
+    "hang_khong",   # Hàng không — có thể để "" (đặt TRƯỚC khách sạn)
     "khach_san",    # Khách sạn — có thể để ""
-    "hang_khong",   # Hàng không — có thể để ""
 ]
 
 

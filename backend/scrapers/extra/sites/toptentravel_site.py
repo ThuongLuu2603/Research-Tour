@@ -64,15 +64,16 @@ def _norm_duration(s: str) -> str:
     return f"{m.group(1)}N" if m else ""
 
 
-def _fetch_detail_fields(url: str) -> tuple[str, str]:
-    """Vào trang chi tiết lấy (thời gian, điểm KH) khi card danh sách thiếu. Dùng session
-    riêng cho thread-safe. Lỗi/bị chặn → ('','')."""
+def _fetch_detail_fields(url: str) -> tuple[str, str, str]:
+    """Vào trang chi tiết lấy (thời gian, điểm KH, hàng không). Hàng không CHỈ có ở chi
+    tiết (field 'Máy bay'). Session riêng cho thread-safe. Lỗi/bị chặn → ('','','')."""
     html = _fetch(url, requests.Session())
     if not html:
-        return "", ""
+        return "", "", ""
     tg = _norm_duration(_first(r"Thời gian\s*<span[^>]*>([^<]+)</span>", html))
     dep = _first(r"Nơi Khởi hành[:：]?\s*<span[^>]*>([^<]+)</span>", html)
-    return tg, dep
+    air = _first(r"Máy bay\s*<span[^>]*>([^<]+)</span>", html)
+    return tg, dep, air
 
 
 def _fetch(url: str, session: requests.Session) -> str:
@@ -155,24 +156,25 @@ def scrape(progress: Callable[[int, str], None] | None = None) -> pd.DataFrame:
             if new == 0:
                 break  # trang lặp lại tour cũ → dừng
 
-    # Chỉ vào trang CHI TIẾT cho tour CÒN THIẾU số ngày / điểm KH (đa số đã đủ từ card).
-    # Fetch SONG SONG → nhanh (vài giây) thay vì tuần tự.
-    need = [r for r in all_rows if not r["thoi_gian"].strip() or not r["diem_kh"].strip()]
-    if need:
+    # Vào trang CHI TIẾT (SONG SONG) lấy HÀNG KHÔNG (chỉ có ở chi tiết) + bổ sung số
+    # ngày/điểm KH nếu card thiếu. Fetch tất cả tour giữ lại (đã bỏ Liên hệ).
+    if all_rows:
         if progress:
-            progress(94, f"Top Ten: bổ sung chi tiết {len(need)} tour (song song)…")
-        with ThreadPoolExecutor(max_workers=12) as ex:
-            futs = {ex.submit(_fetch_detail_fields, r["link_url"]): r for r in need}
+            progress(90, f"Top Ten: lấy hàng không + chi tiết {len(all_rows)} tour (song song)…")
+        with ThreadPoolExecutor(max_workers=16) as ex:
+            futs = {ex.submit(_fetch_detail_fields, r["link_url"]): r for r in all_rows}
             for fut in as_completed(futs):
                 r = futs[fut]
                 try:
-                    tg, dep = fut.result()
+                    tg, dep, air = fut.result()
                 except Exception:  # noqa: BLE001
-                    tg, dep = "", ""
+                    tg, dep, air = "", "", ""
                 if not r["thoi_gian"].strip() and tg:
                     r["thoi_gian"] = tg
                 if not r["diem_kh"].strip() and dep:
                     r["diem_kh"] = dep
+                if air:
+                    r["hang_khong"] = air
 
     # Phân loại thị trường/tuyến từ tên (như các nguồn khác).
     try:
