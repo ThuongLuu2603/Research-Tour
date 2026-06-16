@@ -436,7 +436,7 @@ function ExtraSourcesSection() {
         </h3>
         <p className="text-xs text-gray-500 mt-1">
           Tick = site tự chạy trong chuỗi auto hàng ngày (sau FindTourGo). Dữ liệu ghi vào 1 tab
-          Google Sheet chung — bạn tự merge sang Main. Mỗi site là 1 scraper code riêng.
+          Google Sheet chung. Mỗi site là 1 scraper code riêng.
         </p>
       </div>
 
