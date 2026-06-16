@@ -12,7 +12,11 @@ In ra:
 """
 from __future__ import annotations
 
+import os
 import sys
+
+# Chạy từ scripts/ → thêm thư mục backend (cha của scripts/) vào path để import module.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 KW = (sys.argv[1] if len(sys.argv) > 1 else "MOSCOW").upper()
 
