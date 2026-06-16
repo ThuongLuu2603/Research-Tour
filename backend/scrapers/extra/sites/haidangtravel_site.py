@@ -123,15 +123,33 @@ def _fetch_detail(url: str) -> tuple[str, str, str, str]:
     dep = _ld_prop(html, "Điểm khởi hành")
     trans = _ld_prop(html, "Phương tiện")
     dur = _norm_duration(_ld_prop(html, "Thời lượng") or _first(r"Thời gian:\s*([^<\n]{2,20})", html))
-    # Lịch tuần trong text: "Khởi hành [tối] Thứ 5 hàng tuần" / "khởi hành hàng ngày".
-    # Cho phép từ chen (tối/sáng…) giữa "Khởi hành" và thứ; chặn nhiễu "khởi hành trước 10 ngày".
-    sched = _first(
+    sched = _extract_schedule(html)
+    return dep, trans, dur, sched
+
+
+def _extract_schedule(html: str) -> str:
+    """Lịch KH Hải Đăng có 2 dạng:
+      1. NGÀY CỤ THỂ: 'Khởi hành 22/05/2026 · ...' (nhiều ngày) → lấy hết, dd/mm/yyyy.
+         (CHỈ ngày có prefix 'Khởi hành' — tránh ngày nhiễu review/footer.)
+      2. LỊCH TUẦN: 'Khởi hành [tối] Thứ 5 hàng tuần' → giữ chuỗi lịch.
+    Ưu tiên ngày cụ thể; không có mới lấy lịch tuần; không có nữa → '' (vd tour thỏa thuận)."""
+    out: list[str] = []
+    for d in re.findall(r"[Kk]hởi h[àa]nh\s+(\d{1,2}/\d{1,2}/\d{4})", html):
+        try:
+            dd, mm, yy = d.split("/")
+            v = f"{int(dd):02d}/{int(mm):02d}/{yy}"
+        except ValueError:
+            continue
+        if v not in out:
+            out.append(v)
+    if out:
+        return ", ".join(out)
+    wk = _first(
         r'[Kk]hởi h[àa]nh[^.<"]{0,18}?'
         r'(Thứ\s*[2-7][^.<"]{0,18}?hàng\s*tuần|Chủ\s*nhật[^.<"]{0,12}?hàng\s*tuần|h[àă]ng\s*ngày)',
         html,
     )
-    sched = re.sub(r"\s+", " ", sched).strip()
-    return dep, trans, dur, sched
+    return re.sub(r"\s+", " ", wk).strip()
 
 
 def scrape(progress: Callable[[int, str], None] | None = None) -> pd.DataFrame:
