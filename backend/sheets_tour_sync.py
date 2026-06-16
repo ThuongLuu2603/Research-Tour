@@ -1,8 +1,10 @@
 """Đồng bộ tour Research Grid ↔ Google Sheet."""
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
+from collections import Counter
 from collections.abc import Callable
 from datetime import datetime
 
@@ -864,19 +866,43 @@ def _merge_sheet_source_to_db_locked(
     total_rows = len(data_rows)
     if progress_cb and total_rows:
         progress_cb(0, total_rows, f"Đang đồng bộ {nguon}: 0/{total_rows} dòng Sheet…")
+
+    # PRE-PASS: parse fields + tính external_id GỐC mỗi dòng, đếm trùng. Nhiều dòng CÙNG
+    # định danh gốc (cùng tên/link, không mã tour) = 1 chương trình NHIỀU GIÁ (vd You&Me
+    # 62.9/65.9/68.9tr) → trước đây gộp còn 1 (giữ giá cuối). Giờ tách: gắn discriminator
+    # theo (giá|lịch KH) → mỗi mức giá thành 1 tour DB riêng. Tour đơn (base không trùng)
+    # GIỮ external_id gốc → không churn, không mất override.
+    parsed: list[tuple[int, dict | None, str | None]] = []
+    base_counts: Counter = Counter()
     for row_num, row in enumerate(data_rows, start=1):
-        row_idx = row_num + 1
         fields = _row_to_fields(row, nguon=nguon)
+        base_id = None
+        if fields:
+            base_id = compute_external_id(
+                nguon,
+                ma_tour=fields.get("ma_tour", ""),
+                link_url=fields.get("link_url", ""),
+                ten_tour=fields.get("ten_tour", ""),
+            )
+            base_counts[base_id] += 1
+        parsed.append((row_num + 1, fields, base_id))
+    collide_ids = {b for b, c in base_counts.items() if c > 1}
+
+    for row_num, (row_idx, fields, base_id) in enumerate(parsed, start=1):
         if not fields:
             skipped += 1
             continue
-        external_id = compute_external_id(
-            nguon,
-            ma_tour=fields.get("ma_tour", ""),
-            link_url=fields.get("link_url", ""),
-            ten_tour=fields.get("ten_tour", ""),
-        )
-        tour = _find_db_tour(db, nguon, fields, external_id, lookup)
+        if base_id in collide_ids:
+            # Biến thể giá: định danh = base + hash(giá|lịch KH). Match external-only để
+            # KHÔNG fallback theo tên/link gom nhầm các biến thể về cùng 1 tour.
+            disc = hashlib.sha1(
+                f"{fields.get('gia_raw', '')}|{fields.get('lich_kh', '')}".encode("utf-8")
+            ).hexdigest()[:8]
+            external_id = f"{base_id}#{disc}"
+            tour = _find_db_tour(db, nguon, fields, external_id, lookup, external_only=True)
+        else:
+            external_id = base_id
+            tour = _find_db_tour(db, nguon, fields, external_id, lookup)
         is_new = tour is None
         needs_classify = (
             is_new
