@@ -560,6 +560,7 @@ def _populate_disk_cache_from_prewarm(db: Session, ctx) -> None:
             vietravel_tab_tours=vtr_count,
             total_market_tours=k["market_count"],
             segments_with_vietravel=k["segment_count"],
+            segments_comparable=k.get("comparable_count", 0),
             cheaper_count=k["cheaper"],
             expensive_count=k["expensive"],
             similar_count=k["similar"],

@@ -21,7 +21,7 @@ export const GLOSSARY = {
   chenhGia: "Chênh % = Giá TB tour VTR ÷ Giá so sánh − 1. Âm = VTR rẻ hơn.",
   scatterGia: "Mỗi điểm = 1 nhóm so sánh. Màu: xanh VTR rẻ hơn TT, đỏ đắt hơn. Cỡ điểm = TB đoàn/tháng VTR.",
   reNhat: "Tour rẻ nhất thị trường cùng giai đoạn khởi hành với VTR (±45 ngày).",
-  segment: "Nhóm so sánh: cùng Thị trường + Tuyến tour + Điểm khởi hành — gộp mọi sản phẩm/thời gian trên tuyến.",
+  segment: "Nhóm so sánh = cùng Thị trường + Tuyến tour + Điểm khởi hành (gộp mọi SP/thời gian). Số hiển thị: tuyến SO SÁNH ĐƯỢC (cả VTR và TT cùng có SP → tính được chênh giá) / tổng tuyến VTR khai thác. Tuyến VTR khai thác mà TT chưa có SP → không tính chênh giá, không vào biểu đồ.",
   methodologyCompare: "Gom theo tuyến + thị trường. Số ngày TB và giá TB/ngày có trọng số theo số đoàn × số ngày từng SP.",
   methodologyMarket: "Phân tích toàn thị trường theo sản phẩm tour. Giá TB robust; thị phần theo tổng đoàn/tháng.",
   methodologyPrice: "Min / TB / Median / Max theo nhóm. TB có trọng số đoàn, giảm ảnh hưởng outlier giá.",

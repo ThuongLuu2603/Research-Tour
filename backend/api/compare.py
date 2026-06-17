@@ -41,6 +41,7 @@ class CompareSummary(BaseModel):
     vietravel_tab_tours: int
     total_market_tours: int
     segments_with_vietravel: int
+    segments_comparable: int = 0  # tuyến TT có sản phẩm so sánh được (chênh giá tính được)
     cheaper_count: int
     expensive_count: int
     similar_count: int
@@ -205,6 +206,7 @@ def compare_summary(
         vietravel_tab_tours=vtr_count,
         total_market_tours=k["market_count"],
         segments_with_vietravel=k["segment_count"],
+        segments_comparable=k.get("comparable_count", 0),
         cheaper_count=k["cheaper"],
         expensive_count=k["expensive"],
         similar_count=k["similar"],

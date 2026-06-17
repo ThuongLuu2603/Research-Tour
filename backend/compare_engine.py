@@ -786,13 +786,21 @@ def summarize_context(tours: list[Tour], segments: list[SegmentStats]) -> dict:
             elif fg <= -20:
                 freq_lag += 1
 
-    vtr_count = sum(1 for t in tours if is_vietravel_tab(t))
+    # "Sản phẩm VTR" đếm theo CHƯƠNG TRÌNH, không theo dòng: tách giá → 1 chương trình
+    # nhiều dòng (cùng mã tour) chỉ tính 1. Dedup theo ma_tour (fallback tên tour).
+    def _prog_key(t) -> str:
+        return (getattr(t, "ma_tour", "") or "").strip() or (getattr(t, "ten_tour", "") or "").strip()
+
+    vtr_count = len({_prog_key(t) for t in tours if is_vietravel_tab(t)})
+    # "Nhóm so sánh được" = tuyến TT THỰC SỰ có sản phẩm so sánh (chênh giá tính được).
+    comparable_count = cheaper + expensive + similar
     market_count = sum(1 for t in tours if not is_vietravel_tab(t))
     return {
         "total_tours": len(tours),
         "vtr_count": vtr_count,
         "market_count": market_count,
         "segment_count": len(segments),
+        "comparable_count": comparable_count,
         "cheaper": cheaper,
         "expensive": expensive,
         "similar": similar,

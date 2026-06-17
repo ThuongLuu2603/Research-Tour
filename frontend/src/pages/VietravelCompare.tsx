@@ -662,7 +662,7 @@ export default function VietravelCompare() {
             </span>
             <p className="text-xl font-bold tabular-nums"><CountUp value={summary.vietravel_tab_tours} /></p>
           </div>
-          <div className="kpi-card hover-lift"><span className="text-xs text-gray-500 inline-flex items-center">Nhóm so sánh<InfoTip text={GLOSSARY.segment} /></span><p className="text-xl font-bold tabular-nums"><CountUp value={summary.segments_with_vietravel} /></p></div>
+          <div className="kpi-card hover-lift"><span className="text-xs text-gray-500 inline-flex items-center">Nhóm so sánh<InfoTip text={GLOSSARY.segment} /></span><p className="text-xl font-bold tabular-nums"><CountUp value={summary.segments_comparable ?? summary.segments_with_vietravel} /><span className="text-xs font-normal text-gray-400"> / {summary.segments_with_vietravel} tuyến VTR</span></p></div>
           <div className="kpi-card hover-lift"><span className="text-xs text-green-600">Rẻ hơn TT</span><p className="text-xl font-bold text-green-700 tabular-nums"><CountUp value={summary.cheaper_count} /></p></div>
           <div className="kpi-card hover-lift"><span className="text-xs text-red-600">Đắt hơn TT</span><p className="text-xl font-bold text-red-700 tabular-nums"><CountUp value={summary.expensive_count} /></p></div>
           <div className="kpi-card hover-lift"><span className="text-xs text-gray-500 inline-flex items-center">{COL.chenhPct}<InfoTip text={GLOSSARY.chenhGia} /></span><p className="text-xl font-bold tabular-nums">{summary.avg_gap_pct != null ? <CountUp value={summary.avg_gap_pct} decimals={1} suffix="%" /> : "—"}</p></div>

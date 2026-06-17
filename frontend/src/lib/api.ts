@@ -440,6 +440,7 @@ export interface CompareSummary {
   vietravel_tab_tours: number;
   total_market_tours: number;
   segments_with_vietravel: number;
+  segments_comparable?: number;
   cheaper_count: number;
   expensive_count: number;
   similar_count: number;
