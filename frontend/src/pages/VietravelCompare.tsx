@@ -284,7 +284,7 @@ export default function VietravelCompare() {
   });
   const { data: coverage } = useQuery({ queryKey: ["coverage"], queryFn: getCoverageMap, enabled: tab === "coverage" });
   const [covDetail, setCovDetail] = useState<{ thi_truong: string; tuyen_tour: string } | null>(null);
-  const [chartModal, setChartModal] = useState<null | "price">(null);
+  const [chartModal, setChartModal] = useState<null | "price" | "market" | "freq">(null);
   const { data: covDetailData, isLoading: covDetailLoading } = useQuery({
     queryKey: ["coverage-segment", covDetail?.thi_truong, covDetail?.tuyen_tour],
     queryFn: () => getCoverageSegment(covDetail!.thi_truong, covDetail!.tuyen_tour),
@@ -327,12 +327,13 @@ export default function VietravelCompare() {
   }));
   const priceChart = priceChartFull.slice(0, 12).map((s) => ({ ...s, name: s.name.length > 28 ? s.name.slice(0, 27) + "…" : s.name }));
 
-  const freqChart = (segments?.items ?? []).filter((s) => s.freq_gap_pct != null).slice(0, 12).map((s) => ({
-    name: `${s.tuyen_tour.slice(0, 22)} (${s.diem_kh})`,
+  const freqChartFull = (segments?.items ?? []).filter((s) => s.freq_gap_pct != null).map((s) => ({
+    name: `${s.tuyen_tour} (${s.diem_kh})`,
     gap: s.freq_gap_pct,
     vtr: s.vtr_avg_departures_per_month ?? s.vietravel_freq_monthly,
     mkt: s.top_freq_competitor_departures,
   }));
+  const freqChart = freqChartFull.slice(0, 12).map((s) => ({ ...s, name: s.name.length > 28 ? s.name.slice(0, 27) + "…" : s.name }));
 
   const weekdayCompareChart = useMemo(() => {
     if (!weekdayDist) return [];
@@ -401,7 +402,7 @@ export default function VietravelCompare() {
   }, [segments?.items]);
 
   // ── Chart 2: Grouped Bar giá VTR vs TT theo thị trường (Tab So Sánh Giá) ──
-  const marketPriceBar = useMemo(() => {
+  const marketPriceBarFull = useMemo(() => {
     const byMarket: Record<string, { vtr: number[]; tt: number[] }> = {};
     for (const s of (segments?.items ?? [])) {
       if (!s.thi_truong) continue;
@@ -418,9 +419,9 @@ export default function VietravelCompare() {
         segments: Math.max(vtr.length, tt.length),
       }))
       .filter((r) => r.vtr_avg && r.tt_avg)
-      .sort((a, b) => (b.vtr_avg ?? 0) - (a.vtr_avg ?? 0))
-      .slice(0, 12);
+      .sort((a, b) => (b.vtr_avg ?? 0) - (a.vtr_avg ?? 0));
   }, [segments?.items]);
+  const marketPriceBar = marketPriceBarFull.slice(0, 12);
 
   // ── Scatter tần suất: VTR vs đối thủ có avg cao nhất (trừ VTR) ─────────────
   const MARKET_COLORS = ["#003580","#0057b8","#e53935","#00897b","#f57c00","#8e24aa","#43a047","#1565c0"];
@@ -741,29 +742,6 @@ export default function VietravelCompare() {
             )}
           </div>
 
-          {chartModal === "price" && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setChartModal(null)}>
-              <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-                <div className="flex items-center justify-between px-5 py-3 border-b">
-                  <h3 className="font-semibold">{COL.chenhPct} VTR vs {COL.giaSoSanh} — đầy đủ {priceChartFull.length} tuyến</h3>
-                  <button onClick={() => setChartModal(null)} className="text-gray-400 hover:text-gray-700 text-2xl leading-none">×</button>
-                </div>
-                <div className="overflow-auto p-4">
-                  <div style={{ height: Math.max(360, priceChartFull.length * 22) }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={priceChartFull} layout="vertical" margin={{ left: 0, right: 30 }}>
-                        <XAxis type="number" tickFormatter={(v) => `${v}%`} />
-                        <YAxis dataKey="name" type="category" width={230} tick={{ fontSize: 9 }} interval={0} />
-                        <Tooltip formatter={(v: number) => [`${v}%`, "Chênh lệch"]} />
-                        <ReferenceLine x={0} stroke="#666" />
-                        <Bar dataKey="gap" radius={[0, 4, 4, 0]}>{priceChartFull.map((e, i) => <Cell key={i} fill={(e.gap ?? 0) <= 0 ? "#16a34a" : "#dc2626"} />)}</Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
           <div className="card p-5">
             <h3 className="font-semibold mb-3 inline-flex items-center">
               {scatterMode === "chenh"
@@ -992,10 +970,18 @@ export default function VietravelCompare() {
           {/* Chart 2: Grouped Bar — Giá TB VTR vs TT theo thị trường */}
           {marketPriceBar.length > 0 && (
             <div className="card p-4">
-              <h4 className="font-semibold text-sm mb-1 inline-flex items-center gap-1.5">
-                Giá TB VTR vs Giá so sánh TT — theo thị trường
-                <InfoTip text="Giá trung bình của tất cả segment trong thị trường. Cột xanh = VTR, cột xám = thị trường. Khoảng cách = mức premium/discount trung bình." />
-              </h4>
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <h4 className="font-semibold text-sm inline-flex items-center gap-1.5">
+                  Giá TB VTR vs Giá so sánh TT — theo thị trường
+                  <InfoTip text="Giá trung bình của tất cả segment trong thị trường. Cột xanh = VTR, cột xám = thị trường. Khoảng cách = mức premium/discount trung bình." />
+                </h4>
+                {marketPriceBarFull.length > 12 && (
+                  <button type="button" onClick={() => setChartModal("market")}
+                    className="text-xs text-primary-600 hover:text-primary-800 font-medium whitespace-nowrap">
+                    Xem đầy đủ ({marketPriceBarFull.length} thị trường) →
+                  </button>
+                )}
+              </div>
               <p className="text-xs text-gray-500 mb-3">Top {marketPriceBar.length} thị trường có dữ liệu so sánh</p>
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={marketPriceBar} layout="vertical" margin={{ left: 0, right: 40 }}>
@@ -1175,10 +1161,18 @@ export default function VietravelCompare() {
 
             {/* Bar gap % — compact */}
             <div className="card p-5">
-              <h3 className="font-semibold mb-1 text-sm flex items-center gap-2">
-                <Calendar size={15} /> Gap tần suất VTR vs avg đối thủ (%)
-                <InfoTip text={GLOSSARY.tanSuat} />
-              </h3>
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <h3 className="font-semibold text-sm flex items-center gap-2">
+                  <Calendar size={15} /> Gap tần suất VTR vs avg đối thủ (%)
+                  <InfoTip text={GLOSSARY.tanSuat} />
+                </h3>
+                {freqChartFull.length > 10 && (
+                  <button type="button" onClick={() => setChartModal("freq")}
+                    className="text-xs text-primary-600 hover:text-primary-800 font-medium whitespace-nowrap">
+                    Xem đầy đủ ({freqChartFull.length} tuyến) →
+                  </button>
+                )}
+              </div>
               <p className="text-xs text-gray-500 mb-3">
                 Dương = VTR nhiều lịch hơn avg đối thủ · Âm = cần bổ sung lịch KH
               </p>
@@ -1725,6 +1719,56 @@ export default function VietravelCompare() {
           ))}
         </div>
       )}
+
+      {/* Modal CHUNG: xem biểu đồ đầy đủ (tất cả tuyến/thị trường) — dùng cho 3 biểu đồ brief */}
+      {chartModal && (() => {
+        const cfg = chartModal === "price"
+          ? { title: `${COL.chenhPct} VTR vs ${COL.giaSoSanh} — đầy đủ ${priceChartFull.length} tuyến`,
+              data: priceChartFull, rows: priceChartFull.length, kind: "gap" as const, unit: "%" }
+          : chartModal === "freq"
+          ? { title: `Gap tần suất VTR vs avg đối thủ — đầy đủ ${freqChartFull.length} tuyến`,
+              data: freqChartFull, rows: freqChartFull.length, kind: "gap" as const, unit: "%" }
+          : { title: `Giá TB VTR vs TT theo thị trường — đầy đủ ${marketPriceBarFull.length} thị trường`,
+              data: marketPriceBarFull, rows: marketPriceBarFull.length, kind: "market" as const, unit: "" };
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setChartModal(null)}>
+            <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-3 border-b">
+                <h3 className="font-semibold text-sm">{cfg.title}</h3>
+                <button onClick={() => setChartModal(null)} className="text-gray-400 hover:text-gray-700 text-2xl leading-none">×</button>
+              </div>
+              <div className="overflow-auto p-4">
+                <div style={{ height: Math.max(360, cfg.rows * 24) }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    {cfg.kind === "gap" ? (
+                      <BarChart data={cfg.data as any[]} layout="vertical" margin={{ left: 0, right: 30 }}>
+                        <XAxis type="number" tickFormatter={(v) => `${v}${cfg.unit}`} />
+                        <YAxis dataKey="name" type="category" width={240} tick={{ fontSize: 9 }} interval={0} />
+                        <Tooltip formatter={(v: number) => [`${v}${cfg.unit}`, "Chênh lệch"]} />
+                        <ReferenceLine x={0} stroke="#666" />
+                        <Bar dataKey="gap" radius={[0, 4, 4, 0]}>
+                          {(cfg.data as any[]).map((e, i) => <Cell key={i} fill={(e.gap ?? 0) <= 0
+                            ? (chartModal === "freq" ? "#d97706" : "#16a34a")
+                            : (chartModal === "freq" ? "#059669" : "#dc2626")} />)}
+                        </Bar>
+                      </BarChart>
+                    ) : (
+                      <BarChart data={cfg.data as any[]} layout="vertical" margin={{ left: 0, right: 40 }}>
+                        <XAxis type="number" tickFormatter={(v) => `${(v / 1e6).toFixed(0)}tr`} />
+                        <YAxis dataKey="fullMarket" type="category" width={150} tick={{ fontSize: 10 }} interval={0} />
+                        <Tooltip formatter={(v: number) => fmtVND(v)} />
+                        <Legend />
+                        <Bar dataKey="vtr_avg" name="Giá TB VTR" fill="#003580" radius={[0, 3, 3, 0]} />
+                        <Bar dataKey="tt_avg" name="Giá so sánh TT" fill="#9aa5b8" radius={[0, 3, 3, 0]} />
+                      </BarChart>
+                    )}
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
