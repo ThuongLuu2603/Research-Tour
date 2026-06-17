@@ -142,6 +142,7 @@ def _unmatched_tours_query(db: Session):
         Tour.thoi_gian,      # alias duration
         Tour.so_ngay,
         Tour.lich_kh,        # alias schedule + DateFormatRule DSL
+        Tour.link_url,       # member tour link (panel «Chưa khớp» hiện link để check)
     )
     return (
         db.query(Tour)

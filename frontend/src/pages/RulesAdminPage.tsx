@@ -969,9 +969,18 @@ function SideUnmatchedAlias({
                     </button>
                     {expanded.has(item.value) && (
                       <ul className="mt-1 space-y-0.5">
-                        {(item.members ?? []).slice(0, 5).map((m: any) => (
-                          <li key={m.title} className="text-[10px] text-gray-600 bg-white rounded px-1 py-0.5 truncate" title={m.title}>
-                            · {m.title} <span className="text-gray-400">×{m.count}</span>
+                        {(item.members ?? []).slice(0, 15).map((m: any, i: number) => (
+                          <li key={i} className="text-[10px] text-gray-600 bg-white rounded px-1 py-0.5 leading-snug">
+                            {m.link_url ? (
+                              <a href={m.link_url} target="_blank" rel="noopener noreferrer"
+                                className="text-primary-600 hover:underline break-words" title={m.title}>
+                                {m.title || "(không tên)"}
+                              </a>
+                            ) : (
+                              <span className="break-words" title={m.title}>{m.title || "(không tên)"}</span>
+                            )}
+                            {m.cong_ty && <span className="text-gray-400"> · {m.cong_ty}</span>}
+                            {m.count > 1 && <span className="text-gray-400"> ×{m.count}</span>}
                           </li>
                         ))}
                       </ul>

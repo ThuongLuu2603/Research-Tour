@@ -734,6 +734,24 @@ def _unmatched_add_member(bucket: dict, title: str) -> None:
     bucket["count"] = bucket.get("count", 0) + 1
 
 
+_ALIAS_MEMBER_LIMIT = 15
+
+
+def _alias_bucket_add(bucket: dict, key: str, t) -> None:
+    """Gom alias chưa khớp: count + danh sách tour mẫu (tên + link + công ty) để admin
+    xem & quyết định gán. Giới hạn _ALIAS_MEMBER_LIMIT tour/alias cho nhẹ payload."""
+    import re as _re
+    b = bucket.setdefault(key, {"count": 0, "members": []})
+    b["count"] += 1
+    if len(b["members"]) < _ALIAS_MEMBER_LIMIT:
+        b["members"].append({
+            "title": _re.sub(r"\s+", " ", (getattr(t, "ten_tour", "") or "").strip())[:160],
+            "count": 1,
+            "link_url": (getattr(t, "link_url", "") or "")[:512],
+            "cong_ty": (getattr(t, "cong_ty", "") or "")[:128],
+        })
+
+
 def _unmatched_members_list(bucket: dict, *, limit: int = 40) -> list[dict]:
     raw: dict[str, int] = bucket.get("_members") or {}
     return [
@@ -840,10 +858,10 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
     from tour_sources import is_vietravel_tab
     from tour_stats_exclusions import is_stats_excluded_tour
 
-    cong_ty: dict[str, int] = {}
-    diem_kh: dict[str, int] = {}
-    thoi_gian: dict[str, int] = {}
-    lich_kh: dict[str, int] = {}
+    cong_ty: dict[str, dict] = {}
+    diem_kh: dict[str, dict] = {}
+    thoi_gian: dict[str, dict] = {}
+    lich_kh: dict[str, dict] = {}
     thi_truong: dict[str, dict] = {}
     tuyen_tour: dict[str, dict] = {}
     classify_gaps: dict[str, dict] = {}
@@ -861,10 +879,10 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
         # Trước đây canonical filter cắt mất "CU CHI TUNNELS" và các diem_kh lạ từ FTG.
         raw_co_for_alias = (t.cong_ty or "").strip()
         if raw_co_for_alias and not is_company_alias_matched(raw_co_for_alias):
-            cong_ty[raw_co_for_alias] = cong_ty.get(raw_co_for_alias, 0) + 1
+            _alias_bucket_add(cong_ty, raw_co_for_alias, t)
         raw_dep_for_alias = (t.diem_kh or "").strip()
         if raw_dep_for_alias and not is_departure_alias_matched(raw_dep_for_alias):
-            diem_kh[raw_dep_for_alias] = diem_kh.get(raw_dep_for_alias, 0) + 1
+            _alias_bucket_add(diem_kh, raw_dep_for_alias, t)
         raw_tg_for_alias = (t.thoi_gian or "").strip()
         if raw_tg_for_alias:
             # CHỈ xét text vs DurationAliasRule / định dạng NĐ chuẩn. Trước đây dùng
@@ -872,13 +890,13 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
             # 8 đêm" → 9) bị coi là matched → panel «Chưa khớp» tab Thời gian luôn
             # rỗng, admin không thấy text raw cần chuẩn hóa alias.
             if not is_duration_text_alias_matched(raw_tg_for_alias):
-                thoi_gian[raw_tg_for_alias] = thoi_gian.get(raw_tg_for_alias, 0) + 1
+                _alias_bucket_add(thoi_gian, raw_tg_for_alias, t)
         else:
             # Không có text: chỉ flag khi so_ngay cũng không dùng được.
             days_for_alias, _ = resolve_duration_days("", t.so_ngay)
             if days_for_alias is None:
                 key = f"so_ngay={t.so_ngay}" if t.so_ngay else "—"
-                thoi_gian[key] = thoi_gian.get(key, 0) + 1
+                _alias_bucket_add(thoi_gian, key, t)
 
         # Ngày KH (lich_kh): gom giá trị chưa được DSL DateFormatRule match.
         # Trước đây gate bằng parse_departure_dates() (hardcoded fallback) → bị "cứu"
@@ -894,7 +912,7 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
             except Exception:
                 dsl_matched = False
             if not dsl_matched and not is_schedule_alias_matched(raw_lkh):
-                lich_kh[raw_lkh] = lich_kh.get(raw_lkh, 0) + 1
+                _alias_bucket_add(lich_kh, raw_lkh, t)
 
         # Classify (market/route) chỉ áp dụng cho Main+Vietravel — FTG dùng sheet riêng
         # nên không tham gia route_keyword_rules. Skip nếu không canonical hoặc excluded.
@@ -942,11 +960,13 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
         # Đã gom company/departure/duration aliases ở đầu loop (cho mọi nguồn) — không
         # lặp lại ở đây để tránh double-count.
 
-    def _rows(d: dict[str, int]) -> list[dict]:
-        # Trước đây cap [:40] — user nhập alias cho rule mới + có hàng trăm value
-        # khác chưa khớp → 40 dòng đầu mất hết, panel "Chưa khớp" trông trống.
-        # Bump lên 500: đủ rộng cho thực tế nhưng vẫn có ceiling an toàn.
-        return sorted([{"value": k, "count": v} for k, v in d.items()], key=lambda x: -x["count"])[:500]
+    def _rows(d: dict[str, dict]) -> list[dict]:
+        # value + count + members (tour mẫu: tên/link/công ty) để admin check & gán.
+        # Cap [:500] đủ rộng nhưng có ceiling an toàn.
+        return sorted(
+            [{"value": k, "count": v["count"], "members": v.get("members", [])} for k, v in d.items()],
+            key=lambda x: -x["count"],
+        )[:500]
 
     market_rows = sorted(
         [
