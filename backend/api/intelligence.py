@@ -114,6 +114,52 @@ def coverage(
     return result
 
 
+@router.get("/coverage/segment")
+def coverage_segment(
+    thi_truong: str = Query(...),
+    tuyen_tour: str = Query(...),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Chi tiết 1 ô ma trận phủ sóng (thị trường + tuyến): tóm tắt so sánh + danh sách
+    tour VTR và đối thủ. Khóa khớp ĐÚNG coverage_engine: route = tuyen_tour or market."""
+    from compare_engine import build_segment_stats, is_vietravel
+
+    market = (thi_truong or "").strip() or "Khác"
+    route = (tuyen_tour or "").strip() or market
+    tours = deduplicate_tours(filter_tours_for_market_compare(_market_compare_tour_query(db).all()))
+    sub = [
+        t for t in tours
+        if (((t.thi_truong or "").strip() or "Khác") == market
+            and (((t.tuyen_tour or "").strip()) or (((t.thi_truong or "").strip()) or "Khác")) == route)
+    ]
+
+    def _brief(t) -> dict:
+        return {
+            "ten_tour": t.ten_tour or "",
+            "cong_ty": t.cong_ty or "",
+            "gia": float(t.gia) if t.gia else None,
+            "gia_raw": getattr(t, "gia_raw", "") or "",
+            "thoi_gian": t.thoi_gian or "",
+            "diem_kh": t.diem_kh or "",
+            "lich_kh": t.lich_kh or "",
+            "link_url": t.link_url or "",
+        }
+
+    vtr = sorted([t for t in sub if is_vietravel(t.cong_ty)], key=lambda t: (t.gia or 0))
+    mkt = sorted([t for t in sub if not is_vietravel(t.cong_ty)], key=lambda t: (t.gia or 0))
+    segments = [s.to_dict() for s in build_segment_stats(sub, dedup=False)]
+    return {
+        "thi_truong": market,
+        "tuyen_tour": route,
+        "vtr_count": len(vtr),
+        "market_count": len(mkt),
+        "segments": segments,
+        "vtr_tours": [_brief(t) for t in vtr],
+        "market_tours": [_brief(t) for t in mkt],
+    }
+
+
 @router.get("/quality")
 def quality(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     return compute_data_quality(db)

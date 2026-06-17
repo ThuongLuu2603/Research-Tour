@@ -10,7 +10,7 @@ import {
   getCompareSummary, getCompareSegments, getSegmentDetail,
   getCompareCompetitors, getCompareCompetitorDetail,
   getCompareFilterOptions, getCompareClassificationGaps, getCompareWeekdayDistribution,
-  getCoverageMap, getMatcherSuggest, getMatcherDetail,
+  getCoverageMap, getCoverageSegment, getMatcherSuggest, getMatcherDetail,
   getCompareSegmentHistory,
   CompareSegment,
 } from "@/lib/api";
@@ -283,6 +283,12 @@ export default function VietravelCompare() {
     enabled: !!selectedKey,
   });
   const { data: coverage } = useQuery({ queryKey: ["coverage"], queryFn: getCoverageMap, enabled: tab === "coverage" });
+  const [covDetail, setCovDetail] = useState<{ thi_truong: string; tuyen_tour: string } | null>(null);
+  const { data: covDetailData, isLoading: covDetailLoading } = useQuery({
+    queryKey: ["coverage-segment", covDetail?.thi_truong, covDetail?.tuyen_tour],
+    queryFn: () => getCoverageSegment(covDetail!.thi_truong, covDetail!.tuyen_tour),
+    enabled: !!covDetail,
+  });
   const { data: matcherSuggest } = useQuery({ queryKey: ["matcher-suggest"], queryFn: getMatcherSuggest, enabled: tab === "matcher" });
   const { data: matcherDetail } = useQuery({
     queryKey: ["matcher-detail", selectedMatcherTour],
@@ -1426,7 +1432,9 @@ export default function VietravelCompare() {
                       (covStatus === "all" || r.status === covStatus) &&
                       (!covSearch || `${r.thi_truong} ${r.tuyen_tour}`.toLowerCase().includes(covSearch.toLowerCase())))
                     .map((row: any) => (
-                    <tr key={`${row.thi_truong}-${row.tuyen_tour}`} className="border-t hover:bg-gray-50">
+                    <tr key={`${row.thi_truong}-${row.tuyen_tour}`}
+                      onClick={() => setCovDetail({ thi_truong: row.thi_truong, tuyen_tour: row.tuyen_tour })}
+                      className="border-t hover:bg-blue-50 cursor-pointer">
                       <td className="px-2 py-2">{row.thi_truong}</td>
                       <td className="px-2 py-2 max-w-[120px] truncate" title={row.tuyen_tour}>{row.tuyen_tour}</td>
                       <td className="px-2 py-2 font-medium">{row.vtr_tours}</td>
@@ -1459,7 +1467,9 @@ export default function VietravelCompare() {
                 </tr></thead>
                 <tbody>
                   {(coverage?.gaps ?? []).map((g: any) => (
-                    <tr key={`${g.thi_truong}-${g.tuyen_tour}`} className="border-t hover:bg-amber-50/50">
+                    <tr key={`${g.thi_truong}-${g.tuyen_tour}`}
+                      onClick={() => setCovDetail({ thi_truong: g.thi_truong, tuyen_tour: g.tuyen_tour })}
+                      className="border-t hover:bg-amber-100/60 cursor-pointer">
                       <td className="px-2 py-2">{g.thi_truong}</td>
                       <td className="px-2 py-2 font-medium">{g.tuyen_tour}</td>
                       <td className="px-2 py-2 font-semibold text-emerald-700">{g.market_departures_monthly ?? "—"}</td>
@@ -1480,6 +1490,69 @@ export default function VietravelCompare() {
               </table>
             </div>
           </div>
+
+          {covDetail && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setCovDetail(null)}>
+              <div className="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-start justify-between gap-2 px-5 py-3 border-b sticky top-0 bg-white z-10">
+                  <div>
+                    <h3 className="font-semibold text-gray-900">{covDetail.thi_truong} · {covDetail.tuyen_tour}</h3>
+                    <p className="text-xs text-gray-500">{covDetailData ? `${covDetailData.vtr_count} tour VTR · ${covDetailData.market_count} tour đối thủ` : ""}</p>
+                  </div>
+                  <button onClick={() => setCovDetail(null)} className="text-gray-400 hover:text-gray-700 text-2xl leading-none">×</button>
+                </div>
+                {covDetailLoading ? (
+                  <div className="p-8 text-center text-gray-400 text-sm">Đang tải…</div>
+                ) : (
+                  <div className="p-5 space-y-4">
+                    {(covDetailData?.segments?.length ?? 0) > 0 ? (
+                      <div className="overflow-auto">
+                        <table className="w-full text-xs">
+                          <thead className="bg-gray-50"><tr className="text-left text-gray-500">
+                            {["Điểm KH", "Số ngày", "Giá TB VTR", "Giá TB TT", "Chênh %", "Đoàn VTR/th", "Đoàn TT/th"].map((h) => (<th key={h} className="px-2 py-1.5">{h}</th>))}
+                          </tr></thead>
+                          <tbody>
+                            {covDetailData.segments.map((s: any) => (
+                              <tr key={s.segment_key} className="border-t">
+                                <td className="px-2 py-1.5">{s.diem_kh || "—"}</td>
+                                <td className="px-2 py-1.5">{s.so_ngay ?? "—"}</td>
+                                <td className="px-2 py-1.5 font-medium">{s.vietravel_avg_price ? fmtVND(s.vietravel_avg_price) : "—"}</td>
+                                <td className="px-2 py-1.5">{s.comparison_price ? fmtVND(s.comparison_price) : "—"}</td>
+                                <td className={cn("px-2 py-1.5 font-semibold", (s.gap_pct ?? 0) > 0 ? "text-red-600" : (s.gap_pct ?? 0) < 0 ? "text-green-600" : "text-gray-500")}>{s.gap_pct != null ? `${s.gap_pct > 0 ? "+" : ""}${s.gap_pct}%` : "—"}</td>
+                                <td className="px-2 py-1.5">{s.vtr_avg_departures_per_month ?? "—"}</td>
+                                <td className="px-2 py-1.5">{s.market_freq_avg_per_company ?? "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-amber-700 bg-amber-50 rounded px-3 py-2">Tuyến này không tính được chênh giá (VTR chưa khai thác, hoặc TT chưa có SP cùng giai đoạn khởi hành).</p>
+                    )}
+                    <div className="grid md:grid-cols-2 gap-4">
+                      {[{ label: `Tour VTR (${covDetailData?.vtr_count ?? 0})`, color: "text-primary-700", list: covDetailData?.vtr_tours ?? [] },
+                        { label: `Tour đối thủ (${covDetailData?.market_count ?? 0})`, color: "text-gray-700", list: covDetailData?.market_tours ?? [] }].map((grp) => (
+                        <div key={grp.label}>
+                          <p className={cn("text-xs font-semibold mb-1", grp.color)}>{grp.label}</p>
+                          <div className="space-y-1 max-h-60 overflow-auto pr-1">
+                            {grp.list.map((t: any, i: number) => (
+                              <a key={i} href={t.link_url || undefined} target="_blank" rel="noopener noreferrer"
+                                className={cn("block rounded border border-gray-100 px-2 py-1.5 text-xs hover:bg-gray-50", !t.link_url && "pointer-events-none")}>
+                                <p className="font-medium text-gray-800 line-clamp-1">{t.ten_tour}</p>
+                                <p className="text-gray-500">{t.cong_ty ? `${t.cong_ty} · ` : ""}<span className="text-gray-800 font-medium">{t.gia ? fmtVND(t.gia) : (t.gia_raw || "—")}</span>{t.thoi_gian ? ` · ${t.thoi_gian}` : ""}{t.diem_kh ? ` · ${t.diem_kh}` : ""}</p>
+                                {t.lich_kh && <p className="text-gray-400 line-clamp-1">📅 {t.lich_kh}</p>}
+                              </a>
+                            ))}
+                            {!grp.list.length && <p className="text-xs text-gray-400 italic">Không có</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

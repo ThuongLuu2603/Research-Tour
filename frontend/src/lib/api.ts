@@ -1006,6 +1006,11 @@ export const getCoverageMap = async () => {
   return data;
 };
 
+export const getCoverageSegment = async (thi_truong: string, tuyen_tour: string) => {
+  const { data } = await api.get("/intelligence/coverage/segment", { params: { thi_truong, tuyen_tour } });
+  return data;
+};
+
 export const getDataQuality = async () => {
   const { data } = await api.get("/intelligence/quality");
   return data;
