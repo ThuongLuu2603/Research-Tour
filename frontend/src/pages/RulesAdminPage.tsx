@@ -40,6 +40,7 @@ import { formatDurationLabel, parseDurationInput } from "@/lib/durationFormat";
 import { buildRouteKeywordConflicts, mergeRouteKeywordLists, parseRouteKeywordList } from "@/lib/rulesUnmatched";
 import { dropHandlers, dragAliasProps, keepInputKeys, keywordForRouteDrop, matchRulesSearch } from "@/lib/rulesAdminUi";
 import { ClassificationRulesTab } from "@/components/ClassificationRulesTab";
+import { UnmatchedMembers } from "@/components/UnmatchedMembers";
 import { Plus, Trash2, RefreshCw, Database, Search, Pencil, Check, X, GripVertical } from "lucide-react";
 
 type Tab = "classify" | "company" | "departure" | "duration" | "schedule" | "festival" | "compare";
@@ -1063,6 +1064,7 @@ function SideUnmatchedDurationRow({ item, onAssign }: { item: UnmatchedItem; onA
           <span className="truncate">{item.value || "—"}</span>
           <span className="text-gray-400">×{item.count}</span>
         </span>
+        <UnmatchedMembers members={item.members} itemKey={item.value} />
       </td>
       <td className="px-2 py-1.5">
         <button type="button" className="btn-primary text-[10px] py-1 px-2 disabled:opacity-60"
@@ -1767,30 +1769,32 @@ function DateFormatRulesTab({
             </p>
           )}
           {unmatched.slice(0, 100).map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              onClick={() => {
-                setTestText(item.value);
-                setTestResult(null);
-                setTestError("");
-                // Scroll test widget vào view
-                setTimeout(() => {
-                  document.querySelector("textarea[placeholder*='Test']")?.scrollIntoView({ behavior: "smooth", block: "center" });
-                }, 50);
-              }}
-              className="w-full text-left px-3 py-2 hover:bg-amber-50 transition-colors group"
-              title="Click để load vào Test widget"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <span className="text-[11px] font-mono text-gray-800 break-all flex-1 line-clamp-2 group-hover:line-clamp-none">
-                  {item.value}
-                </span>
-                <span className="text-[10px] text-amber-700 font-semibold shrink-0">
-                  ×{item.count}
-                </span>
-              </div>
-            </button>
+            <div key={item.value} className="px-3 py-2 hover:bg-amber-50 transition-colors group">
+              <button
+                type="button"
+                onClick={() => {
+                  setTestText(item.value);
+                  setTestResult(null);
+                  setTestError("");
+                  // Scroll test widget vào view
+                  setTimeout(() => {
+                    document.querySelector("textarea[placeholder*='Test']")?.scrollIntoView({ behavior: "smooth", block: "center" });
+                  }, 50);
+                }}
+                className="w-full text-left"
+                title="Click để load vào Test widget"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-[11px] font-mono text-gray-800 break-all flex-1 line-clamp-2 group-hover:line-clamp-none">
+                    {item.value}
+                  </span>
+                  <span className="text-[10px] text-amber-700 font-semibold shrink-0">
+                    ×{item.count}
+                  </span>
+                </div>
+              </button>
+              <UnmatchedMembers members={item.members} itemKey={item.value} />
+            </div>
           ))}
           {unmatched.length > 100 && (
             <p className="px-3 py-2 text-[10px] text-gray-400 text-center bg-gray-50">

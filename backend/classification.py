@@ -777,7 +777,10 @@ def collect_classify_gaps(db) -> list[dict]:
     from tour_stats_exclusions import apply_stats_exclusion_query
 
     q = (
-        db.query(Tour.id, Tour.ten_tour, Tour.thi_truong, Tour.lich_trinh)
+        db.query(
+            Tour.id, Tour.ten_tour, Tour.thi_truong, Tour.lich_trinh,
+            Tour.cong_ty, Tour.link_url,
+        )
         .filter(Tour.nguon.in_(tuple(DB_CANONICAL_NGUON)))
         .filter(
             or_(
@@ -792,7 +795,7 @@ def collect_classify_gaps(db) -> list[dict]:
     matcher = get_route_rule_matcher()
     healed_ids: list[int] = []
     classify_gaps: dict[str, dict] = {}
-    for tour_id, ten_tour, thi_truong, lich_trinh in q.yield_per(500):
+    for tour_id, ten_tour, thi_truong, lich_trinh, cong_ty, link_url in q.yield_per(500):
         if len(healed_ids) >= 800:
             break
         title = re.sub(r"\s+", " ", (ten_tour or "").strip())[:120]
@@ -823,8 +826,17 @@ def collect_classify_gaps(db) -> list[dict]:
                 "suggested_route": sug_mk or "",
                 "route_keywords": skw,
                 "resolved_market": stored_mk,
+                "_members": [],
             }
         classify_gaps[title]["count"] += 1
+        _mb = classify_gaps[title]["_members"]
+        if len(_mb) < _ALIAS_MEMBER_LIMIT:
+            _mb.append({
+                "title": title,
+                "count": 1,
+                "link_url": (link_url or "")[:512],
+                "cong_ty": (cong_ty or "")[:128],
+            })
 
     if healed_ids:
         # Heal cơ hội trong 1 thao tác ĐỌC → commit best-effort: lỗi tạm thời không làm hỏng
@@ -850,6 +862,7 @@ def collect_classify_gaps(db) -> list[dict]:
                 "market_keyword": v.get("market_keyword") or "",
                 "route_keywords": v.get("route_keywords") or "",
                 "resolved_market": v.get("resolved_market") or "",
+                "members": v.get("_members", []),
             }
             for k, v in classify_gaps.items()
         ],

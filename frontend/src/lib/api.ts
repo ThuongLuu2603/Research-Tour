@@ -891,7 +891,7 @@ export const testDateFormat = async (text: string): Promise<DateFormatTestResult
   return data;
 };
 
-export type UnmatchedTourMember = { title: string; count: number };
+export type UnmatchedTourMember = { title: string; count: number; link_url?: string; cong_ty?: string };
 
 export type UnmatchedItem = {
   value: string;
