@@ -402,21 +402,26 @@ export default function VietravelCompare() {
   }, [segments?.items]);
 
   // ── Chart 2: Grouped Bar giá VTR vs TT theo thị trường (Tab So Sánh Giá) ──
+  // Trung bình CÓ TRỌNG SỐ theo số đoàn VTR/tháng của từng tuyến → tuyến chính (nhiều
+  // đoàn) ảnh hưởng nhiều hơn tuyến phụ. Tránh tuyến phụ giá lệch kéo lệch trung bình thị trường.
   const marketPriceBarFull = useMemo(() => {
-    const byMarket: Record<string, { vtr: number[]; tt: number[] }> = {};
+    const byMarket: Record<string, { vNum: number; vDen: number; tNum: number; tDen: number; n: number }> = {};
     for (const s of (segments?.items ?? [])) {
       if (!s.thi_truong) continue;
-      if (!byMarket[s.thi_truong]) byMarket[s.thi_truong] = { vtr: [], tt: [] };
-      if (s.vietravel_avg_price) byMarket[s.thi_truong].vtr.push(s.vietravel_avg_price);
-      if (s.comparison_price)   byMarket[s.thi_truong].tt.push(s.comparison_price);
+      const w = (s.vietravel_freq_monthly ?? 0) || 1;  // trọng số = đoàn VTR/tháng (tuyến)
+      if (!byMarket[s.thi_truong]) byMarket[s.thi_truong] = { vNum: 0, vDen: 0, tNum: 0, tDen: 0, n: 0 };
+      const b = byMarket[s.thi_truong];
+      if (s.vietravel_avg_price) { b.vNum += s.vietravel_avg_price * w; b.vDen += w; }
+      if (s.comparison_price)   { b.tNum += s.comparison_price * w;   b.tDen += w; }
+      b.n += 1;
     }
     return Object.entries(byMarket)
-      .map(([market, { vtr, tt }]) => ({
+      .map(([market, b]) => ({
         market: market.length > 14 ? market.slice(0, 13) + "…" : market,
         fullMarket: market,
-        vtr_avg: vtr.length ? Math.round(vtr.reduce((a, b) => a + b, 0) / vtr.length) : null,
-        tt_avg:  tt.length  ? Math.round(tt.reduce((a, b) => a + b, 0)  / tt.length)  : null,
-        segments: Math.max(vtr.length, tt.length),
+        vtr_avg: b.vDen ? Math.round(b.vNum / b.vDen) : null,
+        tt_avg:  b.tDen ? Math.round(b.tNum / b.tDen) : null,
+        segments: b.n,
       }))
       .filter((r) => r.vtr_avg && r.tt_avg)
       .sort((a, b) => (b.vtr_avg ?? 0) - (a.vtr_avg ?? 0));

@@ -765,12 +765,18 @@ def summarize_context(tours: list[Tour], segments: list[SegmentStats]) -> dict:
     from tour_sources import is_vietravel_tab
 
     cheaper = expensive = similar = freq_lead = freq_lag = 0
-    gaps: list[float] = []
+    # Chênh % TB: TRỌNG SỐ theo số đoàn VTR/tháng của tuyến (tuyến chính nhiều đoàn ảnh
+    # hưởng nhiều hơn tuyến phụ) — thay vì trung bình cộng đơn thuần bị tuyến phụ kéo lệch.
+    gap_num = gap_den = 0.0
     vtr_freq = market_freq = 0.0
     for s in segments:
         g = s.gap_pct
         if g is not None:
-            gaps.append(g)
+            w = s.vtr_freq_monthly or 0.0
+            if w <= 0:
+                w = 1.0  # tuyến có chênh nhưng VTR không parse được đoàn → trọng số tối thiểu
+            gap_num += g * w
+            gap_den += w
             if g <= -5:
                 cheaper += 1
             elif g >= 5:
@@ -804,7 +810,7 @@ def summarize_context(tours: list[Tour], segments: list[SegmentStats]) -> dict:
         "cheaper": cheaper,
         "expensive": expensive,
         "similar": similar,
-        "avg_gap_pct": round(sum(gaps) / len(gaps), 1) if gaps else None,
+        "avg_gap_pct": round(gap_num / gap_den, 1) if gap_den else None,
         "vtr_freq_monthly": round(vtr_freq, 1),
         "market_freq_monthly": round(market_freq, 1),
         "freq_leading": freq_lead,
