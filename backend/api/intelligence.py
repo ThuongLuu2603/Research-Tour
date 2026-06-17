@@ -79,38 +79,9 @@ def coverage(
 ):
     response.headers["Cache-Control"] = f"private, max-age={_INTELLIGENCE_CACHE_SEC}"
     tours = filter_tours_for_market_compare(_market_compare_tour_query(db).all())
+    # coverage_engine tự tính metrics khoảng trống (đoàn TT/tháng, giá/ngày, score) TỪ
+    # tour CÓ lịch KH → không phụ thuộc snapshot RouteDailyMetrics (vốn hay trống/lệch key).
     result = build_coverage_for_api(tours)
-    # Enrich gaps với opportunity_score + market metrics từ RouteDailyMetrics
-    try:
-        from market_lab_engine import make_route_key
-        from market_lab_cache import latest_snapshot_date
-        from models import RouteDailyMetrics
-        from sqlalchemy.orm import load_only as _lo
-
-        snap_date = latest_snapshot_date(db)
-        if snap_date:
-            metrics_rows = (
-                db.query(RouteDailyMetrics)
-                .options(_lo(
-                    RouteDailyMetrics.route_key,
-                    RouteDailyMetrics.opportunity_score,
-                    RouteDailyMetrics.market_departures_monthly,
-                    RouteDailyMetrics.competitor_count,
-                    RouteDailyMetrics.market_price_day,
-                ))
-                .filter(RouteDailyMetrics.snapshot_date == snap_date)
-                .all()
-            )
-            metrics = {r.route_key: r for r in metrics_rows}
-            for gap in result.get("gaps", []):
-                rk = make_route_key(gap["thi_truong"], gap["tuyen_tour"])
-                m = metrics.get(rk)
-                gap["opportunity_score"] = round(m.opportunity_score, 1) if m else 0.0
-                gap["market_departures_monthly"] = round(m.market_departures_monthly, 1) if m else 0.0
-                gap["market_price_day"] = m.market_price_day if m else None
-            result["gaps"].sort(key=lambda x: -(x.get("opportunity_score") or 0))
-    except Exception:
-        pass
     return result
 
 
