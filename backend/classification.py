@@ -728,9 +728,14 @@ def is_route_rule_matched(thi_truong: str, ten_tour: str, lich_trinh: str = "") 
     return from_route_rule
 
 
-def _unmatched_add_member(bucket: dict, title: str) -> None:
-    members: dict[str, int] = bucket.setdefault("_members", {})
-    members[title] = members.get(title, 0) + 1
+def _unmatched_add_member(bucket: dict, title: str, *, link: str = "", cong_ty: str = "") -> None:
+    members: dict[str, dict] = bucket.setdefault("_members", {})
+    m = members.setdefault(title, {"count": 0, "link_url": "", "cong_ty": ""})
+    m["count"] += 1
+    if link and not m["link_url"]:
+        m["link_url"] = link[:512]
+    if cong_ty and not m["cong_ty"]:
+        m["cong_ty"] = cong_ty[:128]
     bucket["count"] = bucket.get("count", 0) + 1
 
 
@@ -753,10 +758,10 @@ def _alias_bucket_add(bucket: dict, key: str, t) -> None:
 
 
 def _unmatched_members_list(bucket: dict, *, limit: int = 40) -> list[dict]:
-    raw: dict[str, int] = bucket.get("_members") or {}
+    raw: dict[str, dict] = bucket.get("_members") or {}
     return [
-        {"title": t, "count": c}
-        for t, c in sorted(raw.items(), key=lambda x: (-x[1], x[0]))[:limit]
+        {"title": t, "count": m["count"], "link_url": m.get("link_url", ""), "cong_ty": m.get("cong_ty", "")}
+        for t, m in sorted(raw.items(), key=lambda x: (-x[1]["count"], x[0]))[:limit]
     ]
 
 
@@ -955,7 +960,11 @@ def collect_unmatched_values(tours: list, *, vtr_only: bool = True) -> dict:
                     "suggested_thi_truong": sug_mk,
                     "bucket_key": f"route:{title}",
                 }
-            _unmatched_add_member(tuyen_tour[title], title)
+            _unmatched_add_member(
+                tuyen_tour[title], title,
+                link=(getattr(t, "link_url", "") or ""),
+                cong_ty=(t.cong_ty or ""),
+            )
 
         # Đã gom company/departure/duration aliases ở đầu loop (cho mọi nguồn) — không
         # lặp lại ở đây để tránh double-count.
