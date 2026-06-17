@@ -60,20 +60,6 @@ def _load_vtr_tours(db: Session, thi_truong: list[str], tuyen_tour: str = "", di
     return [t for t in ctx.tours if is_vietravel(t.cong_ty)]
 
 
-_UNKNOWN_MARKET = "Không xác định"
-
-
-def _inject_unknown_market(result: dict) -> dict:
-    """Thêm thị trường 'Không xác định' (+ tuyến cùng tên) vào option để admin gán tay
-    cho tour không thuộc thị trường nào. Bộ quy tắc không có market này nên phải bơm thêm."""
-    if _UNKNOWN_MARKET not in result.get("thi_truong", []):
-        result["thi_truong"] = sorted(set(result.get("thi_truong", [])) | {_UNKNOWN_MARKET})
-    result.setdefault("routes_by_market", {}).setdefault(_UNKNOWN_MARKET, [_UNKNOWN_MARKET])
-    if _UNKNOWN_MARKET not in result.get("tuyen_tour", []):
-        result["tuyen_tour"] = sorted(set(result.get("tuyen_tour", [])) | {_UNKNOWN_MARKET})
-    return result
-
-
 def _build_filter_options_from_cache(db: Session) -> dict:
     """Lấy filter options từ compare cache (nếu warm) hoặc DB DISTINCT query (nếu cold)."""
     from tour_sources import is_vietravel_tab
@@ -146,7 +132,7 @@ def compare_filter_options(db: Session = Depends(get_db), _: User = Depends(get_
     with _filter_options_lock:
         if _filter_options_cache is not None and now - _filter_options_ts < _FILTER_OPTIONS_TTL:
             return _filter_options_cache
-    result = _inject_unknown_market(_build_filter_options_from_cache(db))
+    result = _build_filter_options_from_cache(db)
     with _filter_options_lock:
         _filter_options_cache = result
         _filter_options_ts = now

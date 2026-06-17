@@ -6,7 +6,7 @@ import {
   shareWorkspace, listWorkspaceMembers, revokeWorkspaceShare, copyWorkspaceOverrides,
   recomputeAllClassifications,
   getApplyClassificationStatus,
-  listDepartureRules,
+  listDepartureRules, listRouteRules,
   WorkspaceInfo,
 } from "@/lib/api";
 import { fmtVND, formatPhanKhuc, segmentColor, cn } from "@/lib/utils";
@@ -15,6 +15,13 @@ import { COL } from "@/lib/glossary";
 import { Search, Download, Flag, FlagOff, ChevronLeft, ChevronRight, ExternalLink, Pencil, Check, X, Users, Copy, ArrowUpDown, RefreshCw } from "lucide-react";
 
 const PAGE_SIZE = 50;
+
+/** TB tần suất → khoảng "1-2" (làm tròn xuống–lên). Số nguyên → "2". */
+function formatFreqRange(f: number): string {
+  const lo = Math.floor(f);
+  const hi = Math.ceil(f);
+  return lo === hi ? `${lo}` : `${lo}-${hi}`;
+}
 
 type GridSortCol =
   | "id"
@@ -491,26 +498,47 @@ export default function ResearchGrid() {
     return [...set].sort((a, b) => a.localeCompare(b, "vi"));
   }, [departRules]);
 
-  const availableRoutes = useMemo(() => {
-    const byMarket = (opts?.routes_by_market ?? {}) as Record<string, string[]>;
-    if (!selMarkets.length) return (opts?.tuyen_tour ?? []) as string[];
-    const routes = new Set<string>();
-    selMarkets.forEach((m) => (byMarket[m] ?? []).forEach((r) => routes.add(r)));
-    return [...routes].sort((a, b) => a.localeCompare(b, "vi"));
-  }, [opts, selMarkets]);
+  // Option Thị trường/Tuyến lấy TỪ BỘ QUY TẮC PHÂN LOẠI (RouteKeywordRule) — KHÔNG từ
+  // tour Vietravel. Admin thêm/sửa trong "Quy tắc theo thị trường" → option tự cập nhật.
+  const { data: routeRules } = useQuery({ queryKey: ["route-rules"], queryFn: listRouteRules, staleTime: 60000 });
+  const ruleMarkets = useMemo(() => {
+    const set = new Set<string>();
+    (routeRules ?? []).forEach((r) => { if (r.active && r.thi_truong?.trim()) set.add(r.thi_truong.trim()); });
+    return [...set].sort((a, b) => a.localeCompare(b, "vi"));
+  }, [routeRules]);
+  const ruleRoutesByMarket = useMemo(() => {
+    const m: Record<string, Set<string>> = {};
+    (routeRules ?? []).forEach((r) => {
+      if (!r.active) return;
+      const mk = r.thi_truong?.trim(); const rt = r.tuyen_tour?.trim();
+      if (!mk || !rt) return;
+      (m[mk] ??= new Set<string>()).add(rt);
+    });
+    const out: Record<string, string[]> = {};
+    Object.entries(m).forEach(([k, v]) => { out[k] = [...v].sort((a, b) => a.localeCompare(b, "vi")); });
+    return out;
+  }, [routeRules]);
+  const ruleAllRoutes = useMemo(() => {
+    const set = new Set<string>();
+    (routeRules ?? []).forEach((r) => { if (r.active && r.tuyen_tour?.trim()) set.add(r.tuyen_tour.trim()); });
+    return [...set].sort((a, b) => a.localeCompare(b, "vi"));
+  }, [routeRules]);
 
-  // Issue #7: Reverse mapping route → market (auto-fill TT khi user chọn Tuyến tour trước).
+  const availableRoutes = useMemo(() => {
+    if (!selMarkets.length) return ruleAllRoutes;
+    const routes = new Set<string>();
+    selMarkets.forEach((m) => (ruleRoutesByMarket[m] ?? []).forEach((r) => routes.add(r)));
+    return [...routes].sort((a, b) => a.localeCompare(b, "vi"));
+  }, [ruleAllRoutes, ruleRoutesByMarket, selMarkets]);
+
+  // Reverse mapping route → market (auto-fill TT khi user chọn Tuyến tour trước) — từ rule.
   const marketByRoute = useMemo(() => {
     const map: Record<string, string> = {};
-    const byMarket = (opts?.routes_by_market ?? {}) as Record<string, string[]>;
-    Object.entries(byMarket).forEach(([mk, routes]) => {
-      routes.forEach((r) => {
-        // Nếu 1 tuyến tour thuộc nhiều TT (hiếm), giữ TT đầu tiên gặp.
-        if (!(r in map)) map[r] = mk;
-      });
+    Object.entries(ruleRoutesByMarket).forEach(([mk, routes]) => {
+      routes.forEach((r) => { if (!(r in map)) map[r] = mk; });
     });
     return map;
-  }, [opts]);
+  }, [ruleRoutesByMarket]);
 
   useEffect(() => {
     setSelRoutes((prev) => {
@@ -843,7 +871,7 @@ export default function ResearchGrid() {
           onChange={(e) => { if (e.target.value) toggleFilter(selMarkets, setSelMarkets, e.target.value); e.target.value = ""; }}
         >
           <option value="">{COL.thiTruong}{selMarkets.length ? ` (${selMarkets.length})` : ""}</option>
-          {(opts?.thi_truong ?? []).filter((m: string) => !selMarkets.includes(m)).map((m: string) => (
+          {ruleMarkets.filter((m: string) => !selMarkets.includes(m)).map((m: string) => (
             <option key={m} value={m}>{m}</option>
           ))}
         </select>
@@ -1030,9 +1058,9 @@ export default function ResearchGrid() {
                     disabled={!canEdit}
                     valueMarket={tour.thi_truong}
                     valueRoute={tour.tuyen_tour}
-                    marketOptions={(opts?.thi_truong ?? []) as string[]}
-                    routesByMarket={(opts?.routes_by_market ?? {}) as Record<string, string[]>}
-                    allRoutes={(opts?.tuyen_tour ?? []) as string[]}
+                    marketOptions={ruleMarkets}
+                    routesByMarket={ruleRoutesByMarket}
+                    allRoutes={ruleAllRoutes}
                     onSave={(market, route) => {
                       mutation.mutate({
                         id: tour.id,
@@ -1049,7 +1077,7 @@ export default function ResearchGrid() {
                   <EditableSelectCell
                     disabled={!canEdit}
                     value={tour.tuyen_tour}
-                    options={(opts?.tuyen_tour ?? []) as string[]}
+                    options={ruleAllRoutes}
                     placeholder="Tìm tuyến tour…"
                     strict
                     onSave={(v) => {
@@ -1098,9 +1126,11 @@ export default function ResearchGrid() {
                   <EditableCell disabled={!canEdit} value={tour.analyst_note} onSave={(v) => mutation.mutate({ id: tour.id, patch: { analyst_note: v } })} />
                 </td>
                 <td className="px-3 py-2 text-right text-xs whitespace-nowrap"
-                    title={tour.lich_kh ? `Lịch KH: ${tour.lich_kh}` : undefined}>
+                    title={tour.freq_monthly && tour.freq_monthly > 0
+                      ? `~${tour.freq_monthly.toFixed(1)} đoàn/tháng${tour.lich_kh ? ` · Lịch KH: ${tour.lich_kh}` : ""}`
+                      : (tour.lich_kh ? `Lịch KH: ${tour.lich_kh}` : undefined)}>
                   {tour.freq_monthly && tour.freq_monthly > 0 ? (
-                    <span className="font-medium text-gray-800">{tour.freq_monthly.toFixed(1)}</span>
+                    <span className="font-medium text-gray-800">{formatFreqRange(tour.freq_monthly)} đoàn/th</span>
                   ) : (
                     <span className="text-gray-400">—</span>
                   )}
