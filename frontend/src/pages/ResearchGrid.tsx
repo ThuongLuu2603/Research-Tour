@@ -6,7 +6,7 @@ import {
   shareWorkspace, listWorkspaceMembers, revokeWorkspaceShare, copyWorkspaceOverrides,
   recomputeAllClassifications,
   getApplyClassificationStatus,
-  listDepartureRules, listRouteRules,
+  listDepartureRules, listRouteRules, listDurationRules,
   WorkspaceInfo,
 } from "@/lib/api";
 import { fmtVND, formatPhanKhuc, segmentColor, cn } from "@/lib/utils";
@@ -523,6 +523,22 @@ export default function ResearchGrid() {
     (routeRules ?? []).forEach((r) => { if (r.active && r.tuyen_tour?.trim()) set.add(r.tuyen_tour.trim()); });
     return [...set].sort((a, b) => a.localeCompare(b, "vi"));
   }, [routeRules]);
+
+  // Option Thời gian lấy TỪ duration rules: suy "XNYĐ" từ canonical_days
+  // (5.0→5N4Đ, 5.5→5N5Đ, 1.0→1N, 0.5→Nửa ngày). Admin sửa rule → option tự cập nhật.
+  const { data: durationRules } = useQuery({ queryKey: ["duration-rules"], queryFn: listDurationRules, staleTime: 60000 });
+  const durationOptions = useMemo(() => {
+    const fmt = (d: number) => {
+      if (d <= 0) return "";
+      if (d === 0.5) return "Nửa ngày";
+      const n = Math.floor(d);
+      const dem = d % 1 !== 0 ? n : n - 1;  // .5 → n đêm; .0 → n-1 đêm
+      return dem > 0 ? `${n}N${dem}Đ` : `${n}N`;
+    };
+    const byDays = new Map<number, string>();
+    (durationRules ?? []).forEach((r) => { if (r.active && r.canonical_days > 0) byDays.set(r.canonical_days, fmt(r.canonical_days)); });
+    return [...byDays.entries()].sort((a, b) => a[0] - b[0]).map(([, label]) => label).filter(Boolean);
+  }, [durationRules]);
 
   const availableRoutes = useMemo(() => {
     if (!selMarkets.length) return ruleAllRoutes;
@@ -1109,7 +1125,15 @@ export default function ResearchGrid() {
                   />
                 </td>
                 <td className="px-3 py-2">
-                  <EditableCell disabled={!canEdit} value={tour.thoi_gian} onSave={(v) => mutation.mutate({ id: tour.id, patch: { thoi_gian: v } })} />
+                  {/* Thời gian — dropdown option từ duration rules (Quy tắc phân loại). */}
+                  <EditableSelectCell
+                    disabled={!canEdit}
+                    value={tour.thoi_gian}
+                    options={durationOptions}
+                    placeholder="Chọn thời gian…"
+                    strict
+                    onSave={(v) => mutation.mutate({ id: tour.id, patch: { thoi_gian: v } })}
+                  />
                 </td>
                 <td className="px-3 py-2 text-xs font-medium text-gray-900 whitespace-nowrap">
                   {tour.gia ? `${fmtVND(tour.gia)}` : tour.gia_raw || "—"}
