@@ -106,12 +106,18 @@ def _fetch_detail_schedule(url: str) -> tuple[dict[int, list[str]], dict[int, st
     """Trang chi tiết có bảng lịch KH: <tr><td>STT</td><td>ngày</td><td>khách sạn</td>
     <td>giá đ</td>. Trả (groups: giá→[ngày dd/mm/yyyy], hotels: giá→khách sạn).
     Lỗi/không có bảng → ({}, {})."""
-    try:
-        r = requests.get(url, headers={"User-Agent": _UA, "Accept-Language": "vi"}, timeout=_TIMEOUT)
-        html = r.text
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Đất Việt detail %s lỗi: %s", url, e)
-        return {}, {}
+    html = ""
+    for attempt in range(2):  # site hay ngắt kết nối (throttle) → thử lại 1 lần
+        try:
+            r = requests.get(url, headers={"User-Agent": _UA, "Accept-Language": "vi"}, timeout=_TIMEOUT)
+            html = r.text
+            break
+        except Exception as e:  # noqa: BLE001
+            if attempt == 1:
+                logger.warning("Đất Việt detail %s lỗi (2 lần): %s", url, e)
+                return {}, {}
+            import time
+            time.sleep(1.5)
     groups: dict[int, list[str]] = {}
     hotels: dict[int, str] = {}
     for m in re.finditer(
