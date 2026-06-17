@@ -1867,6 +1867,45 @@ function FestivalMappingRulesTab({ search, onMessage }: { search: string; onMess
     return festivals.filter(f => (f.location_text || "").toLowerCase().includes(lk));
   }, [festivals, location]);
 
+  // Chọn địa điểm + auto-suggest thị trường (dùng cho select & nút "Map" panel chưa map)
+  const applyLocation = useCallback((loc: string) => {
+    setLocation(loc);
+    if (loc && filterOpts) {
+      const lowerLoc = loc.toLowerCase();
+      const tt = filterOpts.thi_truong.find(t => t.toLowerCase() === lowerLoc)
+        || filterOpts.thi_truong.find(t => t.toLowerCase().includes(lowerLoc) || lowerLoc.includes(t.toLowerCase()))
+        || "";
+      setMarket(tt);
+      setRoute("");
+    }
+  }, [filterOpts]);
+
+  // Địa điểm CÓ lễ hội nhưng CHƯA có rule map nào phủ → admin biết cái nào cần map.
+  // "Phủ" = có 1 rule active mà location_keyword là chuỗi con của tên địa điểm.
+  const unmappedLocations = useMemo(() => {
+    const cleanLoc = (text: string) => {
+      const parts = (text || "").split(",").map(s => s.trim()).filter(Boolean);
+      const last = parts[parts.length - 1] || "";
+      return last.replace(/^(T\.|TP\.|P\.|X\.|H\.|Q\.)\s*/i, "").trim();
+    };
+    const byLoc = new Map<string, string[]>();
+    (festivals ?? []).forEach((f) => {
+      const loc = cleanLoc(f.location_text || "");
+      if (loc.length < 2) return;
+      if (!byLoc.has(loc)) byLoc.set(loc, []);
+      byLoc.get(loc)!.push(f.name_vi);
+    });
+    const activeRules = (rules ?? []).filter(r => r.active && r.location_keyword.trim());
+    const covered = (loc: string) => {
+      const low = loc.toLowerCase();
+      return activeRules.some(r => low.includes(r.location_keyword.trim().toLowerCase()));
+    };
+    return Array.from(byLoc.entries())
+      .filter(([loc]) => !covered(loc))
+      .map(([loc, names]) => ({ loc, count: names.length, names }))
+      .sort((a, b) => b.count - a.count);
+  }, [festivals, rules]);
+
   const invalidate = () => qc.invalidateQueries({ queryKey: ["festival-mapping-rules"] });
 
   const showErr = (e: unknown) => {
@@ -1955,19 +1994,7 @@ function FestivalMappingRulesTab({ search, onMessage }: { search: string; onMess
           <div className="col-span-12 lg:col-span-6">
             <label className="text-xs text-gray-500">Địa điểm tổ chức lễ hội</label>
             <select className="input text-sm" value={location}
-              onChange={(e) => {
-                const loc = e.target.value;
-                setLocation(loc);
-                // Auto-suggest TT từ location keyword
-                if (loc && filterOpts) {
-                  const lowerLoc = loc.toLowerCase();
-                  const tt = filterOpts.thi_truong.find(t => t.toLowerCase() === lowerLoc)
-                    || filterOpts.thi_truong.find(t => t.toLowerCase().includes(lowerLoc) || lowerLoc.includes(t.toLowerCase()))
-                    || "";
-                  setMarket(tt);
-                  setRoute("");
-                }
-              }}>
+              onChange={(e) => applyLocation(e.target.value)}>
               <option value="">-- Chọn địa điểm --</option>
               {locationOptions.map((loc) => (
                 <option key={loc} value={loc}>{loc}</option>
@@ -2026,6 +2053,45 @@ function FestivalMappingRulesTab({ search, onMessage }: { search: string; onMess
           <label className="text-xs text-gray-500">Ghi chú (tùy chọn)</label>
           <input className="input text-sm w-full" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Mô tả..." onKeyDown={keepInputKeys} />
         </div>
+      </div>
+
+      {/* Địa điểm có lễ hội nhưng chưa có rule map */}
+      <div className="card overflow-hidden">
+        <div className="bg-amber-50 border-b border-amber-200 px-3 py-2">
+          <p className="text-xs font-semibold text-amber-900">
+            Địa điểm chưa map ({unmappedLocations.length}) — có lễ hội nhưng chưa có rule
+          </p>
+          <p className="text-[10px] text-amber-700 mt-0.5">
+            Bấm <strong>Map</strong> để nạp địa điểm vào form bên trên → chọn Thị trường/Tuyến → Thêm rule.
+          </p>
+        </div>
+        {unmappedLocations.length === 0 ? (
+          <p className="px-3 py-4 text-xs text-gray-400 text-center">
+            <Check size={16} className="inline text-green-500 mr-1" />
+            Mọi địa điểm có lễ hội đều đã có rule map 🎉
+          </p>
+        ) : (
+          <ul className="divide-y divide-gray-100 max-h-72 overflow-y-auto">
+            {unmappedLocations.map((u) => (
+              <li key={u.loc} className="flex items-start gap-2 px-3 py-2 hover:bg-amber-50/50">
+                <div className="flex-1 min-w-0">
+                  <span className="text-xs font-medium text-gray-800">{u.loc}</span>
+                  <span className="text-[10px] text-amber-700 ml-1">· {u.count} lễ hội</span>
+                  <span className="block text-[10px] text-gray-500 truncate" title={u.names.join(", ")}>
+                    {u.names.slice(0, 3).join(", ")}{u.names.length > 3 ? ` +${u.names.length - 3} khác` : ""}
+                  </span>
+                </div>
+                <button type="button" className="btn-secondary text-[10px] py-1 px-2 shrink-0"
+                  onClick={() => {
+                    applyLocation(u.loc);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}>
+                  Map →
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       {/* Apply bar */}

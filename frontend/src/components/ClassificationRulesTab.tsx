@@ -10,7 +10,6 @@ import {
   seedRouteDefaults,
 } from "@/lib/api";
 import { buildRouteKeywordConflicts, conflictHintForKeyword, parseRouteKeywordList } from "@/lib/rulesUnmatched";
-import { UnmatchedMembers } from "@/components/UnmatchedMembers";
 import { InfoTip } from "@/components/InfoTip";
 import { cn } from "@/lib/utils";
 import { ChevronDown, ChevronRight, Database, GripVertical, Plus, RefreshCw, Trash2, Search, Users, Star, Pencil, Check, X } from "lucide-react";
@@ -705,10 +704,21 @@ export function ClassificationRulesTab({
                         title={ready ? "Chọn để gán hàng loạt" : "Điền đủ thị trường, tuyến, keyword"}
                         onChange={() => toggleGapSelect(title)} />
                     </td>
-                    <td className="px-2 py-2 text-xs max-w-[120px]">
+                    <td className="px-2 py-2 text-xs max-w-[140px]">
                       {item.count > 1 && <span className="text-gray-500 block mb-0.5">{item.count} tour</span>}
-                      <span className="line-clamp-3" title={item.sample}>{item.sample || title}</span>
-                      <UnmatchedMembers members={item.members} itemKey={title} />
+                      {item.members?.[0]?.link_url ? (
+                        <a href={item.members[0].link_url} target="_blank" rel="noopener noreferrer"
+                          className="line-clamp-3 text-primary-600 hover:underline" title={item.sample || title}>
+                          {item.sample || title}
+                        </a>
+                      ) : (
+                        <span className="line-clamp-3" title={item.sample}>{item.sample || title}</span>
+                      )}
+                      {item.members?.[0]?.cong_ty && (
+                        <span className="block text-[10px] text-gray-400 truncate" title={item.members[0].cong_ty}>
+                          {item.members[0].cong_ty}
+                        </span>
+                      )}
                     </td>
                     <td className="px-2 py-2 space-y-1">
                       <input className="input text-xs py-1 w-full" list="classify-market-list" placeholder="Nhóm TT"
