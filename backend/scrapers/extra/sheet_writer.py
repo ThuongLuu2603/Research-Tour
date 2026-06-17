@@ -50,7 +50,13 @@ _DF_FIELDS = [
     "khach_san",
 ]
 _NGUON_COL_IDX = len(_DF_FIELDS)  # cột "Nguồn" = index 13 (cột thứ 14)
-_NUM_COLS = len(EXTRA_SHEET_HEADER)
+_LINK_FIELD_IDX = _DF_FIELDS.index("link_url")  # cột "Link" gốc = index 9 (cột J)
+# Copy thêm link sang cột Z (index 25) — đồng bộ vị trí link với tab Main/Vietravel
+# (link thô ở cột Z), tiện merge. Mở rộng tab tới 26 cột A..Z.
+COL_LINK_Z = 25
+_NUM_COLS = 26
+EXTRA_SHEET_HEADER = EXTRA_SHEET_HEADER + [""] * (_NUM_COLS - len(EXTRA_SHEET_HEADER))
+EXTRA_SHEET_HEADER[COL_LINK_Z] = "Link"
 
 
 def _extra_sheet_gid() -> int:
@@ -83,6 +89,7 @@ def _df_row_to_sheet(row: pd.Series, source_key: str) -> list[str]:
         val = row.get(field, "")
         out[i] = "" if val is None else str(val)
     out[_NGUON_COL_IDX] = source_key
+    out[COL_LINK_Z] = out[_LINK_FIELD_IDX]  # copy link sang cột Z (cột link thứ 2)
     return out
 
 
