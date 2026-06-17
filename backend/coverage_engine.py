@@ -58,9 +58,13 @@ def build_coverage_summary(tours: list[Tour]) -> dict:
 
     gaps.sort(key=lambda x: -x["market_tours"])
     return {
-        "summary": {"both": both, "vtr_only": vtr_only, "market_only": market_only, "gap_opportunities": len(gaps)},
-        "matrix": matrix[:80],
-        "gaps": gaps[:30],
+        "summary": {
+            "both": both, "vtr_only": vtr_only, "market_only": market_only,
+            "gap_opportunities": len(gaps),
+            "total_segments": len(matrix),  # tổng (thị trường, tuyến) = both+vtr_only+market_only
+        },
+        "matrix": matrix,        # FULL (không giới hạn 80) — FE tự lọc/phân trang
+        "gaps": gaps,            # FULL
     }
 
 

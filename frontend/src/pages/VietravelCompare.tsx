@@ -191,6 +191,8 @@ export default function VietravelCompare() {
   const [selectedCompetitor, setSelectedCompetitor] = useState("");
 
   const [selectedMatcherTour, setSelectedMatcherTour] = useState<number | null>(null);
+  const [covStatus, setCovStatus] = useState<"all" | "both" | "vtr_only" | "market_only">("all");
+  const [covSearch, setCovSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortCol>("gap_pct");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [scatterMode, setScatterMode] = useState<"chenh" | "gia">("chenh");
@@ -1393,15 +1395,37 @@ export default function VietravelCompare() {
           </div>
           <div className="grid lg:grid-cols-2 gap-4">
             <div className="card overflow-auto max-h-[420px]">
-              <div className="px-4 py-3 border-b font-semibold text-sm">Ma trận phủ sóng (top 80)</div>
+              <div className="px-4 py-3 border-b sticky top-0 bg-white z-10 flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-sm">Ma trận phủ sóng</span>
+                {(() => {
+                  const all = coverage?.matrix ?? [];
+                  const shown = all.filter((r: any) =>
+                    (covStatus === "all" || r.status === covStatus) &&
+                    (!covSearch || `${r.thi_truong} ${r.tuyen_tour}`.toLowerCase().includes(covSearch.toLowerCase())));
+                  return <span className="text-[11px] text-gray-400">{shown.length}/{all.length} tuyến</span>;
+                })()}
+                <select value={covStatus} onChange={(e) => setCovStatus(e.target.value as any)}
+                  className="input text-xs py-1 ml-auto w-auto">
+                  <option value="all">Tất cả trạng thái</option>
+                  <option value="both">Cả hai (VTR & TT)</option>
+                  <option value="vtr_only">Chỉ VTR</option>
+                  <option value="market_only">Chỉ TT</option>
+                </select>
+                <input value={covSearch} onChange={(e) => setCovSearch(e.target.value)} placeholder="Tìm thị trường/tuyến…"
+                  className="input text-xs py-1 w-40" />
+              </div>
               <table className="w-full text-xs">
-                <thead className="bg-gray-50 sticky top-0"><tr>
+                <thead className="bg-gray-50 sticky top-[49px]"><tr>
                   {[COL.thiTruong, COL.tuyenTour, "VTR", "TT", "ĐT", "Trạng thái"].map((h) => (
                     <th key={h} className="px-2 py-2 text-left">{h}</th>
                   ))}
                 </tr></thead>
                 <tbody>
-                  {(coverage?.matrix ?? []).map((row: any) => (
+                  {(coverage?.matrix ?? [])
+                    .filter((r: any) =>
+                      (covStatus === "all" || r.status === covStatus) &&
+                      (!covSearch || `${r.thi_truong} ${r.tuyen_tour}`.toLowerCase().includes(covSearch.toLowerCase())))
+                    .map((row: any) => (
                     <tr key={`${row.thi_truong}-${row.tuyen_tour}`} className="border-t hover:bg-gray-50">
                       <td className="px-2 py-2">{row.thi_truong}</td>
                       <td className="px-2 py-2 max-w-[120px] truncate" title={row.tuyen_tour}>{row.tuyen_tour}</td>
