@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
 import pandas as pd
@@ -101,6 +102,56 @@ def _parse_cards(html: str) -> list[dict]:
     return rows
 
 
+def _fetch_detail_schedule(url: str) -> tuple[dict[int, list[str]], dict[int, str]]:
+    """Trang chi tiết có bảng lịch KH: <tr><td>STT</td><td>ngày</td><td>khách sạn</td>
+    <td>giá đ</td>. Trả (groups: giá→[ngày dd/mm/yyyy], hotels: giá→khách sạn).
+    Lỗi/không có bảng → ({}, {})."""
+    try:
+        r = requests.get(url, headers={"User-Agent": _UA, "Accept-Language": "vi"}, timeout=_TIMEOUT)
+        html = r.text
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Đất Việt detail %s lỗi: %s", url, e)
+        return {}, {}
+    groups: dict[int, list[str]] = {}
+    hotels: dict[int, str] = {}
+    for m in re.finditer(
+        r"<td>\s*(\d{1,2}/\d{1,2}/\d{4})\s*</td>\s*<td>([\s\S]*?)</td>\s*"
+        r'<td[^>]*>\s*([\d.,]{6,})\s*[đ₫]',
+        html,
+    ):
+        try:
+            dd, mm, yy = m.group(1).split("/")
+            date = f"{int(dd):02d}/{int(mm):02d}/{yy}"
+        except ValueError:
+            continue
+        hotel = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", m.group(2))).strip()
+        price = int(re.sub(r"\D", "", m.group(3)) or 0)
+        if price <= 0:
+            continue
+        groups.setdefault(price, [])
+        if date not in groups[price]:
+            groups[price].append(date)
+        hotels.setdefault(price, hotel)
+    return groups, hotels
+
+
+def _rows_with_schedule(base: dict) -> list[dict]:
+    """1 tour → nhiều dòng theo giá (ngày cùng giá gộp, khác giá tách). Không lấy được
+    bảng lịch → giữ 1 dòng card (1 ngày + 1 giá gần nhất)."""
+    groups, hotels = _fetch_detail_schedule(base["link_url"])
+    if not groups:
+        return [base]
+    out: list[dict] = []
+    for price in sorted(groups, key=lambda p: min(groups[p])):
+        r = dict(base)
+        r["gia"] = f"{price:,}".replace(",", ".")
+        r["lich_kh"] = ", ".join(sorted(groups[price], key=lambda d: (d[6:], d[3:5], d[:2])))
+        if hotels.get(price):
+            r["khach_san"] = hotels[price]
+        out.append(r)
+    return out
+
+
 def scrape(progress: Callable[[int, str], None] | None = None) -> pd.DataFrame:
     try:
         session, token = _csrf_session()
@@ -161,6 +212,23 @@ def scrape(progress: Callable[[int, str], None] | None = None) -> pd.DataFrame:
                 progress(min(pct, 92), f"Đất Việt: {title_page} ({len(all_rows)}/{total or '?'})")
             if total and loaded >= total:
                 break
+
+    # Phase 2: vào trang CHI TIẾT (song song) lấy ĐỦ lịch KH + TÁCH GIÁ (ngày cùng giá
+    # gộp 1 dòng, khác giá tách dòng). 8 luồng (nhẹ, tránh site throttle).
+    split_rows: list[dict] = []
+    if all_rows:
+        if progress:
+            progress(94, f"Đất Việt: lấy lịch/giá chi tiết {len(all_rows)} tour…")
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futs = {ex.submit(_rows_with_schedule, b): b for b in all_rows}
+            for fut in as_completed(futs):
+                try:
+                    split_rows.extend(fut.result())
+                except Exception:  # noqa: BLE001
+                    split_rows.append(futs[fut])
+    else:
+        split_rows = all_rows
+    all_rows = split_rows
 
     try:
         from classification import classify_route_fields
