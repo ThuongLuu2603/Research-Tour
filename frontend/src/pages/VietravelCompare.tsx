@@ -284,6 +284,7 @@ export default function VietravelCompare() {
   });
   const { data: coverage } = useQuery({ queryKey: ["coverage"], queryFn: getCoverageMap, enabled: tab === "coverage" });
   const [covDetail, setCovDetail] = useState<{ thi_truong: string; tuyen_tour: string } | null>(null);
+  const [chartModal, setChartModal] = useState<null | "price">(null);
   const { data: covDetailData, isLoading: covDetailLoading } = useQuery({
     queryKey: ["coverage-segment", covDetail?.thi_truong, covDetail?.tuyen_tour],
     queryFn: () => getCoverageSegment(covDetail!.thi_truong, covDetail!.tuyen_tour),
@@ -320,10 +321,11 @@ export default function VietravelCompare() {
     return all;
   }, [segments?.items, priceFilter]);
 
-  const priceChart = (segments?.items ?? []).filter((s) => s.gap_pct != null).slice(0, 12).map((s) => ({
-    name: `${s.tuyen_tour.slice(0, 22)} (${s.diem_kh})`,
+  const priceChartFull = (segments?.items ?? []).filter((s) => s.gap_pct != null).map((s) => ({
+    name: `${s.tuyen_tour} (${s.diem_kh})`,
     gap: s.gap_pct,
   }));
+  const priceChart = priceChartFull.slice(0, 12).map((s) => ({ ...s, name: s.name.length > 28 ? s.name.slice(0, 27) + "…" : s.name }));
 
   const freqChart = (segments?.items ?? []).filter((s) => s.freq_gap_pct != null).slice(0, 12).map((s) => ({
     name: `${s.tuyen_tour.slice(0, 22)} (${s.diem_kh})`,
@@ -713,7 +715,15 @@ export default function VietravelCompare() {
             </div>
           )}
           <div className="card p-5">
-            <h3 className="font-semibold mb-3 inline-flex items-center">{COL.chenhPct} VTR vs {COL.giaSoSanh}<InfoTip text={GLOSSARY.chenhGia} /></h3>
+            <div className="flex items-center justify-between mb-3 gap-2">
+              <h3 className="font-semibold inline-flex items-center">{COL.chenhPct} VTR vs {COL.giaSoSanh}<InfoTip text={GLOSSARY.chenhGia} /></h3>
+              {priceChartFull.length > 12 && (
+                <button type="button" onClick={() => setChartModal("price")}
+                  className="text-xs text-primary-600 hover:text-primary-800 font-medium whitespace-nowrap">
+                  Xem đầy đủ ({priceChartFull.length} tuyến) →
+                </button>
+              )}
+            </div>
             {segmentsLoading ? (
               <div className="h-[280px] flex items-center justify-center text-gray-400 text-sm">Đang tải biểu đồ...</div>
             ) : priceChart.length === 0 ? (
@@ -730,6 +740,30 @@ export default function VietravelCompare() {
             </div>
             )}
           </div>
+
+          {chartModal === "price" && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setChartModal(null)}>
+              <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center justify-between px-5 py-3 border-b">
+                  <h3 className="font-semibold">{COL.chenhPct} VTR vs {COL.giaSoSanh} — đầy đủ {priceChartFull.length} tuyến</h3>
+                  <button onClick={() => setChartModal(null)} className="text-gray-400 hover:text-gray-700 text-2xl leading-none">×</button>
+                </div>
+                <div className="overflow-auto p-4">
+                  <div style={{ height: Math.max(360, priceChartFull.length * 22) }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={priceChartFull} layout="vertical" margin={{ left: 0, right: 30 }}>
+                        <XAxis type="number" tickFormatter={(v) => `${v}%`} />
+                        <YAxis dataKey="name" type="category" width={230} tick={{ fontSize: 9 }} interval={0} />
+                        <Tooltip formatter={(v: number) => [`${v}%`, "Chênh lệch"]} />
+                        <ReferenceLine x={0} stroke="#666" />
+                        <Bar dataKey="gap" radius={[0, 4, 4, 0]}>{priceChartFull.map((e, i) => <Cell key={i} fill={(e.gap ?? 0) <= 0 ? "#16a34a" : "#dc2626"} />)}</Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           <div className="card p-5">
             <h3 className="font-semibold mb-3 inline-flex items-center">
               {scatterMode === "chenh"
