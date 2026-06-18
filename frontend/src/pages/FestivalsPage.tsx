@@ -32,7 +32,7 @@ import {
   Music, Utensils, Trophy, Sparkles, Building, ChevronLeft, ChevronRight,
   X, AlertTriangle, TrendingUp, TrendingDown, Megaphone, Map as MapIcon, Moon,
   LayoutDashboard, Bell, Target, BadgeCheck,
-  Plus, Check, Wand2,
+  Plus, Check, Wand2, CheckCircle2,
   LucideIcon,
 } from "lucide-react";
 
@@ -171,6 +171,50 @@ export default function FestivalsPage() {
           </button>
         </div>
       </div>
+
+      {/* Wave 7 — feedback rõ ràng cho thao tác scrape/seed/retag (admin) */}
+      {(() => {
+        const busy = refresh.isPending || seedLunar.isPending || retag.isPending;
+        if (busy) {
+          const label = refresh.isPending
+            ? "Đang quét lễ hội từ nguồn — có thể mất 30–60s, đừng đóng trang…"
+            : seedLunar.isPending
+            ? "Đang sinh lịch lễ âm (tự tính dương lịch) & lưu vào hệ thống…"
+            : "Đang gắn lại tour theo lễ (date + location)…";
+          return (
+            <div className="flex items-center gap-2 rounded-lg border border-primary-200 bg-primary-50 px-4 py-2.5 text-sm text-primary-800">
+              <Loader2 size={16} className="animate-spin shrink-0" /> {label}
+            </div>
+          );
+        }
+        const err = (refresh.error || seedLunar.error || retag.error) as Error | null;
+        if (err) {
+          return (
+            <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-800">
+              <AlertTriangle size={16} className="shrink-0" /> Lỗi: {err.message || "thao tác thất bại, thử lại"}
+            </div>
+          );
+        }
+        let msg: string | null = null;
+        if (refresh.isSuccess && refresh.data) {
+          const d = refresh.data;
+          msg = `Quét xong: +${d.inserted} lễ mới · ${d.updated} cập nhật · ${d.unchanged} giữ nguyên.`;
+        } else if (seedLunar.isSuccess && seedLunar.data) {
+          const d = seedLunar.data;
+          msg = `Seed lễ âm xong: +${d.inserted} mới · ${d.skipped} đã có (bỏ qua).`;
+        } else if (retag.isSuccess && retag.data) {
+          const d = retag.data;
+          msg = `Re-tag xong: quét ${d.tours_scanned} tour · gắn ${d.tours_tagged} · gỡ ${d.tours_cleared}.`;
+        }
+        if (msg) {
+          return (
+            <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-4 py-2.5 text-sm text-green-800">
+              <CheckCircle2 size={16} className="shrink-0" /> {msg}
+            </div>
+          );
+        }
+        return null;
+      })()}
 
       {/* Tabs with subtle group dividers */}
       <div className="border-b border-gray-200 overflow-x-auto">
