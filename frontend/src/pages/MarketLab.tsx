@@ -9,7 +9,7 @@ import {
   getMarketLabOverview, getMarketLabSupplyCalendar, getMarketLabRouteHistory,
   type MarketLabRouteRow, type MarketLabOverview,
 } from "@/lib/api";
-import { PageTitle } from "@/components/InfoTip";
+import { PageTitle, Tooltip as HintTip } from "@/components/InfoTip";
 import { TrendingUp, TrendingDown, Minus, Map, Route, Sparkles, Wrench, Filter } from "lucide-react";
 import { fmtVND } from "@/lib/utils";
 
@@ -28,26 +28,30 @@ function PhaseBadge({ phase, row }: { phase: string; row?: MarketLabRouteRow }) 
   const m = PHASE_META[phase] ?? PHASE_META.stable;
   const mom = row?.momentum;
   return (
-    <span className="relative group cursor-help">
+    <HintTip
+      className="cursor-help"
+      width={256}
+      content={
+        <>
+          <span className="font-semibold block mb-1">{m.label}</span>
+          <span className="text-gray-300 block mb-2">{m.desc}</span>
+          {row && (
+            <span className="border-t border-gray-700 pt-2 block space-y-1 text-gray-200">
+              <span className="block">TT: <strong>{row.market_departures_monthly} đoàn/tháng</strong></span>
+              <span className="block">VTR: <strong>{row.vtr_departures_monthly} đoàn/tháng</strong></span>
+              {row.avg_gap_pct != null && <span className="block">Chênh giá: <strong className={row.avg_gap_pct >= 5 ? "text-red-300" : row.avg_gap_pct <= -5 ? "text-green-300" : "text-blue-300"}>{row.avg_gap_pct > 0 ? "+" : ""}{row.avg_gap_pct}%</strong></span>}
+              {mom?.supply_delta_pct != null && <span className="block">Cung TT: <strong className={mom.supply_delta_pct >= 0 ? "text-emerald-300" : "text-red-300"}>{mom.supply_delta_pct > 0 ? "+" : ""}{mom.supply_delta_pct}%</strong> vs snapshot trước</span>}
+              <span className="block">{row.competitor_count} đối thủ · {row.market_tour_count} tour TT</span>
+            </span>
+          )}
+          <span className="border-t border-gray-700 pt-2 mt-2 block text-emerald-300 font-medium">→ {m.hint}</span>
+        </>
+      }
+    >
       <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${m.bg} ${m.color}`}>
         {m.label}
       </span>
-      {/* Tooltip */}
-      <span className="absolute bottom-full left-0 mb-1.5 z-50 hidden group-hover:block w-64 bg-gray-900 text-white text-xs rounded-lg p-3 shadow-xl">
-        <span className="font-semibold block mb-1">{m.label}</span>
-        <span className="text-gray-300 block mb-2">{m.desc}</span>
-        {row && (
-          <span className="border-t border-gray-700 pt-2 block space-y-1 text-gray-200">
-            <span className="block">TT: <strong>{row.market_departures_monthly} đoàn/tháng</strong></span>
-            <span className="block">VTR: <strong>{row.vtr_departures_monthly} đoàn/tháng</strong></span>
-            {row.avg_gap_pct != null && <span className="block">Chênh giá: <strong className={row.avg_gap_pct >= 5 ? "text-red-300" : row.avg_gap_pct <= -5 ? "text-green-300" : "text-blue-300"}>{row.avg_gap_pct > 0 ? "+" : ""}{row.avg_gap_pct}%</strong></span>}
-            {mom?.supply_delta_pct != null && <span className="block">Cung TT: <strong className={mom.supply_delta_pct >= 0 ? "text-emerald-300" : "text-red-300"}>{mom.supply_delta_pct > 0 ? "+" : ""}{mom.supply_delta_pct}%</strong> vs snapshot trước</span>}
-            <span className="block">{row.competitor_count} đối thủ · {row.market_tour_count} tour TT</span>
-          </span>
-        )}
-        <span className="border-t border-gray-700 pt-2 mt-2 block text-emerald-300 font-medium">→ {m.hint}</span>
-      </span>
-    </span>
+    </HintTip>
   );
 }
 
@@ -337,37 +341,41 @@ export default function MarketLab() {
         </div>
         <div className="flex rounded-lg border border-gray-200 overflow-visible text-sm relative">
           {/* Tab Cơ hội — với tooltip giải thích */}
-          <div className="relative group">
+          <HintTip placement="bottom" width={288}
+            content={
+              <>
+                <p className="font-semibold text-emerald-300 mb-1.5">Tab Cơ Hội</p>
+                <ul className="space-y-1.5 text-gray-200">
+                  <li><span className="text-gray-400">Hiển thị:</span> Tuyến VTR chưa có SP <em>hoặc</em> đang thiếu lịch ≥15% so với TT</li>
+                  <li><span className="text-gray-400">Mục đích:</span> Tìm tuyến nên mở SP mới hoặc tăng lịch KH</li>
+                  <li><span className="text-gray-400">Sort:</span> Score cơ hội giảm dần (tuyến tiềm năng nhất lên đầu)</li>
+                  <li><span className="text-gray-400">Dùng khi:</span> Lập kế hoạch phát triển sản phẩm mới / review danh mục định kỳ</li>
+                </ul>
+              </>
+            }>
             <button type="button" onClick={() => setTab("opportunity")}
               className={`px-3 py-1.5 flex items-center gap-1 rounded-l-lg ${tab === "opportunity" ? "bg-emerald-600 text-white" : "bg-white text-gray-600"}`}>
               <TrendingUp size={14} /> Cơ hội
             </button>
-            <div className="absolute top-full left-0 mt-1.5 z-[100] hidden group-hover:block w-72 bg-gray-900 text-white text-xs rounded-lg p-3 shadow-xl pointer-events-none">
-              <p className="font-semibold text-emerald-300 mb-1.5">Tab Cơ Hội</p>
-              <ul className="space-y-1.5 text-gray-200">
-                <li><span className="text-gray-400">Hiển thị:</span> Tuyến VTR chưa có SP <em>hoặc</em> đang thiếu lịch ≥15% so với TT</li>
-                <li><span className="text-gray-400">Mục đích:</span> Tìm tuyến nên mở SP mới hoặc tăng lịch KH</li>
-                <li><span className="text-gray-400">Sort:</span> Score cơ hội giảm dần (tuyến tiềm năng nhất lên đầu)</li>
-                <li><span className="text-gray-400">Dùng khi:</span> Lập kế hoạch phát triển sản phẩm mới / review danh mục định kỳ</li>
-              </ul>
-            </div>
-          </div>
+          </HintTip>
           {/* Tab Vận hành VTR — với tooltip giải thích */}
-          <div className="relative group">
+          <HintTip placement="bottom" width={288}
+            content={
+              <>
+                <p className="font-semibold text-amber-300 mb-1.5">Tab Vận Hành VTR</p>
+                <ul className="space-y-1.5 text-gray-200">
+                  <li><span className="text-gray-400">Hiển thị:</span> <em>Chỉ</em> các tuyến VTR đang có SP trên hệ thống</li>
+                  <li><span className="text-gray-400">Mục đích:</span> Theo dõi hiệu suất tuyến đang vận hành (giá, lịch, phase)</li>
+                  <li><span className="text-gray-400">Sort:</span> Cung thị trường giảm dần (tuyến lớn nhất lên đầu)</li>
+                  <li><span className="text-gray-400">Dùng khi:</span> Review hoạt động hàng tuần, phát hiện tuyến cần điều chỉnh giá/lịch</li>
+                </ul>
+              </>
+            }>
             <button type="button" onClick={() => setTab("operating")}
               className={`px-3 py-1.5 flex items-center gap-1 rounded-r-lg ${tab === "operating" ? "bg-amber-600 text-white" : "bg-white text-gray-600"}`}>
               <Wrench size={14} /> Vận hành VTR
             </button>
-            <div className="absolute top-full left-0 mt-1.5 z-[100] hidden group-hover:block w-72 bg-gray-900 text-white text-xs rounded-lg p-3 shadow-xl pointer-events-none">
-              <p className="font-semibold text-amber-300 mb-1.5">Tab Vận Hành VTR</p>
-              <ul className="space-y-1.5 text-gray-200">
-                <li><span className="text-gray-400">Hiển thị:</span> <em>Chỉ</em> các tuyến VTR đang có SP trên hệ thống</li>
-                <li><span className="text-gray-400">Mục đích:</span> Theo dõi hiệu suất tuyến đang vận hành (giá, lịch, phase)</li>
-                <li><span className="text-gray-400">Sort:</span> Cung thị trường giảm dần (tuyến lớn nhất lên đầu)</li>
-                <li><span className="text-gray-400">Dùng khi:</span> Review hoạt động hàng tuần, phát hiện tuyến cần điều chỉnh giá/lịch</li>
-              </ul>
-            </div>
-          </div>
+          </HintTip>
         </div>
         <label className="flex items-center gap-1.5 text-xs text-gray-600">
           <input type="checkbox" checked={hideSuspect} onChange={(e) => setHideSuspect(e.target.checked)} />
@@ -449,20 +457,22 @@ export default function MarketLab() {
                     <th className="px-3 py-2">Gap TS</th>
                     <th className="px-3 py-2">Phase</th>
                     <th className="px-3 py-2">
-                      <span className="relative group cursor-help inline-flex items-center gap-1">
+                      <HintTip width={320} className="cursor-help items-center gap-1"
+                        content={
+                          <>
+                            <span className="font-semibold text-emerald-300 block mb-2">Công thức tính Score cơ hội</span>
+                            <span className="block text-gray-300 mb-1.5 font-medium">VTR chưa có SP trên tuyến:</span>
+                            <span className="block bg-gray-800 rounded px-2 py-1 font-mono text-[11px] mb-2">= Đoàn TT/tháng × (1 + Số ĐT × 0.15)</span>
+                            <span className="block text-gray-400 mb-2 text-[10px]">→ TT càng lớn + càng nhiều đối thủ = Score cao hơn</span>
+                            <span className="block text-gray-300 mb-1.5 font-medium">VTR có SP nhưng Gap tần suất ≤ −20%:</span>
+                            <span className="block bg-gray-800 rounded px-2 py-1 font-mono text-[11px] mb-2">= |Gap TS%| × Đoàn TT ÷ 10</span>
+                            <span className="block text-gray-400 text-[10px]">→ VTR càng kém TT về lịch KH + TT càng lớn = Score cao hơn</span>
+                            <span className="border-t border-gray-700 pt-2 mt-2 block text-gray-400 text-[10px]">Tuyến VTR đang vận hành tốt (gap TS &gt; −20%): Score = 0</span>
+                          </>
+                        }>
                         Score
                         <span className="text-gray-400 text-[10px] border border-gray-300 rounded-full w-3.5 h-3.5 flex items-center justify-center leading-none">?</span>
-                        <span className="absolute bottom-full right-0 mb-2 z-[200] hidden group-hover:block w-80 bg-gray-900 text-white text-xs rounded-lg p-3 shadow-xl font-normal pointer-events-none">
-                          <span className="font-semibold text-emerald-300 block mb-2">Công thức tính Score cơ hội</span>
-                          <span className="block text-gray-300 mb-1.5 font-medium">VTR chưa có SP trên tuyến:</span>
-                          <span className="block bg-gray-800 rounded px-2 py-1 font-mono text-[11px] mb-2">= Đoàn TT/tháng × (1 + Số ĐT × 0.15)</span>
-                          <span className="block text-gray-400 mb-2 text-[10px]">→ TT càng lớn + càng nhiều đối thủ = Score cao hơn</span>
-                          <span className="block text-gray-300 mb-1.5 font-medium">VTR có SP nhưng Gap tần suất ≤ −20%:</span>
-                          <span className="block bg-gray-800 rounded px-2 py-1 font-mono text-[11px] mb-2">= |Gap TS%| × Đoàn TT ÷ 10</span>
-                          <span className="block text-gray-400 text-[10px]">→ VTR càng kém TT về lịch KH + TT càng lớn = Score cao hơn</span>
-                          <span className="border-t border-gray-700 pt-2 mt-2 block text-gray-400 text-[10px]">Tuyến VTR đang vận hành tốt (gap TS &gt; −20%): Score = 0</span>
-                        </span>
-                      </span>
+                      </HintTip>
                     </th>
                   </tr>
                 </thead>

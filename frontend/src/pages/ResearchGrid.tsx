@@ -12,6 +12,7 @@ import {
 import { fmtVND, formatPhanKhuc, segmentColor, cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { COL } from "@/lib/glossary";
+import { Tooltip } from "@/components/InfoTip";
 import { Search, Download, Flag, FlagOff, ChevronLeft, ChevronRight, ExternalLink, Pencil, Check, X, Users, Copy, ArrowUpDown, RefreshCw } from "lucide-react";
 
 const PAGE_SIZE = 50;
@@ -99,7 +100,7 @@ function HoverFullText({
 }) {
   if (!text) return <span className="text-gray-400">—</span>;
   return (
-    <span className="relative block max-w-full group/tip">
+    <Tooltip block content={text} width={360}>
       <span
         className={cn(
           "block text-left",
@@ -109,13 +110,7 @@ function HoverFullText({
       >
         {text}
       </span>
-      <span
-        role="tooltip"
-        className="pointer-events-none invisible opacity-0 group-hover/tip:visible group-hover/tip:opacity-100 transition-opacity absolute z-30 left-0 top-full mt-1 w-max max-w-lg rounded-md border border-gray-700 bg-gray-900 text-white text-xs px-2.5 py-1.5 shadow-lg whitespace-normal leading-snug"
-      >
-        {text}
-      </span>
-    </span>
+    </Tooltip>
   );
 }
 
