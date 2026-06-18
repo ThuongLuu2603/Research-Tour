@@ -193,18 +193,36 @@ def tag_tours_with_festivals(
         # Sync bảng nối cho batch: xoá link source='date' cũ (KHÔNG đụng 'rule'/'manual')
         # rồi chèn lại. Re-tag theo ngày không xoá link do rule/manual gán.
         if batch_tour_ids:
-            db.query(FestivalTourMapping).filter(
-                FestivalTourMapping.tour_id.in_(batch_tour_ids),
-                FestivalTourMapping.source == "date",
-            ).delete(synchronize_session=False)
-            if batch_links:
-                db.bulk_insert_mappings(FestivalTourMapping, batch_links)
-
-        try:
-            db.commit()
-        except Exception as e:
-            logger.exception("Commit festival tagging batch fail: %s", e)
-            db.rollback()
+            try:
+                db.query(FestivalTourMapping).filter(
+                    FestivalTourMapping.tour_id.in_(batch_tour_ids),
+                    FestivalTourMapping.source == "date",
+                ).delete(synchronize_session=False)
+                if batch_links:
+                    # UniqueConstraint(festival_id, tour_id) là SOURCE-AGNOSTIC: nếu pair
+                    # đã có link 'rule'/'manual' (không bị xoá ở trên) thì insert 'date'
+                    # cùng pair → IntegrityError → 500. Bỏ qua pair đã tồn tại + dedup
+                    # trong batch. Membership vẫn còn (qua link rule/manual) nên không
+                    # ảnh hưởng đếm coverage (Wave 5 đếm theo festival_id mọi source).
+                    existing_pairs = set(
+                        db.query(FestivalTourMapping.festival_id, FestivalTourMapping.tour_id)
+                        .filter(FestivalTourMapping.tour_id.in_(batch_tour_ids))
+                        .all()
+                    )
+                    seen_pairs: set[tuple[int, int]] = set()
+                    clean_links: list[dict] = []
+                    for link in batch_links:
+                        pair = (link["festival_id"], link["tour_id"])
+                        if pair in existing_pairs or pair in seen_pairs:
+                            continue
+                        seen_pairs.add(pair)
+                        clean_links.append(link)
+                    if clean_links:
+                        db.bulk_insert_mappings(FestivalTourMapping, clean_links)
+                db.commit()
+            except Exception as e:  # noqa: BLE001
+                logger.exception("Festival tagging batch DML fail: %s", e)
+                db.rollback()
         offset += TOUR_BATCH_SIZE
 
     stats = {
