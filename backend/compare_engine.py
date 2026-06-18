@@ -641,12 +641,24 @@ class SegmentStats:
 
     @property
     def freq_gap_pct(self) -> float | None:
-        """VTR TB đoàn/tháng/sản phẩm so với đối thủ có tần suất cao nhất trên tuyến."""
+        """VTR TB đoàn/tháng/sản phẩm so với đối thủ có tần suất cao nhất trên tuyến
+        (benchmark KHẮC NGHIỆT — best-of-breed)."""
         vtr_avg = self.vtr_avg_departures_per_month
         top = self._top_freq_competitor()
         if not top or vtr_avg <= 0:
             return None
         return round((vtr_avg / top[1] - 1) * 100, 1)
+
+    @property
+    def freq_gap_vs_avg_pct(self) -> float | None:
+        """VTR TB đoàn/tháng so với đối thủ TRUNG BÌNH tuyến — so 'cùng cấp độ' (1 công
+        ty vs 1 đối thủ điển hình). Dùng cho 'dẫn/kém' để công bằng, thay vì so với
+        đối thủ mạnh nhất (vốn làm VTR luôn kém)."""
+        vtr_avg = self.vtr_avg_departures_per_month
+        mkt_avg = self.market_freq_avg_per_company
+        if not mkt_avg or vtr_avg <= 0:
+            return None
+        return round((vtr_avg / mkt_avg - 1) * 100, 1)
 
     @property
     def vtr_avg_departures_per_month(self) -> float:
@@ -713,6 +725,7 @@ class SegmentStats:
             "top_freq_competitor": top_freq[0] if top_freq else "",
             "top_freq_competitor_departures": _safe_num(top_freq[1]) if top_freq else None,
             "freq_gap_pct": _safe_num(self.freq_gap_pct),
+            "freq_gap_vs_avg_pct": _safe_num(self.freq_gap_vs_avg_pct),
             "position": _position_label(self.gap_pct),
             "freq_position": _freq_position_label(self.freq_gap_pct),
             "top_competitors": top_competitors,
@@ -834,7 +847,9 @@ def summarize_context(tours: list[Tour], segments: list[SegmentStats]) -> dict:
                 similar += 1
         vtr_freq += s.vtr_freq_monthly
         market_freq += s.market_freq_monthly
-        fg = s.freq_gap_pct
+        # 'Dẫn/kém' so với đối thủ TRUNG BÌNH tuyến (cùng cấp độ 1-v-1), KHÔNG so với
+        # đối thủ mạnh nhất (làm VTR luôn kém) cũng KHÔNG so tổng thị trường.
+        fg = s.freq_gap_vs_avg_pct
         if fg is not None:
             if fg >= 20:
                 freq_lead += 1

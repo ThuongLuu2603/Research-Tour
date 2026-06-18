@@ -54,17 +54,18 @@ def generate_insights(db: Session, tours: list[Tour], daily: DailySnapshot) -> s
             "priority": 2,
         })
 
-    freq_lag = [s for s in segments if s.freq_gap_pct is not None and s.freq_gap_pct <= -25]
-    freq_lag.sort(key=lambda s: s.freq_gap_pct or 0)
+    # So với đối thủ TRUNG BÌNH tuyến (cùng cấp độ), không phải đối thủ mạnh nhất.
+    freq_lag = [s for s in segments if s.freq_gap_vs_avg_pct is not None and s.freq_gap_vs_avg_pct <= -25]
+    freq_lag.sort(key=lambda s: s.freq_gap_vs_avg_pct or 0)
     for s in freq_lag[:3]:
         insights.append({
             "id": f"freq-lag-{s.key}",
             "category": "frequency",
             "severity": "warning",
-            "title": f"Ít đoàn hơn đối thủ {s.freq_gap_pct}% — {s.tuyen_tour}",
-            "description": f"TB đoàn/tháng VTR {s.vtr_avg_departures_per_month} vs TT {s.market_freq_avg_per_company}",
+            "title": f"Ít đoàn hơn đối thủ TB {s.freq_gap_vs_avg_pct}% — {s.tuyen_tour}",
+            "description": f"TB đoàn/tháng VTR {s.vtr_avg_departures_per_month} vs đối thủ TB {s.market_freq_avg_per_company}",
             "link_path": "/compare",
-            "link_params": {"tab": "frequency"},
+            "link_params": {"tab": "frequency", "thi_truong": s.thi_truong, "tuyen_tour": s.tuyen_tour},
             "priority": 3,
         })
 

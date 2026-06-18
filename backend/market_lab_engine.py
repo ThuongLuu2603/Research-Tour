@@ -155,8 +155,10 @@ def build_route_aggregates_from_context(
         if s.gap_pct is not None and s.vtr_entries:
             agg.gap_sum += s.gap_pct * w
             agg.gap_weight += w
-        if s.freq_gap_pct is not None and s.vtr_entries:
-            agg.freq_gap_sum += s.freq_gap_pct * w
+        # Gap tần suất so với đối thủ TRUNG BÌNH tuyến (cùng cấp độ), KHÔNG so đối thủ
+        # mạnh nhất hay tổng thị trường → 'dẫn/kém' công bằng cho 1 công ty.
+        if s.freq_gap_vs_avg_pct is not None and s.vtr_entries:
+            agg.freq_gap_sum += s.freq_gap_vs_avg_pct * w
             agg.freq_gap_weight += w
         if s.market_avg_day:
             if agg.market_price_day is None:
@@ -387,7 +389,7 @@ def generate_route_alerts(db: Session, routes: dict[str, RouteAgg]) -> None:
                 severity="warning",
                 category="market_lab",
                 title=f"Thiếu lịch KH: {r.tuyen_tour}",
-                message=f"{r.thi_truong} · Gap tần suất {r.avg_freq_gap_pct}% vs TT",
+                message=f"{r.thi_truong} · Gap tần suất {r.avg_freq_gap_pct}% vs đối thủ TB",
                 link_path=link,
             ))
         elif supply_d is not None and supply_d >= 15:
