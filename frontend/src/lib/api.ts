@@ -486,6 +486,7 @@ export interface CompareSegment {
   top_freq_competitor?: string;
   top_freq_competitor_departures?: number | null;
   freq_gap_pct: number | null;
+  freq_gap_vs_avg_pct: number | null;
   position: string;
   freq_position: string;
   top_competitors: Array<{ cong_ty: string; tour_count: number; freq_monthly: number; avg_price_day: number | null }>;

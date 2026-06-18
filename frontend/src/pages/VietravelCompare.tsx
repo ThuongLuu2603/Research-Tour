@@ -211,9 +211,10 @@ export default function VietravelCompare() {
   const tab = (params.get("tab") as Tab) || "overview";
   const setTab = (t: Tab) => setParams({ tab: t });
 
-  const [thiTruong, setThiTruong] = useState("");
-  const [tuyenTour, setTuyenTour] = useState("");
-  const [diemKh, setDiemKh] = useState("");
+  // Khởi tạo filter từ URL → link từ Trang chủ CI mang sẵn thị trường/tuyến/điểm KH.
+  const [thiTruong, setThiTruong] = useState(() => params.get("thi_truong") || "");
+  const [tuyenTour, setTuyenTour] = useState(() => params.get("tuyen_tour") || "");
+  const [diemKh, setDiemKh] = useState(() => params.get("diem_kh") || "");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [selectedCompetitor, setSelectedCompetitor] = useState("");
 
@@ -223,7 +224,9 @@ export default function VietravelCompare() {
   const [sortBy, setSortBy] = useState<SortCol>("gap_pct");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [scatterMode, setScatterMode] = useState<"chenh" | "gia">("chenh");
-  const [priceFilter, setPriceFilter] = useState<"all" | "expensive" | "cheap" | "similar">("all");
+  const [priceFilter, setPriceFilter] = useState<"all" | "expensive" | "cheap" | "similar">(
+    () => { const f = params.get("filter"); return f === "expensive" || f === "cheap" || f === "similar" ? f : "all"; },
+  );
   const [priceSearch, setPriceSearch] = useState("");
   const [watchOnly, setWatchOnly] = useState(false);
   const [watchlist, setWatchlist] = useState<Set<string>>(() => {
@@ -415,11 +418,13 @@ export default function VietravelCompare() {
   }));
   const priceChart = priceChartFull.slice(0, 12).map((s) => ({ ...s, name: s.name.length > 28 ? s.name.slice(0, 27) + "…" : s.name }));
 
-  const freqChartFull = (segments?.items ?? []).filter((s) => s.freq_gap_pct != null).map((s) => ({
+  // Bar 'Gap tần suất vs avg đối thủ' dùng vs ĐỐI THỦ TB (đúng nhãn, công bằng cấp độ).
+  // Scatter 'vs đối thủ mạnh nhất' bên dưới vẫn dùng top → đủ "cả hai" góc nhìn.
+  const freqChartFull = (segments?.items ?? []).filter((s) => s.freq_gap_vs_avg_pct != null).map((s) => ({
     name: `${s.tuyen_tour} (${s.diem_kh})`,
-    gap: s.freq_gap_pct,
+    gap: s.freq_gap_vs_avg_pct,
     vtr: s.vtr_avg_departures_per_month ?? s.vietravel_freq_monthly,
-    mkt: s.top_freq_competitor_departures,
+    mkt: s.market_freq_avg_per_company,
   }));
   const freqChart = freqChartFull.slice(0, 12).map((s) => ({ ...s, name: s.name.length > 28 ? s.name.slice(0, 27) + "…" : s.name }));
 

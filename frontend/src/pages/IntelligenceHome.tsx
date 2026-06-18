@@ -110,38 +110,38 @@ export default function IntelligenceHome() {
 
       {/* KPI row */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 stagger">
-        <div className="kpi-card hover-lift border-l-4 border-l-primary-600">
-          <span className="text-xs text-gray-500 inline-flex items-center">{COL.chenhPct}<InfoTip text={GLOSSARY.chenhGia} /></span>
+        <Link to="/compare?tab=price" className="kpi-card hover-lift border-l-4 border-l-primary-600 block hover:border-primary-400 transition-colors">
+          <span className="text-xs text-gray-500 inline-flex items-center">{COL.chenhPct} ↗<InfoTip text={GLOSSARY.chenhGia} /></span>
           <p className="text-2xl font-bold tabular-nums">{kpis?.avg_gap_pct != null ? <CountUp value={kpis.avg_gap_pct} decimals={1} suffix="%" /> : "—"}</p>
           <DeltaChip val={delta?.avg_gap_pct_delta as number | null} inverse />
-        </div>
-        <div className="kpi-card hover-lift">
-          <span className="text-xs text-red-600">Đắt hơn TT</span>
+        </Link>
+        <Link to="/compare?tab=price&filter=expensive" className="kpi-card hover-lift block hover:border-red-300 border border-transparent transition-colors">
+          <span className="text-xs text-red-600">Đắt hơn TT ↗</span>
           <p className="text-2xl font-bold text-red-700 tabular-nums"><CountUp value={kpis?.expensive_segments} /></p>
           {delta?.expensive_delta != null && <DeltaChip val={delta.expensive_delta as number} inverse />}
-        </div>
-        <div className="kpi-card hover-lift">
-          <span className="text-xs text-green-600">Rẻ hơn TT</span>
+        </Link>
+        <Link to="/compare?tab=price&filter=cheap" className="kpi-card hover-lift block hover:border-green-300 border border-transparent transition-colors">
+          <span className="text-xs text-green-600">Rẻ hơn TT ↗</span>
           <p className="text-2xl font-bold text-green-700 tabular-nums"><CountUp value={kpis?.cheaper_segments} /></p>
           {delta?.cheaper_delta != null && <DeltaChip val={delta.cheaper_delta as number} />}
-        </div>
-        <div className="kpi-card hover-lift">
-          <span className="text-xs text-gray-500">Nhóm so sánh</span>
+        </Link>
+        <Link to="/compare?tab=price" className="kpi-card hover-lift block hover:border-primary-300 border border-transparent transition-colors">
+          <span className="text-xs text-gray-500">Nhóm so sánh ↗</span>
           <p className="text-2xl font-bold tabular-nums"><CountUp value={kpis?.segment_count} /></p>
-        </div>
-        <div className="kpi-card hover-lift">
-          <span className="text-xs text-gray-500 inline-flex items-center">TS dẫn/kém<InfoTip text={GLOSSARY.tanSuat} /></span>
+        </Link>
+        <Link to="/compare?tab=frequency" className="kpi-card hover-lift block hover:border-primary-300 border border-transparent transition-colors">
+          <span className="text-xs text-gray-500 inline-flex items-center">TS dẫn/kém ↗<InfoTip text="VTR dẫn / kém so với ĐỐI THỦ TRUNG BÌNH tuyến (cùng cấp độ 1 công ty), KHÔNG so với tổng thị trường hay đối thủ mạnh nhất. Dẫn = VTR khai thác dày hơn 1 đối thủ điển hình." /></span>
           <p className="text-2xl font-bold tabular-nums">
             <span className="text-emerald-700"><CountUp value={kpis?.freq_leading ?? 0} /></span>
             <span className="text-gray-300 mx-1">/</span>
             <span className="text-amber-700"><CountUp value={kpis?.freq_lagging ?? 0} /></span>
           </p>
-        </div>
-        <div className="kpi-card hover-lift">
-          <span className="text-xs text-gray-500">Chưa phân loại</span>
+        </Link>
+        <Link to="/data" className="kpi-card hover-lift block hover:border-amber-300 border border-transparent transition-colors">
+          <span className="text-xs text-gray-500">Chưa phân loại ↗</span>
           <p className="text-2xl font-bold text-amber-700 tabular-nums"><CountUp value={kpis?.unclassified_tours} /></p>
           {delta?.unclassified_delta != null && <DeltaChip val={delta.unclassified_delta as number} inverse />}
-        </div>
+        </Link>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -167,7 +167,9 @@ export default function IntelligenceHome() {
                   {insightsByCategory[cat].map((ins) => (
                     <Link
                       key={ins.id}
-                      to={ins.link_path + (ins.link_params?.tab ? `?tab=${ins.link_params.tab}` : "")}
+                      to={ins.link_path + (ins.link_params && Object.keys(ins.link_params).length
+                        ? "?" + new URLSearchParams(ins.link_params as Record<string, string>).toString()
+                        : "")}
                       className={`block p-2.5 rounded-lg border hover:shadow-sm transition-shadow ${SEV_COLOR[ins.severity] ?? SEV_COLOR.info}`}
                     >
                       <div className="flex items-start justify-between gap-2">
