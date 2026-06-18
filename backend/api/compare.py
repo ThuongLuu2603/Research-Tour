@@ -392,16 +392,36 @@ def weekday_distribution(
 ):
     """Phân bổ đoàn KH theo thứ trong tuần — VTR vs thị trường."""
     from compare_engine import build_weekday_distribution
+    from redis_cache import make_key, redis_get, redis_set
+    from compare_cache import _db_fingerprint
+
+    fp = _db_fingerprint(db)
+    cache_key = make_key(
+        "compare.weekday",
+        thi_truong=sorted(thi_truong), tuyen_tour=tuyen_tour, diem_kh=diem_kh,
+        fp_count=fp[0], fp_updated=fp[1],
+    )
+    cached = redis_get(cache_key)
+    if cached is not None:
+        return cached
 
     no_filter = not (thi_truong or tuyen_tour or diem_kh)
     if no_filter:
         from persistent_cache import load_json
         _disk = load_json("compare_weekday_default", max_age_hours=24)
         if _disk is not None:
+            try:
+                redis_set(cache_key, _disk, ttl=300)
+            except Exception:  # noqa: BLE001
+                pass
             return _disk
     # Cần ctx.tours (full) → không stale.
     ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh, allow_stale=False)
     result = build_weekday_distribution(ctx.tours)
+    try:
+        redis_set(cache_key, result, ttl=300)
+    except Exception:  # noqa: BLE001
+        pass
     if no_filter:
         try:
             from persistent_cache import save_json
@@ -420,12 +440,30 @@ def list_competitors(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    # Redis cache 5' theo filter + DB fingerprint → đổi qua lại filter đã xem: <50ms.
+    from redis_cache import make_key, redis_get, redis_set
+    from compare_cache import _db_fingerprint
+
+    fp = _db_fingerprint(db)
+    cache_key = make_key(
+        "compare.competitors",
+        thi_truong=sorted(thi_truong), tuyen_tour=tuyen_tour, diem_kh=diem_kh, limit=limit,
+        fp_count=fp[0], fp_updated=fp[1],
+    )
+    cached = redis_get(cache_key)
+    if cached is not None:
+        return cached
+
     # Disk fast-path (no-filter, limit mặc định): tránh build đồng bộ 15-114s khi cold.
     no_filter = not (thi_truong or tuyen_tour or diem_kh) and limit == 30
     if no_filter:
         from persistent_cache import load_json
         _disk = load_json("compare_competitors_default", max_age_hours=24)
         if _disk is not None:
+            try:
+                redis_set(cache_key, _disk, ttl=300)
+            except Exception:  # noqa: BLE001
+                pass
             return _disk
 
     # Cần ctx.segments (full) → không stale. Áp dụng đủ bộ lọc (tuyến + điểm KH) như
@@ -533,6 +571,10 @@ def list_competitors(
 
     rows.sort(key=lambda x: (-x["score"], -x["overlap_segments"]))
     result = {"items": rows[:limit], "total": len(rows)}
+    try:
+        redis_set(cache_key, result, ttl=300)
+    except Exception:  # noqa: BLE001
+        pass
     if no_filter:
         try:
             from persistent_cache import save_json
