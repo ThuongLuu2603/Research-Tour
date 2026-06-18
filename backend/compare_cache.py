@@ -347,6 +347,17 @@ def _build_context(db: Session, thi_truong: list[str], tuyen_tour: str, diem_kh:
     tours = deduplicate_tours(raw)
     segments = build_segment_stats(tours, dedup=False)
     segment_rows = _segments_to_rows(segments)
+    # CRITICAL: context này được CACHE qua nhiều request. Tour là ORM object gắn
+    # session của request hiện tại. Khi 1 request KHÁC commit (vd re-tag lễ, seed),
+    # expire_on_commit=True làm EXPIRE các Tour này → request sau đọc t.thi_truong
+    # trên instance detached → DetachedInstanceError (500 "Không tải được bảng so
+    # sánh"). Expunge ngay: load_tours đã nạp HẾT cột nên detached vẫn đủ giá trị,
+    # và commit ở session khác không còn đụng tới chúng được nữa.
+    for t in tours:
+        try:
+            db.expunge(t)
+        except Exception:  # noqa: BLE001
+            pass
     logger.info(
         "Built compare context filters=%s/%s/%s tours=%s segments=%s in %.1fs",
         thi_truong, tuyen_tour, diem_kh, len(tours), len(segments), time.time() - t0,
