@@ -101,10 +101,11 @@ def _run_startup_maintenance() -> None:
             # Seed lễ ÂM LỊCH lúc khởi động → DB mới luôn có lễ chính (Tết, Vu Lan…)
             # mà không phụ thuộc admin bấm tay. Best-effort.
             try:
-                from lunar_festivals import seed_lunar_festivals
+                from lunar_festivals import seed_lunar_festivals, seed_solar_holidays
                 seed_lunar_festivals(db)
+                seed_solar_holidays(db)  # Tết dương, 30/4, 1/5, Quốc khánh
             except Exception as e:  # noqa: BLE001
-                logger.warning("Seed lunar festivals (startup) skipped: %s", e)
+                logger.warning("Seed lunar/solar festivals (startup) skipped: %s", e)
         finally:
             db.close()
     except Exception as e:

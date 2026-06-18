@@ -268,6 +268,75 @@ def seed_lunar_festivals(db) -> dict[str, int]:
     return {"inserted": inserted, "skipped": skipped}
 
 
+# Ngày nghỉ lễ DƯƠNG lịch toàn quốc (cố định mỗi năm). (month, day, số ngày, tên).
+# Không có địa điểm tổ chức → engine gắn lễ coi là "ngày nghỉ" → gắn tour theo NGÀY,
+# không cần địa điểm (cả tour outbound — dân nghỉ đi du lịch bất kỳ đâu).
+SOLAR_HOLIDAYS: list[tuple[int, int, int, str]] = [
+    (1, 1, 1, "Tết Dương lịch"),
+    (4, 30, 1, "Ngày Giải phóng miền Nam (30/4)"),
+    (5, 1, 1, "Ngày Quốc tế Lao động (1/5)"),
+    (9, 2, 2, "Quốc khánh (2/9)"),
+]
+
+
+def seed_solar_holidays(db, year_from: int = _LUNAR_YEAR_FROM, year_to: int = _LUNAR_YEAR_TO) -> dict[str, int]:
+    """Upsert các ngày nghỉ lễ dương lịch (Tết dương, 30/4, 1/5, Quốc khánh) vào
+    festivals table. is_lunar=False, không địa điểm → matcher coi là 'ngày nghỉ'."""
+    from datetime import timedelta
+
+    from models import Festival
+
+    inserted = 0
+    skipped = 0
+    now = datetime.utcnow()
+    for yr in range(year_from, year_to + 1):
+        for (m, d, dur, name) in SOLAR_HOLIDAYS:
+            slug = f"solar-{m:02d}-{d:02d}-{yr}"
+            ds = date(yr, m, d)
+            de = ds + timedelta(days=dur - 1)
+            content_hash = _compute_hash(name, str(ds), str(de))
+            existing = db.query(Festival).filter(Festival.slug == slug).first()
+            if existing:
+                if existing.content_hash == content_hash:
+                    skipped += 1
+                    continue
+                existing.name_vi = name
+                existing.date_start = ds
+                existing.date_end = de
+                existing.is_lunar = False
+                existing.location_text = ""
+                existing.region = ""
+                existing.category = "other"
+                existing.description = f"Ngày nghỉ lễ {d:02d}/{m:02d} (toàn quốc)"
+                existing.content_hash = content_hash
+                existing.scraped_at = now
+            else:
+                db.add(Festival(
+                    slug=slug,
+                    name_vi=name,
+                    date_start=ds,
+                    date_end=de,
+                    is_lunar=False,
+                    location_text="",
+                    region="",
+                    category="other",
+                    description=f"Ngày nghỉ lễ {d:02d}/{m:02d} (toàn quốc)",
+                    source_url="",
+                    content_hash=content_hash,
+                    scraped_at=now,
+                ))
+                inserted += 1
+    db.commit()
+    logger.info("Solar holidays seed: inserted=%d skipped=%d", inserted, skipped)
+    if inserted:
+        try:
+            from redis_cache import redis_invalidate_pattern
+            redis_invalidate_pattern("ota:festival.*")
+        except Exception:  # noqa: BLE001
+            pass
+    return {"inserted": inserted, "skipped": skipped}
+
+
 def get_lunar_planner(db, years_ahead: int = 3) -> list[dict[str, Any]]:
     """Lịch âm lịch dương hóa cho N năm tới — dùng cho long-range tour planner."""
     from models import Festival

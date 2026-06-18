@@ -348,10 +348,11 @@ def _run_festival_scrape() -> None:
         try:
             # Seed lễ ÂM LỊCH (Tết, Vu Lan…) — loại quan trọng nhất, không có trên web scrape.
             try:
-                from lunar_festivals import seed_lunar_festivals
+                from lunar_festivals import seed_lunar_festivals, seed_solar_holidays
                 seed_lunar_festivals(db)
+                seed_solar_holidays(db)  # Tết dương, 30/4, 1/5, Quốc khánh
             except Exception as e:  # noqa: BLE001
-                logger.warning("Seed lunar festivals lỗi: %s", e)
+                logger.warning("Seed lunar/solar festivals lỗi: %s", e)
             return run_with_retry(
                 lambda: run_festival_scrape(db),
                 db=db, label="sched-festival-scrape",

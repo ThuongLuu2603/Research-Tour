@@ -419,8 +419,16 @@ def lunar_seed(
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """Seed 12 lễ âm lịch × 6 năm (2025-2030) vào festivals table."""
-    from lunar_festivals import seed_lunar_festivals
+    """Seed lễ âm lịch (Tết, Vu Lan…) + ngày nghỉ lễ dương (Tết dương, 30/4, 1/5,
+    Quốc khánh) cho dải năm vào festivals table."""
+    from lunar_festivals import seed_lunar_festivals, seed_solar_holidays
 
-    stats = seed_lunar_festivals(db)
-    return {"message": "Seed lễ âm hoàn tất", **stats}
+    lunar = seed_lunar_festivals(db)
+    solar = seed_solar_holidays(db)
+    return {
+        "message": "Seed lễ âm + nghỉ lễ dương hoàn tất",
+        "inserted": lunar["inserted"] + solar["inserted"],
+        "skipped": lunar["skipped"] + solar["skipped"],
+        "lunar": lunar,
+        "solar": solar,
+    }
