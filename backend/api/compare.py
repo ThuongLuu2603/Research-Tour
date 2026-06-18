@@ -154,10 +154,23 @@ def classification_gaps(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    no_filter = not (thi_truong or tuyen_tour or diem_kh)
+    if no_filter:
+        from persistent_cache import load_json
+        _disk = load_json("compare_classgaps_default", max_age_hours=24)
+        if _disk is not None:
+            return _disk
     # Áp đủ filter (FE đã gửi) — trước đây bỏ tuyen_tour/diem_kh nên panel "Chưa map"
     # luôn tính trên toàn thị trường dù đang lọc theo tuyến/điểm KH.
     tours = _load_vtr_tours(db, thi_truong, tuyen_tour, diem_kh)
-    return collect_unmatched_values(tours, vtr_only=True)
+    result = collect_unmatched_values(tours, vtr_only=True)
+    if no_filter:
+        try:
+            from persistent_cache import save_json
+            save_json("compare_classgaps_default", result, ttl_hours=24)
+        except Exception:  # noqa: BLE001
+            pass
+    return result
 
 
 @router.get("/summary", response_model=CompareSummary)
@@ -380,9 +393,22 @@ def weekday_distribution(
     """Phân bổ đoàn KH theo thứ trong tuần — VTR vs thị trường."""
     from compare_engine import build_weekday_distribution
 
+    no_filter = not (thi_truong or tuyen_tour or diem_kh)
+    if no_filter:
+        from persistent_cache import load_json
+        _disk = load_json("compare_weekday_default", max_age_hours=24)
+        if _disk is not None:
+            return _disk
     # Cần ctx.tours (full) → không stale.
     ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh, allow_stale=False)
-    return build_weekday_distribution(ctx.tours)
+    result = build_weekday_distribution(ctx.tours)
+    if no_filter:
+        try:
+            from persistent_cache import save_json
+            save_json("compare_weekday_default", result, ttl_hours=24)
+        except Exception:  # noqa: BLE001
+            pass
+    return result
 
 
 @router.get("/competitors")
@@ -394,6 +420,14 @@ def list_competitors(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
+    # Disk fast-path (no-filter, limit mặc định): tránh build đồng bộ 15-114s khi cold.
+    no_filter = not (thi_truong or tuyen_tour or diem_kh) and limit == 30
+    if no_filter:
+        from persistent_cache import load_json
+        _disk = load_json("compare_competitors_default", max_age_hours=24)
+        if _disk is not None:
+            return _disk
+
     # Cần ctx.segments (full) → không stale. Áp dụng đủ bộ lọc (tuyến + điểm KH) như
     # các tab khác — trước đây chỉ nhận thi_truong nên filter điểm KH bị bỏ qua.
     ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh, allow_stale=False)
@@ -498,7 +532,14 @@ def list_competitors(
         r["score"] = round(score, 1)
 
     rows.sort(key=lambda x: (-x["score"], -x["overlap_segments"]))
-    return {"items": rows[:limit], "total": len(rows)}
+    result = {"items": rows[:limit], "total": len(rows)}
+    if no_filter:
+        try:
+            from persistent_cache import save_json
+            save_json("compare_competitors_default", result, ttl_hours=24)
+        except Exception:  # noqa: BLE001
+            pass
+    return result
 
 
 @router.get("/competitor")

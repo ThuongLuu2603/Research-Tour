@@ -508,7 +508,11 @@ def invalidate_compare_cache() -> None:
     try:
         from persistent_cache import delete_json
 
-        for ns in ("compare_summary_default", "compare_segments_default", "home_brief", "report_daily"):
+        for ns in (
+            "compare_summary_default", "compare_segments_default",
+            "compare_competitors_default", "compare_weekday_default", "compare_classgaps_default",
+            "home_brief", "report_daily",
+        ):
             try:
                 delete_json(ns)
             except Exception:
@@ -609,6 +613,20 @@ def _populate_disk_cache_from_prewarm(db: Session, ctx) -> None:
             logger.info("Disk cache: segments saved (%d rows)", len(ctx.segment_rows))
     except Exception as e:  # noqa: BLE001
         logger.warning("Disk cache segments failed: %s", e)
+
+    # 3b. weekday-distribution (no filter) + classification-gaps (no filter): precompute
+    # off-thread → tab Tần suất + panel "Chưa map" khỏi build đồng bộ lần đầu.
+    try:
+        from compare_engine import build_weekday_distribution, is_vietravel
+
+        save_json("compare_weekday_default", build_weekday_distribution(ctx.tours), ttl_hours=24)
+        from classification import collect_unmatched_values
+
+        vtr_tours = [t for t in ctx.tours if is_vietravel(t.cong_ty)]
+        save_json("compare_classgaps_default", collect_unmatched_values(vtr_tours, vtr_only=True), ttl_hours=24)
+        logger.info("Disk cache: weekday + classgaps saved")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Disk cache weekday/classgaps failed: %s", e)
 
     # 4. report_html daily: build và save
     try:
