@@ -42,15 +42,24 @@ def normalize_route(tuyen_tour: str) -> str:
 
 
 def route_for_segment(t: Tour) -> str:
-    """Tuyến dùng để gom nhóm — ưu tiên cột Tuyến tour, không ghi đè bằng tên thị trường."""
-    from classification import resolve_market_and_route
+    """Tuyến dùng để gom nhóm — ưu tiên cột Tuyến tour, không ghi đè bằng tên thị trường.
 
-    market, resolved_route, from_route_rule = resolve_market_and_route(t.ten_tour or "", t.lich_trinh or "")
-    market = market or (t.thi_truong or "").strip() or "Khác"
+    PERF: tour đã được phân loại (có cột tuyen_tour hợp lệ) → trả NGAY, KHÔNG chạy
+    resolve_market_and_route (matcher 1100+ rule). Trước đây gọi matcher cho MỌI tour
+    (7500 × 1100 rule ≈ build cold 70s+). Chỉ resolve khi cột tuyến thiếu/generic.
+    """
+    market = (t.thi_truong or "").strip() or "Khác"
     explicit = normalize_route(t.tuyen_tour)
     generic = {market.casefold(), "khác", "khac", ""}
     if explicit and explicit.casefold() not in generic:
-        return explicit
+        return explicit  # FAST PATH: tin cột đã phân loại → khỏi chạy matcher
+
+    # Thiếu/generic mới resolve (đắt) — số ít tour chưa khớp tuyến.
+    from classification import resolve_market_and_route
+
+    mk, resolved_route, from_route_rule = resolve_market_and_route(t.ten_tour or "", t.lich_trinh or "")
+    market = mk or market
+    generic = {market.casefold(), "khác", "khac", ""}
     resolved = normalize_route(resolved_route)
     if from_route_rule and resolved:
         return resolved
