@@ -338,14 +338,25 @@ def seed_solar_holidays(db, year_from: int = _LUNAR_YEAR_FROM, year_to: int = _L
 
 
 def get_lunar_planner(db, years_ahead: int = 3) -> list[dict[str, Any]]:
-    """Lịch âm lịch dương hóa cho N năm tới — dùng cho long-range tour planner."""
+    """Lịch các NGÀY LỄ CHÍNH THỨC (được nghỉ) cho N năm tới — long-range plan.
+
+    Chỉ gồm 6 dịp nghỉ chính thức của VN (không phải mọi lễ âm):
+      • Âm: Tết Nguyên Đán (1/1 âm), Giỗ Tổ Hùng Vương (3/10 âm).
+      • Dương: Tết Dương lịch, 30/4, 1/5, Quốc khánh 2/9 (slug 'solar-…').
+    """
     from models import Festival
+    from sqlalchemy import and_, or_
 
     today_year = date.today().year
     until_year = today_year + years_ahead
+    official = or_(
+        Festival.slug.like("solar-%"),
+        and_(Festival.is_lunar == True, Festival.lunar_month == 1, Festival.lunar_day == 1),    # Tết Nguyên Đán  # noqa: E712
+        and_(Festival.is_lunar == True, Festival.lunar_month == 3, Festival.lunar_day == 10),   # Giỗ Tổ  # noqa: E712
+    )
     rows = (
         db.query(Festival)
-        .filter(Festival.is_lunar == True)  # noqa: E712
+        .filter(official)
         .filter(Festival.date_start >= date(today_year, 1, 1))
         .filter(Festival.date_start <= date(until_year, 12, 31))
         .order_by(Festival.date_start.asc())

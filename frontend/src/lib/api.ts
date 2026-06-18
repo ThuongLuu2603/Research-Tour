@@ -1624,8 +1624,8 @@ export interface LunarEvent {
   name: string;
   date_start: string;
   date_end: string;
-  lunar_month: number;
-  lunar_day: number;
+  lunar_month: number | null;
+  lunar_day: number | null;
   category: string;
   region: string;
   year: number;

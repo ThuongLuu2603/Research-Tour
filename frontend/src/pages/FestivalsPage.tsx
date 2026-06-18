@@ -90,7 +90,7 @@ type TabKey = "dashboard" | "timeline" | "coverage" | "premium" | "forecast" | "
 const TABS: { key: TabKey; label: string; Icon: LucideIcon; group?: "discovery" | "analytics" | "action" }[] = [
   { key: "dashboard", label: "Tổng quan",           Icon: LayoutDashboard },
   { key: "timeline",  label: "Lịch & Timeline",     Icon: Calendar,     group: "discovery" },
-  { key: "lunar",     label: "Lễ Âm Lịch",          Icon: Moon,         group: "discovery" },
+  { key: "lunar",     label: "Lễ Tết",              Icon: Moon,         group: "discovery" },
   { key: "coverage",  label: "Coverage Gap",        Icon: AlertTriangle, group: "analytics" },
   { key: "premium",   label: "Pricing Premium",     Icon: TrendingUp,   group: "analytics" },
   { key: "heatmap",   label: "Heatmap tỉnh",        Icon: MapIcon,      group: "analytics" },
@@ -159,7 +159,7 @@ export default function FestivalsPage() {
           </button>
           <button type="button" className="btn-secondary text-xs"
             disabled={seedLunar.isPending} onClick={() => seedLunar.mutate()}
-            title="Seed lễ âm lịch 6 năm (Tết, Trung Thu, Vu Lan, ...) (admin)">
+            title="Seed lễ âm (Tết, Giỗ Tổ, Trung Thu...) + ngày nghỉ lễ dương (30/4, 1/5, Quốc khánh, Tết dương) (admin)">
             {seedLunar.isPending ? <Loader2 size={14} className="animate-spin" /> : <Moon size={14} />}
             Seed lễ âm
           </button>
@@ -1878,7 +1878,7 @@ function LunarTab() {
   if (error) return <ErrorBox msg={(error as Error).message} />;
   if (!data || data.events.length === 0) return (
     <EmptyState>
-      Chưa seed lễ âm lịch. Bấm <strong>Seed lễ âm</strong> ở header để add Tết / Trung Thu / Vu Lan 6 năm.
+      Chưa có ngày lễ chính thức. Bấm <strong>Seed lễ âm</strong> ở header để nạp Tết, Giỗ Tổ, 30/4, 1/5, Quốc khánh, Tết dương.
     </EmptyState>
   );
   // Group theo năm
@@ -1890,7 +1890,7 @@ function LunarTab() {
   return (
     <div className="space-y-6">
       <p className="text-xs text-gray-600">
-        Lễ âm lịch (Tết, Trung Thu, Vu Lan...) → dương lịch cho 3 năm tới. Dùng để long-range plan booking sớm 12 tháng.
+        Các <strong>ngày lễ chính thức</strong> (được nghỉ) cho 3 năm tới: Tết Nguyên Đán, Giỗ Tổ, 30/4, 1/5, Quốc khánh, Tết Dương lịch. Dùng để plan booking mùa cao điểm sớm 12 tháng.
       </p>
       {Object.entries(byYear).sort().map(([year, events]) => (
         <div key={year}>
@@ -1907,7 +1907,7 @@ function LunarTab() {
                   {formatDateRange(ev.date_start, ev.date_end)}
                 </p>
                 <p className="text-[10px] text-gray-500">
-                  Âm: <strong>{ev.lunar_month}/{ev.lunar_day}</strong>
+                  {ev.lunar_month ? <>Âm lịch: <strong>{ev.lunar_month}/{ev.lunar_day}</strong></> : <>Lễ <strong>dương lịch</strong></>}
                 </p>
               </div>
             ))}
