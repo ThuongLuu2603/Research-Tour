@@ -19,7 +19,7 @@ import { COL, GLOSSARY } from "@/lib/glossary";
 import { InfoTip, PageTitle, ThTip } from "@/components/InfoTip";
 import { CountUp } from "@/components/CountUp";
 import {
-  TrendingDown, TrendingUp, Minus, ExternalLink, Calendar, Building2, ArrowUpDown, Download, Star,
+  TrendingDown, TrendingUp, Minus, ExternalLink, Calendar, Building2, ArrowUpDown, Download, Star, RefreshCw,
 } from "lucide-react";
 
 // ── CSV export helper ────────────────────────────────────────────────────────
@@ -335,19 +335,19 @@ export default function VietravelCompare() {
     queryFn: () => getCompareCompetitorDetail(selectedCompetitor, filters),
     enabled: !!selectedCompetitor,
   });
-  const { data: detail } = useQuery({
+  const { data: detail, isLoading: detailLoading } = useQuery({
     queryKey: ["segment-detail", selectedKey],
     queryFn: () => getSegmentDetail(selectedKey!),
     enabled: !!selectedKey,
   });
-  // Khi mở chi tiết (click card/thanh/điểm/hàng) → cuộn xuống bảng "Chi tiết nhóm so sánh".
+  // Khi mở chi tiết (click card/thanh/điểm/hàng) → cuộn xuống panel (kể cả lúc đang tải).
   const detailRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (selectedKey && detail?.found) {
+    if (selectedKey) {
       const t = setTimeout(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
       return () => clearTimeout(t);
     }
-  }, [selectedKey, detail?.found]);
+  }, [selectedKey, detailLoading, detail?.found]);
   const { data: coverage } = useQuery({ queryKey: ["coverage", filters], queryFn: () => getCoverageMap(filters), enabled: tab === "coverage", staleTime: compareStale, placeholderData: (prev) => prev });
   const [covDetail, setCovDetail] = useState<{ thi_truong: string; tuyen_tour: string } | null>(null);
   const [chartModal, setChartModal] = useState<null | "price" | "market" | "freq">(null);
@@ -1970,6 +1970,18 @@ export default function VietravelCompare() {
       )}
 
       {/* Segment drill-down */}
+      {selectedKey && (detailLoading || !detail) && (
+        <div ref={detailRef} className="card p-8 border-2 border-primary-200 scroll-mt-4 flex flex-col items-center justify-center gap-2 text-gray-500">
+          <RefreshCw size={22} className="animate-spin text-primary-500" />
+          <p className="text-sm font-medium">Đang tải chi tiết nhóm so sánh…</p>
+        </div>
+      )}
+      {selectedKey && detail && !detail.found && (
+        <div ref={detailRef} className="card p-6 border-2 border-amber-200 scroll-mt-4 flex items-center justify-between">
+          <p className="text-sm text-amber-700">Không tải được chi tiết tuyến này (có thể dữ liệu đã đổi). Thử chọn lại.</p>
+          <button className="text-xs text-gray-400 hover:text-gray-600" onClick={() => setSelectedKey(null)}>Đóng</button>
+        </div>
+      )}
       {selectedKey && detail?.found && (
         <div ref={detailRef} className="card p-5 border-2 border-primary-200 scroll-mt-4">
           <div className="flex items-start justify-between mb-4">

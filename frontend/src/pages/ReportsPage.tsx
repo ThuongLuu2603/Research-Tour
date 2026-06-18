@@ -55,9 +55,19 @@ export default function ReportsPage() {
       const out = currentHtml();
       await saveReportHtml(out);
       qc.setQueryData(["report-html"], out);
+      setEditing(false);  // thoát chế độ sửa sau khi lưu
       setMsg("Đã lưu chỉnh sửa vào hệ thống.");
     } catch { setMsg("Lưu thất bại — thử lại."); }
     finally { setBusy(null); }
+  };
+
+  // Lệnh định dạng (Word-like) áp lên vùng đang chọn trong iframe.
+  const cmd = (command: string, value?: string) => {
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc) return;
+    iframeRef.current?.contentWindow?.focus();
+    try { doc.execCommand("styleWithCSS", false, "true"); } catch { /* ignore */ }
+    doc.execCommand(command, false, value);
   };
 
   const printReport = () => {
@@ -112,9 +122,41 @@ export default function ReportsPage() {
       </div>
 
       {editing && (
-        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-1.5">
-          ✏️ Đang bật chế độ sửa — bấm vào ô (đặc biệt cột <strong>Ghi chú</strong> nền vàng) để gõ, xong bấm <strong>Lưu</strong> để ghi đè vào hệ thống (giữ tới lần Làm mới / snapshot ngày).
-        </p>
+        <>
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-1.5">
+            ✏️ Đang bật chế độ sửa — bôi đen chữ rồi dùng thanh công cụ; gõ vào ô <strong>Ghi chú</strong> nền vàng. Xong bấm <strong>Lưu</strong> (sẽ thoát chế độ sửa).
+          </p>
+          <div className="flex flex-wrap items-center gap-1 bg-gray-50 border rounded px-2 py-1.5 text-sm sticky top-0 z-10">
+            <button title="Đậm" className="w-7 h-7 rounded hover:bg-gray-200 font-bold" onClick={() => cmd("bold")}>B</button>
+            <button title="Nghiêng" className="w-7 h-7 rounded hover:bg-gray-200 italic" onClick={() => cmd("italic")}>I</button>
+            <button title="Gạch chân" className="w-7 h-7 rounded hover:bg-gray-200 underline" onClick={() => cmd("underline")}>U</button>
+            <span className="w-px h-5 bg-gray-300 mx-1" />
+            <select title="Cỡ chữ" className="input text-xs py-0.5 w-16" defaultValue=""
+              onChange={(e) => { if (e.target.value) cmd("fontSize", e.target.value); e.target.value = ""; }}>
+              <option value="">Cỡ</option>
+              <option value="2">Nhỏ</option>
+              <option value="3">Vừa</option>
+              <option value="5">Lớn</option>
+              <option value="6">Rất lớn</option>
+            </select>
+            <label title="Màu chữ" className="w-7 h-7 rounded hover:bg-gray-200 flex items-center justify-center cursor-pointer relative">
+              <span className="font-bold">A</span>
+              <input type="color" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => cmd("foreColor", e.target.value)} />
+            </label>
+            <label title="Tô nền" className="w-7 h-7 rounded hover:bg-gray-200 flex items-center justify-center cursor-pointer relative" style={{ background: "#fef08a" }}>
+              <span>🖍</span>
+              <input type="color" className="absolute inset-0 opacity-0 cursor-pointer" defaultValue="#fde68a" onChange={(e) => cmd("hiliteColor", e.target.value)} />
+            </label>
+            <span className="w-px h-5 bg-gray-300 mx-1" />
+            <button title="Danh sách chấm" className="w-7 h-7 rounded hover:bg-gray-200" onClick={() => cmd("insertUnorderedList")}>•</button>
+            <button title="Căn trái" className="w-7 h-7 rounded hover:bg-gray-200" onClick={() => cmd("justifyLeft")}>⬅</button>
+            <button title="Căn giữa" className="w-7 h-7 rounded hover:bg-gray-200" onClick={() => cmd("justifyCenter")}>⬌</button>
+            <span className="w-px h-5 bg-gray-300 mx-1" />
+            <button title="Hoàn tác" className="w-7 h-7 rounded hover:bg-gray-200" onClick={() => cmd("undo")}>↶</button>
+            <button title="Làm lại" className="w-7 h-7 rounded hover:bg-gray-200" onClick={() => cmd("redo")}>↷</button>
+            <button title="Xoá định dạng" className="px-2 h-7 rounded hover:bg-gray-200 text-xs text-gray-600" onClick={() => cmd("removeFormat")}>Xoá ĐD</button>
+          </div>
+        </>
       )}
 
       <div className="card overflow-hidden p-0 bg-white">
