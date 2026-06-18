@@ -482,22 +482,23 @@ def _compute_coverage_gap(db, limit: int) -> list[dict[str, Any]]:
     if not festivals:
         return []
 
-    # ── Block 1: tagged tours (Tour.festival_slug = slug) ───────────────────
-    fest_slugs = {f.slug for f in festivals}
-    tagged_tour_rows = (
-        db.query(Tour)
-        .options(load_only(
-            Tour.id, Tour.cong_ty, Tour.festival_slug, Tour.lich_kh,
-            Tour.province_code, Tour.thi_truong, Tour.tuyen_tour,
-        ))
-        .filter(Tour.festival_slug.in_(fest_slugs))
+    # ── Block 1: tour gắn lễ — đếm trên BẢNG NỐI (nguồn sự thật: gồm cả link 'date'
+    # lẫn 'rule'), KHÔNG chỉ Tour.festival_slug (vốn chỉ giữ lễ primary → thiếu lễ phụ).
+    from models import FestivalTourMapping
+
+    slug_by_id = {f.id: f.slug for f in festivals}
+    link_rows = (
+        db.query(FestivalTourMapping.festival_id, Tour)
+        .join(Tour, Tour.id == FestivalTourMapping.tour_id)
+        .filter(FestivalTourMapping.festival_id.in_(list(slug_by_id.keys())))
         .filter(market_filter_clause(Tour))
         .all()
     )
     tagged_by_slug: dict[str, list[Tour]] = defaultdict(list)
-    for t in tagged_tour_rows:
-        if t.festival_slug:
-            tagged_by_slug[t.festival_slug].append(t)
+    for fid, t in link_rows:
+        slug = slug_by_id.get(fid)
+        if slug:
+            tagged_by_slug[slug].append(t)
 
     # ── Block 2: load mapping rules ────────────────────────────────────────
     rules = (
@@ -537,29 +538,9 @@ def _compute_coverage_gap(db, limit: int) -> list[dict[str, Any]]:
     # Build single OR filter cho mọi rule có ít nhất 1 trong market/route.
     # Lưu ý: tour rỗng festival_slug HOẶC khác slug đang xét — sẽ filter cụ thể
     # khi map về festival. Để giảm load, chỉ kéo tour có lich_kh != "".
-    implied_filters = []
-    for r in rules:
-        cond = []
-        if r.market_keyword and r.market_keyword.strip():
-            cond.append(Tour.thi_truong == r.market_keyword.strip())
-        if r.route_keyword and r.route_keyword.strip():
-            cond.append(func.lower(Tour.tuyen_tour).like(f"%{r.route_keyword.strip().lower()}%"))
-        if cond:
-            implied_filters.append(and_(*cond))
-
+    # 'implied' runtime đã BỎ — rule links giờ được persist vào bảng nối (apply_rules,
+    # Wave 1b) và đã tính ở Block 1. Giữ implied sẽ ĐẾM TRÙNG. Để rỗng để vô hiệu hoá.
     implied_tour_rows: list[Tour] = []
-    if implied_filters:
-        implied_tour_rows = (
-            db.query(Tour)
-            .options(load_only(
-                Tour.id, Tour.cong_ty, Tour.festival_slug, Tour.lich_kh,
-                Tour.province_code, Tour.thi_truong, Tour.tuyen_tour,
-            ))
-            .filter(or_(*implied_filters))
-            .filter(Tour.lich_kh != "")
-            .filter(market_filter_clause(Tour))
-            .all()
-        )
 
     # Per-rule matcher (in-memory). Tránh re-iter scan toàn bộ table per festival.
     def _tour_matches_rule(t: Tour, r: Any) -> bool:
@@ -576,14 +557,12 @@ def _compute_coverage_gap(db, limit: int) -> list[dict[str, Any]]:
     for f in festivals:
         loc_filter_fn = _location_match_filter_fn(f)
 
-        # tagged
+        # tagged — đếm THẲNG link bảng nối (engine đã khớp theo ngày, apply_rules đã
+        # khớp theo location). KHÔNG re-filter location nữa: link là nguồn sự thật.
         tagged = tagged_by_slug.get(f.slug, [])
-        if loc_filter_fn is not None:
-            tagged_filt = [t for t in tagged if loc_filter_fn(t)]
-        else:
-            tagged_filt = tagged
+        tagged_filt = tagged
 
-        # implied — chỉ tính nếu có rule match festival này.
+        # implied — đã bỏ (implied_tour_rows luôn rỗng). Giữ khung để back-compat.
         matched_rules = rules_per_festival.get(f.slug, [])
         implied_set: dict[int, Tour] = {}
         if matched_rules and implied_tour_rows:
