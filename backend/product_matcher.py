@@ -20,14 +20,25 @@ def _score_match(vtr: Tour, cand: Tour) -> float | None:
     if not v_days or not c_days or not vtr.gia or not cand.gia:
         return None
 
+    # GATE CỨNG thị trường: phải CÙNG thị trường đã phân loại. Trước đây chỉ loại khi
+    # CẢ HAI có market khác nhau → tour đối thủ THIẾU market lọt qua, ghép Canada với
+    # Nhật/Cù Lao Chàm. Giờ: thiếu market 1 bên hoặc khác market → KHÔNG ghép.
     v_market = (vtr.thi_truong or "").strip()
     c_market = (cand.thi_truong or "").strip()
-    if v_market and c_market and v_market != c_market:
+    if not v_market or not c_market or v_market != c_market:
         return None
 
     v_route = normalize_route(vtr.tuyen_tour)
     c_route = normalize_route(cand.tuyen_tour)
-    route_sim = 1.0 if v_route == c_route else (0.6 if v_route in c_route or c_route in v_route else 0.0)
+    if v_route and c_route:
+        if v_route == c_route:
+            route_sim = 1.0
+        elif v_route in c_route or c_route in v_route:
+            route_sim = 0.6
+        else:
+            return None  # khác TUYẾN trong cùng thị trường (vd Canada vs Brazil) → không ghép
+    else:
+        route_sim = 0.3  # thiếu tuyến 1 bên: điểm thấp (KHÔNG dùng 0.6 do bug chuỗi rỗng cũ)
 
     v_dep = normalize_departure(vtr.diem_kh)
     c_dep = normalize_departure(cand.diem_kh)
