@@ -191,6 +191,45 @@ def get_home_brief(db: Session) -> dict:
     return result
 
 
+def _compute_festival_brief(db: Session) -> dict:
+    """Wave 6 — lễ hội thành 1 dimension hiện trên Home.
+
+    Trả về vài lễ SẮP TỚI mà VTR đang thiếu độ phủ nhất (gap_score cao), để
+    festival module 'ăn nhập' với dashboard chính thay vì nằm tách biệt 1 tab.
+    Bọc try/except + nhẹ: chỉ đọc bảng nối đã precompute.
+    """
+    try:
+        from datetime import date
+        from festival_tagging import get_coverage_gap
+
+        today = date.today().isoformat()
+        items = get_coverage_gap(db, limit=60)
+        upcoming = [it for it in items if (it.get("date_end") or "") >= today]
+        # VTR đang thiếu: gap_score > 0 (đối thủ phủ nhiều hơn VTR).
+        gaps = [it for it in upcoming if (it.get("gap_score") or 0) > 0]
+        gaps.sort(key=lambda it: -(it.get("gap_score") or 0))
+        top = [
+            {
+                "slug": it.get("slug"),
+                "name": it.get("name"),
+                "date_start": it.get("date_start"),
+                "date_end": it.get("date_end"),
+                "region": it.get("region"),
+                "vtr_tours": it.get("vtr_tours", 0),
+                "competitor_tours": it.get("competitor_tours", 0),
+                "gap_score": round(it.get("gap_score") or 0, 1),
+            }
+            for it in gaps[:5]
+        ]
+        return {
+            "upcoming_count": len(upcoming),
+            "gap_count": len(gaps),
+            "top_gaps": top,
+        }
+    except Exception:  # noqa: BLE001
+        return {"upcoming_count": 0, "gap_count": 0, "top_gaps": []}
+
+
 def _compute_home_brief(db: Session) -> dict:
     daily = db.query(DailySnapshot).order_by(DailySnapshot.snapshot_date.desc()).first()
     if not daily:
@@ -276,6 +315,7 @@ def _compute_home_brief(db: Session) -> dict:
         "kpis": kpis,
         "delta": delta_vs_previous(db),
         "trend": get_trend(db, 14),
+        "festivals": _compute_festival_brief(db),
         "insights": insights,
         "alerts": [
             {

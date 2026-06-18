@@ -991,11 +991,23 @@ export interface IntelInsight {
   link_path: string; link_params?: Record<string, string>; priority?: number;
 }
 
+export interface FestivalBriefGap {
+  slug: string; name: string; date_start: string; date_end: string; region: string;
+  vtr_tours: number; competitor_tours: number; gap_score: number;
+}
+
+export interface FestivalBrief {
+  upcoming_count: number;
+  gap_count: number;
+  top_gaps: FestivalBriefGap[];
+}
+
 export interface HomeBrief {
   snapshot_date: string;
   kpis: Record<string, number | null>;
   delta: Record<string, number | string | null> | null;
   trend: Array<{ date: string; avg_gap_pct: number | null; cheaper_segments: number; expensive_segments: number }>;
+  festivals?: FestivalBrief;
   insights: IntelInsight[];
   alerts: Array<{ id: number; severity: string; category: string; title: string; message: string; link_path: string }>;
 }

@@ -10,7 +10,7 @@
  *   - Heatmap          (Phase 3 UC#6)
  *   - Lunar Planner    (Phase 3 UC#7)
  */
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Portal } from "@/components/Portal";
 import {
@@ -26,7 +26,7 @@ import {
   FestivalTourLite, CoverageGapItemExt,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Calendar, List, MapPin, RefreshCw, Loader2, ExternalLink,
   Music, Utensils, Trophy, Sparkles, Building, ChevronLeft, ChevronRight,
@@ -102,6 +102,19 @@ export default function FestivalsPage() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<TabKey>("dashboard");
   const [detailSlug, setDetailSlug] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Wave 6 — deep-link từ Home (?focus=<slug>) mở thẳng popup chi tiết lễ.
+  useEffect(() => {
+    const focus = searchParams.get("focus");
+    if (focus) {
+      setDetailSlug(focus);
+      const next = new URLSearchParams(searchParams);
+      next.delete("focus");
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const refresh = useMutation({
     mutationFn: refreshFestivals,

@@ -246,6 +246,31 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
         for i in insights[:10]
     )
 
+    # Wave 6 — Lễ hội thành dimension: chèn block lễ sắp tới mà VTR thiếu độ phủ.
+    festival_rows = ""
+    try:
+        from datetime import date as _date
+        from festival_tagging import get_coverage_gap
+
+        _today = _date.today().isoformat()
+        _fests = [
+            g for g in get_coverage_gap(db, limit=60)
+            if (g.get("date_end") or "") >= _today and (g.get("gap_score") or 0) > 0
+        ]
+        _fests.sort(key=lambda g: -(g.get("gap_score") or 0))
+        festival_rows = "".join(
+            f"<tr><td>{g.get('name','')}</td>"
+            f"<td style='text-align:center'>{(g.get('date_start') or '')[5:]}–{(g.get('date_end') or '')[5:]}</td>"
+            f"<td>{g.get('region','')}</td>"
+            f"<td style='text-align:center'>{g.get('vtr_tours',0)}</td>"
+            f"<td style='text-align:center'>{g.get('competitor_tours',0)}</td>"
+            f"<td style='text-align:center'>{round(g.get('gap_score') or 0,1)}</td>"
+            f"</tr>"
+            for g in _fests[:10]
+        )
+    except Exception:  # noqa: BLE001
+        festival_rows = ""
+
     final_html = f"""<!DOCTYPE html>
 <html lang="vi"><head><meta charset="utf-8"/>
 <title>{title}</title>
@@ -404,6 +429,15 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
 <div class="insights">
   <ol>{insight_items or '<li>Không có insight mới — thử chụp snapshot</li>'}</ol>
 </div>
+
+{f'''<h2>V. Lễ hội sắp tới — cơ hội phủ tour</h2>
+<p class="meta" style="margin-bottom:8px"><em>Gap</em> = mức đối thủ phủ tour quanh lễ nhiều hơn VTR (cao = VTR đang bỏ ngỏ). Chỉ liệt kê lễ sắp diễn ra mà VTR thiếu độ phủ.</p>
+<table>
+  <thead><tr><th>Lễ hội</th><th style="text-align:center">Thời gian</th><th>Vùng</th><th style="text-align:center">Tour VTR</th><th style="text-align:center">Tour đối thủ</th><th style="text-align:center">Gap</th></tr></thead>
+  <tbody>
+    {festival_rows}
+  </tbody>
+</table>''' if festival_rows else ''}
 
 <div class="footer no-print">
   Mẹo: In trang này (Ctrl+P) → chọn <strong>Save as PDF</strong> để gửi offline cho BGĐ.
