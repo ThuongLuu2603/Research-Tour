@@ -376,12 +376,15 @@ def weekday_distribution(
 @router.get("/competitors")
 def list_competitors(
     thi_truong: list[str] = Query([]),
+    tuyen_tour: str = Query(""),
+    diem_kh: str = Query(""),
     limit: int = Query(30, ge=1, le=100),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    # Cần ctx.segments (full) → không stale.
-    ctx = get_compare_context(db, thi_truong, allow_stale=False)
+    # Cần ctx.segments (full) → không stale. Áp dụng đủ bộ lọc (tuyến + điểm KH) như
+    # các tab khác — trước đây chỉ nhận thi_truong nên filter điểm KH bị bỏ qua.
+    ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh, allow_stale=False)
     segments = ctx.segments
     stats: dict[str, dict] = {}
     company_routes: dict[str, set] = defaultdict(set)
@@ -481,9 +484,11 @@ def list_competitors(
 def competitor_detail(
     company: str = Query(..., description="Tên công ty (canonical) — query param tránh lỗi 404 khi tên có ký tự / & …"),
     thi_truong: list[str] = Query([]),
+    tuyen_tour: str = Query(""),
+    diem_kh: str = Query(""),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    # Cần ctx.tours (full) → không stale.
-    ctx = get_compare_context(db, thi_truong, allow_stale=False)
+    # Cần ctx.tours (full) → không stale. Áp dụng đủ bộ lọc cho khớp bảng list.
+    ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh, allow_stale=False)
     return build_competitor_overview(ctx.tours, company)
