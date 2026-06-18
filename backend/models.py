@@ -284,9 +284,13 @@ class FestivalTourMapping(Base):
         UniqueConstraint("festival_id", "tour_id", name="uq_festival_tour"),
     )
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    festival_id: Mapped[int] = mapped_column(ForeignKey("festivals.id", ondelete="CASCADE"), index=True)
-    tour_id: Mapped[int] = mapped_column(ForeignKey("tours.id", ondelete="CASCADE"), index=True)
+    # BigInteger (INT8): CockroachDB sinh id qua unique_rowid() cỡ ~1.18e18 > INT4
+    # max (2.1 tỷ). Nếu để Integer (INT4) → "integer out of range" khi insert →
+    # bảng nối không bao giờ ghi được. id + cả 2 FK đều phải INT8 để khớp tours.id
+    # / festivals.id (vốn đã là INT8 trong DB).
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    festival_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("festivals.id", ondelete="CASCADE"), index=True)
+    tour_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("tours.id", ondelete="CASCADE"), index=True)
     festival_slug: Mapped[str] = mapped_column(String(256), default="", index=True)  # denormalize tiện query
     distance_days: Mapped[int | None] = mapped_column(Integer, nullable=True)  # |lich_kh - date_start| gần nhất
     source: Mapped[str] = mapped_column(String(16), default="date")  # 'date' | 'rule' | 'manual'
