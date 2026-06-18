@@ -504,4 +504,5 @@ def competitor_detail(
 ):
     # Cần ctx.tours (full) → không stale. Áp dụng đủ bộ lọc cho khớp bảng list.
     ctx = get_compare_context(db, thi_truong, tuyen_tour, diem_kh, allow_stale=False)
-    return build_competitor_overview(ctx.tours, company)
+    # Tái dùng segments + tours (đã dedup) trong ctx — khỏi rebuild (~874ms/lần).
+    return build_competitor_overview(ctx.tours, company, segments=ctx.segments, tours_dedup=ctx.tours)

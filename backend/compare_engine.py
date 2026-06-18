@@ -345,20 +345,33 @@ class SegmentStats:
     diem_kh: str
     so_ngay: float
     entries: list[TourEntry] = field(default_factory=list)
+    # Cache nội bộ — entries cố định sau khi build_segment_stats dựng xong (to_dict gọi
+    # sau). Memoize các giá trị re-derive nhiều lần (đo: to_dict chiếm 97% build vì
+    # _vtr_period_dates/_companies/market_entries_in_period bị gọi lại hàng chục lần/segment).
+    _memo: dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def vtr_entries(self) -> list[TourEntry]:
-        return [e for e in self.entries if e.is_vietravel]
+        v = self._memo.get("vtr_e")
+        if v is None:
+            v = self._memo["vtr_e"] = [e for e in self.entries if e.is_vietravel]
+        return v
 
     @property
     def market_entries(self) -> list[TourEntry]:
-        return [e for e in self.entries if not e.is_vietravel]
+        v = self._memo.get("mkt_e")
+        if v is None:
+            v = self._memo["mkt_e"] = [e for e in self.entries if not e.is_vietravel]
+        return v
 
     def _vtr_period_dates(self) -> list:
-        dates = []
-        for e in self.vtr_entries:
-            dates.extend(parse_departure_dates(e.lich_kh))
-        return dates
+        v = self._memo.get("vpd")
+        if v is None:
+            dates = []
+            for e in self.vtr_entries:
+                dates.extend(parse_departure_dates(e.lich_kh))
+            v = self._memo["vpd"] = dates
+        return v
 
     @property
     def vtr_comparison_period(self) -> str:
@@ -366,42 +379,62 @@ class SegmentStats:
 
     @property
     def market_entries_in_period(self) -> list[TourEntry]:
+        cached = self._memo.get("meip")
+        if cached is not None:
+            return cached
         vtr_dates = self._vtr_period_dates()
         if not vtr_dates:
+            self._memo["meip"] = self.market_entries
             return self.market_entries
         # STRICT: chỉ giữ đối thủ có NGÀY KH THẬT (parse ra dd/mm/yyyy qua rule) rơi
         # vào tháng VTR. Đối thủ không khớp định dạng ('Hàng ngày' chưa có rule...) →
         # explicit_dates=0 → LOẠI, không tính giá/tần suất. KHÔNG fallback lấy tất cả:
         # không khớp là không tính (muốn tính thì cấu hình rule). Recurring có rule
         # (weekly/monthly) tự expand ra ngày → vẫn được giữ.
-        return [
+        out = [
             e for e in self.market_entries
             if parse_departure_frequency_in_period(e.lich_kh, vtr_dates).get("explicit_dates", 0) > 0
         ]
+        self._memo["meip"] = out
+        return out
 
     @property
     def vtr_price_entries(self) -> list[TourEntry]:
         """Tour VTR dùng để TÍNH GIÁ: filter theo Dòng tour cấu hình bởi admin.
         Rollout-safe: nếu segment chưa có dữ liệu Dòng tour nào (chưa scrape lại) → dùng tất cả."""
+        cached = self._memo.get("vtr_pe")
+        if cached is not None:
+            return cached
         ents = self.vtr_entries
         if not any((e.dong_tour or "").strip() for e in ents):
+            self._memo["vtr_pe"] = ents
             return ents
         allowed = _get_vtr_tiers()
         if not allowed:
+            self._memo["vtr_pe"] = ents
             return ents
-        return [e for e in ents if _norm_tier(e.dong_tour) in allowed]
+        out = [e for e in ents if _norm_tier(e.dong_tour) in allowed]
+        self._memo["vtr_pe"] = out
+        return out
 
     @property
     def market_price_entries(self) -> list[TourEntry]:
         """Tour thị trường dùng để TÍNH GIÁ SO SÁNH: filter theo phân khúc cấu hình bởi admin.
         Rollout-safe: nếu chưa tour nào có phân khúc → dùng tất cả."""
+        cached = self._memo.get("mkt_pe")
+        if cached is not None:
+            return cached
         ents = self.market_entries_in_period
         if not any((e.phan_khuc or "").strip() for e in ents):
+            self._memo["mkt_pe"] = ents
             return ents
         allowed = _get_market_phan_khuc()
         if not allowed:
+            self._memo["mkt_pe"] = ents
             return ents
-        return [e for e in ents if _norm_tier(e.phan_khuc) in allowed]
+        out = [e for e in ents if _norm_tier(e.phan_khuc) in allowed]
+        self._memo["mkt_pe"] = out
+        return out
 
     def _entries_freq_total(self, entries: list[TourEntry], *, in_vtr_period: bool = False) -> float:
         vtr_dates = self._vtr_period_dates()
@@ -453,6 +486,10 @@ class SegmentStats:
         return sum(e.freq_score for e in entries)
 
     def _companies(self, *, in_vtr_period: bool = False) -> dict[str, CompanySegmentStats]:
+        mkey = f"companies_{in_vtr_period}"
+        cached = self._memo.get(mkey)
+        if cached is not None:
+            return cached
         by_co: dict[str, list[TourEntry]] = defaultdict(list)
         vtr_dates = self._vtr_period_dates()
         for e in self.entries:
@@ -476,6 +513,7 @@ class SegmentStats:
                 min_price_day=ps["min"],
                 max_price_day=ps["max"],
             )
+        self._memo[mkey] = result
         return result
 
     @property
@@ -820,12 +858,23 @@ def summarize_context(tours: list[Tour], segments: list[SegmentStats]) -> dict:
     }
 
 
-def build_competitor_overview(tours: list[Tour], competitor: str) -> dict:
-    """Profile đối thủ dùng cùng engine so sánh với Vietravel."""
+def build_competitor_overview(
+    tours: list[Tour],
+    competitor: str,
+    *,
+    segments: list["SegmentStats"] | None = None,
+    tours_dedup: list[Tour] | None = None,
+) -> dict:
+    """Profile đối thủ dùng cùng engine so sánh với Vietravel.
+
+    Perf: caller (/competitor) đã có ctx.tours (đã dedup) + ctx.segments → truyền vào
+    để KHỎI rebuild deduplicate_tours + build_segment_stats (đo: ~874ms/lần click dư thừa).
+    """
     from classification import resolve_company_name
 
-    tours = deduplicate_tours(tours)
-    segments = build_segment_stats(tours, dedup=False)
+    tours = tours_dedup if tours_dedup is not None else deduplicate_tours(tours)
+    if segments is None:
+        segments = build_segment_stats(tours, dedup=False)
     comp_canonical = resolve_company_name(competitor)
     comp_lower = comp_canonical.strip().lower()
     comp_tours = [t for t in tours if resolve_company_name(t.cong_ty).lower() == comp_lower]
