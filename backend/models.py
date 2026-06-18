@@ -272,6 +272,27 @@ class Festival(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class FestivalTourMapping(Base):
+    """Bảng NỐI tour ↔ lễ hội (nhiều-nhiều) — nguồn sự thật cho việc gắn lễ.
+
+    Thay cho cột text đơn-trị Tour.festival_slug (giờ chỉ là CACHE lễ primary).
+    1 tour có thể gắn nhiều lễ (trùng mùa). `source` phân biệt nguồn tag để re-tag
+    theo ngày KHÔNG xoá link do rule/manual tạo.
+    """
+    __tablename__ = "festival_tour_mappings"
+    __table_args__ = (
+        UniqueConstraint("festival_id", "tour_id", name="uq_festival_tour"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    festival_id: Mapped[int] = mapped_column(ForeignKey("festivals.id", ondelete="CASCADE"), index=True)
+    tour_id: Mapped[int] = mapped_column(ForeignKey("tours.id", ondelete="CASCADE"), index=True)
+    festival_slug: Mapped[str] = mapped_column(String(256), default="", index=True)  # denormalize tiện query
+    distance_days: Mapped[int | None] = mapped_column(Integer, nullable=True)  # |lich_kh - date_start| gần nhất
+    source: Mapped[str] = mapped_column(String(16), default="date")  # 'date' | 'rule' | 'manual'
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class DailySnapshot(Base):
     """Snapshot KPI hàng ngày — trend & báo cáo."""
     __tablename__ = "daily_snapshots"

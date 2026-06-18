@@ -97,7 +97,7 @@ def tag_tours_with_festivals(
     Returns:
         Stats {tours_scanned, tours_tagged, tours_cleared, tours_province_updated}
     """
-    from models import Tour
+    from models import Tour, FestivalTourMapping
     from provinces import resolve_province_code
 
     festivals = _load_active_festivals(db)
@@ -122,13 +122,18 @@ def tag_tours_with_festivals(
     total = q.count()
     logger.info("Festival tagging: scan %d tour", total)
 
+    from provinces import get_region_for_code
+
     offset = 0
     while offset < total:
         tours = q.offset(offset).limit(TOUR_BATCH_SIZE).all()
         if not tours:
             break
+        batch_tour_ids: list[int] = []          # tour trong batch (để xoá link source='date' cũ)
+        batch_links: list[dict] = []            # link source='date' mới
         for t in tours:
             scanned += 1
+            batch_tour_ids.append(t.id)
             # 1. Update province_code from diem_kh (cache)
             current_province = (t.province_code or "")
             new_province = resolve_province_code(t.diem_kh or "")
@@ -145,26 +150,27 @@ def tag_tours_with_festivals(
                     cleared += 1
                 continue
 
-            # 3. Find best festival match
+            # 3. Gom MỌI lễ trong ngưỡng (nhiều lễ/tour → bảng nối); best = lễ primary (cache).
             best_slug: str | None = None
             best_distance: int | None = None
+            best_eff: int | None = None
             for f in festivals:
                 dist = _compute_min_distance(tour_dates, f.date_start, f.date_end)
-                if dist is None:
+                if dist is None or abs(dist) > distance_threshold:
                     continue
-                if abs(dist) > distance_threshold:
-                    continue
-                # Bonus: region match → ưu tiên (giảm |distance| 1 ngày khi cùng region)
                 effective_dist = abs(dist)
                 if t.province_code and f.province_code and t.province_code == f.province_code:
                     effective_dist = max(0, effective_dist - 1)
                 elif t.province_code and f.region:
-                    # Kiểm tra tour region match festival region
-                    from provinces import get_region_for_code
                     tour_region = get_region_for_code(t.province_code)
                     if tour_region and tour_region == f.region:
                         effective_dist = max(0, effective_dist - 1)
-                if best_distance is None or effective_dist < best_distance:
+                batch_links.append({
+                    "festival_id": f.id, "tour_id": t.id, "festival_slug": f.slug,
+                    "distance_days": dist, "source": "date",
+                })
+                if best_eff is None or effective_dist < best_eff:
+                    best_eff = effective_dist
                     best_slug = f.slug
                     best_distance = dist
 
@@ -180,6 +186,16 @@ def tag_tours_with_festivals(
                     t.festival_slug = None
                     t.festival_distance_days = None
                     cleared += 1
+
+        # Sync bảng nối cho batch: xoá link source='date' cũ (KHÔNG đụng 'rule'/'manual')
+        # rồi chèn lại. Re-tag theo ngày không xoá link do rule/manual gán.
+        if batch_tour_ids:
+            db.query(FestivalTourMapping).filter(
+                FestivalTourMapping.tour_id.in_(batch_tour_ids),
+                FestivalTourMapping.source == "date",
+            ).delete(synchronize_session=False)
+            if batch_links:
+                db.bulk_insert_mappings(FestivalTourMapping, batch_links)
 
         try:
             db.commit()
