@@ -2068,15 +2068,15 @@ function FestivalDetailModal({ slug, onClose }: { slug: string; onClose: () => v
               {/* Coverage stats */}
               {summary && (
                 <div>
-                  <h3 className="text-sm font-semibold text-gray-700 mb-2">Phủ tour ở đúng địa điểm lễ</h3>
+                  <h3 className="text-sm font-semibold text-gray-700 mb-2">Độ phủ tour gắn lễ</h3>
                   <div className="grid grid-cols-3 gap-3">
                     <StatCard label="Tổng tour gắn" value={summary.total_tours} accent="primary" />
-                    <StatCard label="VTR cover" value={summary.vtr_tours} />
+                    <StatCard label="VTR" value={summary.vtr_tours} />
                     <StatCard label="Đối thủ" value={summary.competitor_tours} />
                   </div>
                   {summary.avg_price && (
                     <p className="text-xs text-gray-500 mt-2">
-                      Giá trung bình tour cùng location: <strong className="text-gray-800">{fmtVND(summary.avg_price)}</strong>
+                      Giá TB tour gắn lễ: <strong className="text-gray-800">{fmtVND(summary.avg_price)}</strong>
                     </p>
                   )}
                 </div>
@@ -2091,7 +2091,8 @@ function FestivalDetailModal({ slug, onClose }: { slug: string; onClose: () => v
                       <thead className="bg-gray-50">
                         <tr>
                           <th className="px-2 py-1.5 text-left whitespace-nowrap">Công ty</th>
-                          <th className="px-2 py-1.5 text-left">Tên tour</th>
+                          <th className="px-2 py-1.5 text-left whitespace-nowrap">Thị trường</th>
+                          <th className="px-2 py-1.5 text-left">Tuyến / Tên tour</th>
                           <th className="px-2 py-1.5 text-right whitespace-nowrap">Giá</th>
                           <th className="px-2 py-1.5 text-right whitespace-nowrap">Ngày</th>
                           <th className="px-2 py-1.5 text-right whitespace-nowrap">Cách lễ</th>
@@ -2108,8 +2109,10 @@ function FestivalDetailModal({ slug, onClose }: { slug: string; onClose: () => v
                                 {t.cong_ty}
                               </span>
                             </td>
-                            <td className="px-2 py-1.5 max-w-[400px] truncate" title={t.ten_tour}>
-                              {t.ten_tour}
+                            <td className="px-2 py-1.5 whitespace-nowrap text-gray-600">{t.thi_truong || "—"}</td>
+                            <td className="px-2 py-1.5 max-w-[360px]">
+                              <div className="font-medium text-gray-800 truncate" title={t.tuyen_tour}>{t.tuyen_tour || "—"}</div>
+                              <div className="text-[10px] text-gray-400 truncate" title={t.ten_tour}>{t.ten_tour}</div>
                             </td>
                             <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap">{fmtVND(t.gia)}</td>
                             <td className="px-2 py-1.5 text-right text-gray-500 whitespace-nowrap">{t.so_ngay ? `${t.so_ngay}N` : "—"}</td>

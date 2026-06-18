@@ -204,13 +204,20 @@ def festival_tours(
     _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List tour gắn lễ này (tour.festival_slug = slug)."""
-    from models import Festival, Tour
+    """List tour gắn lễ này — từ BẢNG NỐI (nguồn sự thật, khớp đúng địa điểm/ngày
+    nghỉ), loại market 'Không xác định' + 'DV lẻ' như So sánh VTR."""
+    from models import Festival, FestivalTourMapping, Tour
+    from tour_filters import market_filter_clause
 
     f = db.query(Festival).filter(Festival.slug == slug).first()
     if not f:
         raise HTTPException(404, "Festival không tồn tại")
-    q = db.query(Tour).filter(Tour.festival_slug == slug)
+    q = (
+        db.query(Tour)
+        .join(FestivalTourMapping, FestivalTourMapping.tour_id == Tour.id)
+        .filter(FestivalTourMapping.festival_id == f.id)
+        .filter(market_filter_clause(Tour))
+    )
     if company:
         q = q.filter(Tour.cong_ty.ilike(f"%{company}%"))
     rows = q.order_by(Tour.cong_ty.asc(), Tour.gia.asc().nullslast()).limit(500).all()

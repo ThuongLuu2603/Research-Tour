@@ -128,7 +128,10 @@ def tag_tours_with_festivals(
     cleared = 0
     province_updated = 0
 
-    q = db.query(Tour).filter(Tour.lich_kh != "")
+    from tour_filters import market_filter_clause
+
+    # Loại market "Không xác định" + "DV lẻ" khỏi gắn lễ (giống So sánh VTR).
+    q = db.query(Tour).filter(Tour.lich_kh != "").filter(market_filter_clause(Tour))
     if only_untagged:
         q = q.filter(Tour.festival_slug.is_(None))
     total = q.count()
@@ -146,7 +149,11 @@ def tag_tours_with_festivals(
     for f in festivals:
         fpc = (f.province_code or "") or resolve_province_code(f.location_text or "")
         freg = f.region or (get_region_for_code(fpc) if fpc else "")
-        is_holiday = bool(f.is_lunar) or _is_public_holiday_name(f.name_vi) or (not fpc and not freg)
+        # CHỈ lễ thật sự là NGÀY NGHỈ (âm lịch / lễ dương toàn quốc) mới gắn theo
+        # ngày bất kể địa điểm. Sự kiện thường KHÔNG có địa điểm phân giải được
+        # (vd "Triển lãm …" location lỗi) → place-based + place_ok luôn False →
+        # KHÔNG gắn tour (tránh umbrella ôm hết mọi tour).
+        is_holiday = bool(f.is_lunar) or _is_public_holiday_name(f.name_vi)
         fest_meta[f.id] = (fpc, freg, is_holiday)
 
     offset = 0
@@ -414,9 +421,8 @@ def get_festival_tours_summary(db, slug: str) -> dict[str, Any]:
     "Cùng location" = tour có diem_kh / tuyen_tour / thi_truong chứa keyword
     location của festival (vd lễ Đắk Lắk → tour Đắk Lắk).
     """
-    import re
-    from models import Festival, Tour
-    from sqlalchemy import func, and_
+    from models import Festival, FestivalTourMapping, Tour
+    from sqlalchemy import func
 
     f = db.query(Festival).filter(Festival.slug == slug).first()
     if not f:
@@ -424,18 +430,15 @@ def get_festival_tours_summary(db, slug: str) -> dict[str, Any]:
 
     from tour_filters import market_filter_clause
 
-    loc_filter = _location_match_filter(f, Tour)
-    # Filter: tour có festival_slug = slug HOẶC (location match AND date overlap)
-    # Nhưng để consistency: chỉ giữ tour đã được tag (festival_slug = slug)
-    # VÀ location match (nếu có filter).
-    base_query = db.query(Tour).filter(
-        Tour.festival_slug == slug,
-        market_filter_clause(Tour),
+    # NGUỒN SỰ THẬT = bảng nối (engine đã khớp đúng theo địa điểm / ngày nghỉ lễ).
+    # Loại market "Không xác định" + "DV lẻ" như So sánh VTR (market_filter_clause).
+    base = (
+        db.query(Tour)
+        .join(FestivalTourMapping, FestivalTourMapping.tour_id == Tour.id)
+        .filter(FestivalTourMapping.festival_id == f.id)
+        .filter(market_filter_clause(Tour))
     )
-    if loc_filter is not None:
-        base_query = base_query.filter(loc_filter)
-
-    total = base_query.count()
+    total = base.count()
     if total == 0:
         return {
             "slug": slug,
@@ -447,30 +450,27 @@ def get_festival_tours_summary(db, slug: str) -> dict[str, Any]:
             "competitor_tours": 0,
         }
 
-    # Group by company
-    by_company_q = (
+    by_company = dict(
         db.query(Tour.cong_ty, func.count(Tour.id))
-        .filter(Tour.festival_slug == slug)
+        .join(FestivalTourMapping, FestivalTourMapping.tour_id == Tour.id)
+        .filter(FestivalTourMapping.festival_id == f.id)
         .filter(market_filter_clause(Tour))
+        .group_by(Tour.cong_ty)
+        .all()
     )
-    if loc_filter is not None:
-        by_company_q = by_company_q.filter(loc_filter)
-    by_company = dict(by_company_q.group_by(Tour.cong_ty).all())
 
-    # Avg price (chỉ tour có giá hợp lý, loại outlier + market "Không xác định")
-    avg_price_q = (
+    avg_price = (
         db.query(func.avg(Tour.gia))
+        .join(FestivalTourMapping, FestivalTourMapping.tour_id == Tour.id)
         .filter(
-            Tour.festival_slug == slug,
+            FestivalTourMapping.festival_id == f.id,
             Tour.gia.isnot(None),
             Tour.gia >= 500_000,
             Tour.gia <= 500_000_000,
             market_filter_clause(Tour),
         )
+        .scalar()
     )
-    if loc_filter is not None:
-        avg_price_q = avg_price_q.filter(loc_filter)
-    avg_price = avg_price_q.scalar()
 
     vtr = sum(c for co, c in by_company.items() if "vietravel" in (co or "").lower())
     return {
