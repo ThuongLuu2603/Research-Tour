@@ -20,7 +20,7 @@ import {
   getFestivalDashboardSummary,
   getFilterOptions,
   getFestivalMappingSummary, getFestivalMappingSuggestions, bulkCreateFestivalMappingRules,
-  createFestivalMappingRule,
+  createFestivalMappingRule, applyFestivalMappingRules,
   Festival, FestivalRegion, FestivalCategory, FestivalFilters,
   FestivalTourLite, CoverageGapItemExt,
 } from "@/lib/api";
@@ -1047,12 +1047,17 @@ function AutoSuggestModal({
   }, [data, initialized]);
 
   const createMut = useMutation({
-    mutationFn: (rules: Array<{ location_keyword: string; market_keyword?: string; route_keyword?: string }>) =>
-      bulkCreateFestivalMappingRules(rules),
+    mutationFn: async (rules: Array<{ location_keyword: string; market_keyword?: string; route_keyword?: string }>) => {
+      const res = await bulkCreateFestivalMappingRules(rules);
+      // Áp dụng NGAY (tag tour thật) thay vì chỉ "chạy nền" → người dùng thấy kết quả liền.
+      let tagged = 0;
+      try { tagged = (await applyFestivalMappingRules()).tours_tagged ?? 0; } catch { /* ignore */ }
+      return { ...res, tagged };
+    },
     onSuccess: (res) => {
       onCreated();
       // eslint-disable-next-line no-alert
-      alert(`Đã tạo ${res.inserted} mapping rule. Retag tour chạy nền…`);
+      alert(`Đã tạo ${res.inserted} rule · gắn ${res.tagged} tour vào lễ.`);
       onClose();
     },
     onError: (e: unknown) => {

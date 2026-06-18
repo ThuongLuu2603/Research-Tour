@@ -1703,21 +1703,35 @@ export interface FestivalMappingSuggestion {
   festival_slug: string;
   festival_name: string;
   location_text: string;
-  location_keyword: string;       // suggested keyword (prefilled từ location)
-  suggested_market: string;       // dropdown value matched từ DB
-  suggested_route: string;        // dropdown value matched từ DB
+  location_keyword: string;       // = suggested_location_keyword (đã map từ BE)
+  suggested_market: string;
+  suggested_route: string;
   confidence: number;             // 0..1 (UI: 0..100 %)
-  reason?: string;                // why suggested (debug/tooltip)
+  tour_count: number;
+  reason?: string;                // = reasoning (đã map từ BE)
 }
 
 export const getFestivalMappingSuggestions = async (limit = 20): Promise<{ suggestions: FestivalMappingSuggestion[] }> => {
-  const { data } = await api.get(`/festivals/insights/coverage-gap/mapping-suggestions?limit=${limit}`);
-  return data;
+  // BE: POST /admin/rules/festival-mapping/auto-suggest (trước FE gọi GET path khác → 404).
+  const { data } = await api.post(`/admin/rules/festival-mapping/auto-suggest?limit=${limit}`);
+  const suggestions: FestivalMappingSuggestion[] = (data?.suggestions ?? []).map((s: any) => ({
+    festival_slug: s.festival_slug,
+    festival_name: s.festival_name,
+    location_text: s.location_text,
+    location_keyword: s.suggested_location_keyword ?? s.location_keyword ?? "",
+    suggested_market: s.suggested_market ?? "",
+    suggested_route: s.suggested_route ?? "",
+    confidence: s.confidence ?? 0,
+    tour_count: s.tour_count ?? 0,
+    reason: s.reasoning ?? s.reason ?? "",
+  }));
+  return { suggestions };
 };
 
 export const bulkCreateFestivalMappingRules = async (rules: FestivalMappingRuleInput[]) => {
-  const { data } = await api.post("/admin/rules/festival-mapping/bulk", { rules });
-  return data as { inserted: number; ids: string[]; skipped?: number };
+  // BE path đúng là /bulk-create (trước FE gọi /bulk → 404).
+  const { data } = await api.post("/admin/rules/festival-mapping/bulk-create", { rules });
+  return data as { inserted: number; ids: string[]; skipped?: { index: string; reason: string }[] };
 };
 
 // Extended CoverageGapItem fields (Phase A backend will add tagged/implied split + has_rule).
