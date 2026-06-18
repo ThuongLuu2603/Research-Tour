@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -19,7 +19,7 @@ import { COL, GLOSSARY } from "@/lib/glossary";
 import { InfoTip, PageTitle, ThTip } from "@/components/InfoTip";
 import { CountUp } from "@/components/CountUp";
 import {
-  TrendingDown, TrendingUp, Minus, ExternalLink, Calendar, Building2, ArrowUpDown, Download,
+  TrendingDown, TrendingUp, Minus, ExternalLink, Calendar, Building2, ArrowUpDown, Download, Star,
 } from "lucide-react";
 
 // ── CSV export helper ────────────────────────────────────────────────────────
@@ -225,6 +225,28 @@ export default function VietravelCompare() {
   const [scatterMode, setScatterMode] = useState<"chenh" | "gia">("chenh");
   const [priceFilter, setPriceFilter] = useState<"all" | "expensive" | "cheap" | "similar">("all");
   const [priceSearch, setPriceSearch] = useState("");
+  const [watchOnly, setWatchOnly] = useState(false);
+  const [watchlist, setWatchlist] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("vtr_compare_watchlist") || "[]")); } catch { return new Set(); }
+  });
+  const toggleWatch = useCallback((key: string) => {
+    setWatchlist((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      try { localStorage.setItem("vtr_compare_watchlist", JSON.stringify([...next])); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+  // So sánh nhiều đối thủ song song (tối đa 4) — dùng ngay data trong bảng, không fetch thêm.
+  const [cmpSet, setCmpSet] = useState<Set<string>>(new Set());
+  const toggleCmp = useCallback((co: string) => {
+    setCmpSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(co)) next.delete(co);
+      else if (next.size < 4) next.add(co);
+      return next;
+    });
+  }, []);
   const [selectedFreqSeg, setSelectedFreqSeg] = useState<CompareSegment | null>(null);
 
   const handleSort = (col: SortCol) => {
@@ -378,8 +400,9 @@ export default function VietravelCompare() {
     else if (priceFilter === "similar") all = all.filter((s) => s.gap_pct != null && Math.abs(s.gap_pct) < 5);
     const q = priceSearch.trim().toLowerCase();
     if (q) all = all.filter((s) => `${s.thi_truong} ${s.tuyen_tour} ${s.diem_kh}`.toLowerCase().includes(q));
+    if (watchOnly) all = all.filter((s) => watchlist.has(s.segment_key));
     return all;
-  }, [segments?.items, priceFilter, priceSearch]);
+  }, [segments?.items, priceFilter, priceSearch, watchOnly, watchlist]);
 
   const priceChartFull = (segments?.items ?? []).filter((s) => s.gap_pct != null).map((s) => ({
     name: `${s.tuyen_tour} (${s.diem_kh})`,
@@ -1053,6 +1076,12 @@ export default function VietravelCompare() {
                   </button>
                 );
               })}
+              <button type="button"
+                className={cn("text-xs px-2.5 py-1 rounded-full font-medium transition-all bg-amber-100 text-amber-800 inline-flex items-center gap-1",
+                  watchOnly ? "ring-2 ring-offset-1 ring-amber-400" : "opacity-70 hover:opacity-100")}
+                onClick={() => setWatchOnly((v) => !v)}>
+                <Star size={12} className={watchOnly ? "fill-amber-500" : ""} /> Theo dõi ({watchlist.size})
+              </button>
               <button type="button" className="btn-secondary text-xs flex items-center gap-1"
                 disabled={!filteredPriceItems.length}
                 onClick={() => exportSegmentsCsv(filteredPriceItems)}>
@@ -1060,6 +1089,35 @@ export default function VietravelCompare() {
               </button>
             </div>
           </div>
+          {/* Tuyến đang theo dõi — sparkline xu hướng chênh giá (chỉ fetch cho watchlist nhỏ) */}
+          {watchlist.size > 0 && (
+            <div className="card p-3">
+              <p className="text-xs font-semibold text-amber-800 mb-2 flex items-center gap-1">
+                <Star size={13} className="fill-amber-400 text-amber-500" /> Tuyến đang theo dõi ({watchlist.size})
+              </p>
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {[...watchlist].map((key) => {
+                  const seg = (segments?.items ?? []).find((s) => s.segment_key === key);
+                  return (
+                    <div key={key} className="border rounded-lg p-2 bg-gray-50/50">
+                      <div className="flex items-start justify-between gap-1 mb-1">
+                        <button type="button" className="text-[11px] font-medium text-left hover:text-primary-600 line-clamp-2"
+                          onClick={() => setSelectedKey(key)} title="Mở chi tiết">
+                          {seg ? `${seg.tuyen_tour} · ${seg.diem_kh}` : key}
+                          {seg?.gap_pct != null && <GapBadge pct={seg.gap_pct} />}
+                        </button>
+                        <button type="button" className="shrink-0" title="Bỏ theo dõi" onClick={() => toggleWatch(key)}>
+                          <Star size={12} className="fill-amber-400 text-amber-500" />
+                        </button>
+                      </div>
+                      <SegmentHistoryMini segmentKey={key} />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Chart 2: Grouped Bar — Giá TB VTR vs TT theo thị trường */}
           {marketPriceBar.length > 0 && (
             <div className="card p-4">
@@ -1092,8 +1150,10 @@ export default function VietravelCompare() {
                   />
                   <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }}
                     formatter={(v) => v === "vtr_avg" ? "Giá TB VTR" : "Giá so sánh TT"} />
-                  <Bar dataKey="vtr_avg" name="vtr_avg" fill="#003580" radius={[0, 3, 3, 0]} barSize={10} />
-                  <Bar dataKey="tt_avg"  name="tt_avg"  fill="#94a3b8" radius={[0, 3, 3, 0]} barSize={10} />
+                  <Bar dataKey="vtr_avg" name="vtr_avg" fill="#003580" radius={[0, 3, 3, 0]} barSize={10} className="cursor-pointer"
+                    onClick={(d: any) => d?.fullMarket && (setThiTruong(d.fullMarket), setTuyenTour(""))} />
+                  <Bar dataKey="tt_avg"  name="tt_avg"  fill="#94a3b8" radius={[0, 3, 3, 0]} barSize={10} className="cursor-pointer"
+                    onClick={(d: any) => d?.fullMarket && (setThiTruong(d.fullMarket), setTuyenTour(""))} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -1134,7 +1194,13 @@ export default function VietravelCompare() {
                     <tr key={s.segment_key}
                       className={cn("border-t cursor-pointer", rowBg, selectedKey === s.segment_key && "ring-1 ring-inset ring-primary-400")}
                       onClick={() => setSelectedKey(s.segment_key)}>
-                      <td className="px-2 py-2">{s.thi_truong}</td>
+                      <td className="px-2 py-2 whitespace-nowrap">
+                        <button type="button" className="mr-1 align-middle" title="Ghim theo dõi tuyến này"
+                          onClick={(e) => { e.stopPropagation(); toggleWatch(s.segment_key); }}>
+                          <Star size={12} className={watchlist.has(s.segment_key) ? "fill-amber-400 text-amber-500" : "text-gray-300 hover:text-amber-400"} />
+                        </button>
+                        {s.thi_truong}
+                      </td>
                       <td className="px-2 py-2 max-w-[110px] truncate" title={s.tuyen_tour}>{s.tuyen_tour}</td>
                       <td className="px-2 py-2">{s.diem_kh}</td>
                       <td className="px-2 py-2">{fmtDays(s.so_ngay)}</td>
@@ -1433,6 +1499,7 @@ export default function VietravelCompare() {
             </div>
             <table className="w-full text-xs">
               <thead className="bg-gray-50"><tr>
+                <th className="px-1 py-2 w-6" title="Chọn so sánh (tối đa 4)"><Star size={11} className="text-gray-300 mx-auto" /></th>
                 {[
                   [COL.congTy, GLOSSARY.congTy],
                   ["Score", "Điểm 'đối thủ nặng ký' 0–100. Gia quyền: Nhóm trùng 35% (cạnh tranh trực diện) + Tần suất tổng 30% (quy mô) + Số chương trình 15% (độ phủ SP) + Giá cạnh tranh 20% (rẻ hơn VTR). Chuẩn hoá theo đối thủ mạnh nhất."],
@@ -1450,6 +1517,11 @@ export default function VietravelCompare() {
                     <tr key={c.cong_ty}
                       className={cn("border-t cursor-pointer hover:bg-blue-50", selectedCompetitor === c.cong_ty && "bg-blue-50")}
                       onClick={() => setSelectedCompetitor(c.cong_ty)}>
+                      <td className="px-1 py-2 text-center" onClick={(e) => e.stopPropagation()}>
+                        <input type="checkbox" className="rounded" checked={cmpSet.has(c.cong_ty)}
+                          disabled={!cmpSet.has(c.cong_ty) && cmpSet.size >= 4}
+                          onChange={() => toggleCmp(c.cong_ty)} title="Chọn để so sánh song song" />
+                      </td>
                       <td className="px-2 py-2 font-medium">{c.cong_ty}</td>
                       <td className="px-2 py-2">
                         {c.score != null ? (
@@ -1478,10 +1550,44 @@ export default function VietravelCompare() {
             </table>
           </div>
           <div className="lg:col-span-2 space-y-4">
-            {!selectedCompetitor && (
+            {cmpSet.size >= 2 && (() => {
+              const sel = (competitors?.items ?? []).filter((c: any) => cmpSet.has(c.cong_ty));
+              const metrics: Array<[string, (c: any) => any]> = [
+                ["Score", (c) => c.score ?? "—"],
+                ["Nhóm trùng", (c) => c.overlap_segments ?? "—"],
+                ["Sản phẩm", (c) => c.tour_count ?? "—"],
+                ["TB đoàn/tháng", (c) => c.freq_monthly != null && c.tour_count ? Math.round(c.freq_monthly / Math.max(c.tour_count, 1)) : "—"],
+                ["Giá/ngày TB", (c) => fmtVND(c.avg_price_day)],
+                ["Xu hướng TT", (c) => c.market_trend != null ? `${c.market_trend > 0 ? "+" : ""}${c.market_trend}%` : "—"],
+              ];
+              return (
+                <div className="card overflow-auto">
+                  <div className="px-4 py-2 border-b font-semibold text-sm flex items-center gap-2">
+                    So sánh {sel.length} đối thủ
+                    <button type="button" className="text-[11px] text-gray-400 hover:text-gray-700 ml-auto" onClick={() => setCmpSet(new Set())}>Xóa chọn</button>
+                  </div>
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50"><tr>
+                      <th className="px-2 py-2 text-left text-gray-500">Chỉ số</th>
+                      {sel.map((c: any) => <th key={c.cong_ty} className="px-2 py-2 text-left font-semibold">{c.cong_ty}</th>)}
+                    </tr></thead>
+                    <tbody>
+                      {metrics.map(([label, fn]) => (
+                        <tr key={label} className="border-t">
+                          <td className="px-2 py-1.5 text-gray-500">{label}</td>
+                          {sel.map((c: any) => <td key={c.cong_ty} className="px-2 py-1.5 font-medium">{fn(c)}</td>)}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+            {!selectedCompetitor && cmpSet.size < 2 && (
               <div className="card p-12 text-center text-gray-400">
                 <Building2 size={40} className="mx-auto mb-3 opacity-40" />
                 <p>Chọn đối thủ để xem segment trùng với Vietravel</p>
+                <p className="text-[11px] mt-1">Hoặc tick ô ☑ ở 2-4 đối thủ để so sánh song song</p>
               </div>
             )}
             {compDetail && (
@@ -1650,9 +1756,12 @@ export default function VietravelCompare() {
                   <YAxis type="category" dataKey="thi_truong" width={96} tick={{ fontSize: 10, fill: "#334155" }} />
                   <Tooltip contentStyle={{ fontSize: 11 }} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Bar dataKey="both" name="Cả hai" stackId="a" fill="#16a34a" />
-                  <Bar dataKey="vtr_only" name="Chỉ VTR" stackId="a" fill="#2563eb" />
-                  <Bar dataKey="market_only" name="Chỉ TT (gap)" stackId="a" fill="#f59e0b" />
+                  <Bar dataKey="both" name="Cả hai" stackId="a" fill="#16a34a" className="cursor-pointer"
+                    onClick={(d: any) => d?.thi_truong && setCovSearch(d.thi_truong)} />
+                  <Bar dataKey="vtr_only" name="Chỉ VTR" stackId="a" fill="#2563eb" className="cursor-pointer"
+                    onClick={(d: any) => d?.thi_truong && setCovSearch(d.thi_truong)} />
+                  <Bar dataKey="market_only" name="Chỉ TT (gap)" stackId="a" fill="#f59e0b" className="cursor-pointer"
+                    onClick={(d: any) => { if (d?.thi_truong) { setCovSearch(d.thi_truong); setCovStatus("market_only"); } }} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
