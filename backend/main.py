@@ -98,6 +98,13 @@ def _run_startup_maintenance() -> None:
         db = SessionLocal()
         try:
             prewarm_compare_cache(db)
+            # Seed lễ ÂM LỊCH lúc khởi động → DB mới luôn có lễ chính (Tết, Vu Lan…)
+            # mà không phụ thuộc admin bấm tay. Best-effort.
+            try:
+                from lunar_festivals import seed_lunar_festivals
+                seed_lunar_festivals(db)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Seed lunar festivals (startup) skipped: %s", e)
         finally:
             db.close()
     except Exception as e:

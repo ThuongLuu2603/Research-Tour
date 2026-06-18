@@ -346,6 +346,12 @@ def _run_festival_scrape() -> None:
     def _do() -> dict:
         db = SessionLocal()
         try:
+            # Seed lễ ÂM LỊCH (Tết, Vu Lan…) — loại quan trọng nhất, không có trên web scrape.
+            try:
+                from lunar_festivals import seed_lunar_festivals
+                seed_lunar_festivals(db)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Seed lunar festivals lỗi: %s", e)
             return run_with_retry(
                 lambda: run_festival_scrape(db),
                 db=db, label="sched-festival-scrape",
@@ -353,7 +359,7 @@ def _run_festival_scrape() -> None:
         finally:
             db.close()
 
-    _track_as_scrape_job("festival_scrape", "Festival scrape vietnam.travel", _do)
+    _track_as_scrape_job("festival_scrape", "Festival scrape vietnam.travel + seed âm lịch", _do)
 
 
 def _run_daily_sheet_sync() -> None:
@@ -571,6 +577,14 @@ def _run_daily_chain():
         _sync_main_sheet()
     except Exception as e:  # noqa: BLE001
         logger.exception("[CHAIN 3/5] Sync Main lỗi: %s", e)
+
+    # 3b. Cập nhật DANH SÁCH lễ hội (scrape web + seed âm lịch) TRƯỚC khi tag — để tour
+    # và lễ luôn đồng bộ (trước đây lễ đứng yên vì scrape không nằm trong chuỗi).
+    logger.info("[CHAIN 3b] Cập nhật lễ hội (scrape + seed âm lịch)")
+    try:
+        _run_festival_scrape()  # chạy đồng bộ (block) qua _track_as_scrape_job
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[CHAIN 3b] Festival scrape lỗi: %s", e)
 
     # 4. Festival tour tagging (T3 Phase 2) — gắn tour với lễ sau khi data mới.
     logger.info("[CHAIN 4/5] Festival tour tagging")

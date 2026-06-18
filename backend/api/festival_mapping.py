@@ -153,7 +153,7 @@ def apply_rules(
       4. Tour đã có festival_slug khác → bỏ qua (không ghi đè).
     """
     from sqlalchemy import func
-    from models import Festival, Tour
+    from models import Festival, Tour, FestivalTourMapping
     from tour_filters import market_filter_clause
 
     rules = (
@@ -186,8 +186,9 @@ def apply_rules(
                 "skip": "không có festival nào match location",
             })
             continue
-        # Step 2: build query tour matching market+route
-        q = db.query(Tour).filter(market_filter_clause(Tour), Tour.festival_slug.is_(None))
+        # Step 2: tour matching market+route. BỎ điều kiện festival_slug.is_(None) — bảng
+        # nối cho phép 1 tour gắn nhiều lễ; rule không còn bị engine date ghi đè.
+        q = db.query(Tour).filter(market_filter_clause(Tour))
         mk = r.market_keyword.strip()
         rk = r.route_keyword.strip()
         if mk:
@@ -208,9 +209,28 @@ def apply_rules(
         upcoming = [f for f in festivals if f.date_end >= today]
         target_festival = upcoming[0] if upcoming else festivals[-1]
 
+        # Link đã tồn tại cho (festival này, các tour) — tránh vi phạm unique.
+        tour_ids = [t.id for t in tours]
+        existing = {
+            row[0] for row in db.query(FestivalTourMapping.tour_id).filter(
+                FestivalTourMapping.festival_id == target_festival.id,
+                FestivalTourMapping.tour_id.in_(tour_ids),
+            ).all()
+        }
+        new_links = []
         for t in tours:
-            t.festival_slug = target_festival.slug
-            t.festival_distance_days = 0  # manual rule = trùng
+            # festival_slug = cache PRIMARY: chỉ set khi tour chưa có (không clobber lễ
+            # primary do date-engine chọn). Liên kết rule luôn vào bảng nối.
+            if t.festival_slug is None:
+                t.festival_slug = target_festival.slug
+                t.festival_distance_days = 0
+            if t.id not in existing:
+                new_links.append({
+                    "festival_id": target_festival.id, "tour_id": t.id,
+                    "festival_slug": target_festival.slug, "distance_days": 0, "source": "rule",
+                })
+        if new_links:
+            db.bulk_insert_mappings(FestivalTourMapping, new_links)
 
         try:
             db.commit()
