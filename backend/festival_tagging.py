@@ -28,10 +28,18 @@ DEFAULT_DISTANCE_THRESHOLD_DAYS = 3
 ACTIVE_FESTIVAL_LOOKBACK_DAYS = 7
 # Batch size để không OOM khi tour ~50k.
 TOUR_BATCH_SIZE = 500
-# Lễ "ô dù" (vd "Năm Du lịch Quốc gia" kéo dài cả năm) KHÔNG khớp theo ngày: range
-# quá dài → mọi tour trong năm đều "trùng" → false positive. Lễ dài hơn ngưỡng này
-# chỉ gắn qua RULE địa điểm (apply_rules), không qua date-engine.
-MAX_DATE_MATCH_DURATION_DAYS = 45
+
+# Lễ = NGÀY NGHỈ toàn quốc (solar) → dân nghỉ đi du lịch bất kỳ đâu → gắn theo NGÀY,
+# không cần địa điểm tổ chức. (Lễ âm lịch Tết/Giỗ Tổ/Vu Lan… nhận qua is_lunar.)
+_PUBLIC_HOLIDAY_NAME_KW = (
+    "quốc khánh", "giải phóng", "thống nhất", "quốc tế lao động",
+    "tết dương", "dương lịch", "giỗ tổ", "30/4", "1/5", "2/9",
+)
+
+
+def _is_public_holiday_name(name: str | None) -> bool:
+    n = (name or "").lower()
+    return any(kw in n for kw in _PUBLIC_HOLIDAY_NAME_KW)
 
 
 def _compute_min_distance(
@@ -128,16 +136,18 @@ def tag_tours_with_festivals(
 
     from provinces import get_region_for_code
 
-    # Lễ khớp-theo-ngày: loại lễ "ô dù" quá dài (range > ngưỡng) — chúng chỉ nên gắn
-    # qua rule địa điểm, không khớp ngày (nếu không cả năm trùng mọi tour).
-    date_festivals = [
-        f for f in festivals
-        if (f.date_end - f.date_start).days <= MAX_DATE_MATCH_DURATION_DAYS
-    ]
-    skipped_umbrella = len(festivals) - len(date_festivals)
-    if skipped_umbrella:
-        logger.info("Festival tagging: bỏ %d lễ ô-dù (>%dd) khỏi khớp-ngày",
-                    skipped_umbrella, MAX_DATE_MATCH_DURATION_DAYS)
+    # Phân loại từng lễ (1 lần) để quyết định CÁCH gắn:
+    #   • is_holiday=True (Tết, Giỗ Tổ, Quốc khánh, 30/4, 1/5… — lunar lẫn solar, hoặc
+    #     lễ không có địa điểm cụ thể): dân nghỉ đi du lịch BẤT KỲ ĐÂU → gắn theo NGÀY,
+    #     KHÔNG cần địa điểm (chấp nhận cả tour outbound).
+    #   • is_holiday=False (lễ CÓ địa điểm: Lễ Sen Đồng Tháp, Năm DL Gia Lai…): chỉ
+    #     tour ĐI ĐÚNG NƠI (tỉnh/vùng của lễ) mới thuộc lễ → bắt buộc khớp địa điểm.
+    fest_meta: dict[int, tuple[str, str, bool]] = {}
+    for f in festivals:
+        fpc = (f.province_code or "") or resolve_province_code(f.location_text or "")
+        freg = f.region or (get_region_for_code(fpc) if fpc else "")
+        is_holiday = bool(f.is_lunar) or _is_public_holiday_name(f.name_vi) or (not fpc and not freg)
+        fest_meta[f.id] = (fpc, freg, is_holiday)
 
     offset = 0
     while offset < total:
@@ -155,16 +165,6 @@ def tag_tours_with_festivals(
             if new_province and new_province != current_province:
                 t.province_code = new_province
                 province_updated += 1
-
-            # Lễ hội đều là sự kiện trong nước → tour OUTBOUND (Châu Âu, Ai Cập, Nhật…)
-            # không bao giờ "thuộc lễ" VN. Bỏ qua + gỡ link cũ nếu có.
-            tt_lower = (t.thi_truong or "").lower()
-            if any(kw in tt_lower for kw in _FOREIGN_MARKET_KEYWORDS):
-                if t.festival_slug:
-                    t.festival_slug = None
-                    t.festival_distance_days = None
-                    cleared += 1
-                continue
 
             # 2. Parse lich_kh
             tour_dates = _parse_tour_lich_kh(t.lich_kh)
@@ -184,19 +184,25 @@ def tag_tours_with_festivals(
             best_slug: str | None = None
             best_distance: int | None = None
             best_eff: int | None = None
-            for f in date_festivals:
+            for f in festivals:
                 dist = _compute_min_distance(tour_dates, f.date_start, f.date_end)
                 if dist is None or abs(dist) > distance_threshold:
                     continue
-                # Cổng VÙNG MIỀN: nếu biết chắc cả vùng đích của tour lẫn vùng lễ mà
-                # KHÁC nhau → không gắn (vd lễ Gia Lai 'trung' vs tour Hà Giang 'bac').
-                # Chỉ lọc khi cả hai đã xác định — tránh prune nhầm khi chưa rõ đích.
-                if dest_region and f.region and dest_region != f.region:
-                    continue
+                fpc, freg, is_holiday = fest_meta[f.id]
+                if not is_holiday:
+                    # Lễ CÓ địa điểm → tour phải ĐI ĐÚNG NƠI: tỉnh khớp, hoặc cùng vùng.
+                    # Không xác định được đích tour → KHÔNG gắn (loại outbound + sai nơi,
+                    # vd lễ Gia Lai vs tour Trung Quốc/Hà Giang).
+                    place_ok = (
+                        (fpc and dest_pc and dest_pc == fpc) or
+                        (freg and dest_region and dest_region == freg)
+                    )
+                    if not place_ok:
+                        continue
                 effective_dist = abs(dist)
-                if dest_pc and f.province_code and dest_pc == f.province_code:
+                if fpc and dest_pc and dest_pc == fpc:
                     effective_dist = max(0, effective_dist - 1)
-                elif dest_region and f.region and dest_region == f.region:
+                elif freg and dest_region and dest_region == freg:
                     effective_dist = max(0, effective_dist - 1)
                 batch_links.append({
                     "festival_id": f.id, "tour_id": t.id, "festival_slug": f.slug,
