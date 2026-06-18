@@ -165,6 +165,16 @@ def apply_rules(
     if not rules:
         return {"message": "Không có rule active", "rules_applied": 0, "tours_tagged": 0}
 
+    # Xoá HẾT link source='rule' cũ rồi tạo lại từ đầu → loại bỏ link sai/không ngày
+    # do bản cũ (gắn theo địa điểm bất kể ngày) để lại. Không đụng 'date'/'manual'.
+    try:
+        db.query(FestivalTourMapping).filter(
+            FestivalTourMapping.source == "rule"
+        ).delete(synchronize_session=False)
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+
     total_tagged = 0
     rule_stats: list[dict[str, Any]] = []
     today = date.today() if False else __import__("datetime").date.today()
@@ -205,34 +215,53 @@ def apply_rules(
                 "skip": "không có tour matching market/route",
             })
             continue
-        # Step 3: chọn festival GẦN NHẤT (chưa kết thúc, sắp tới)
-        # Ưu tiên festival có date_end >= today; nếu không, lấy cái cuối (gần nhất quá khứ)
-        upcoming = [f for f in festivals if f.date_end >= today]
-        target_festival = upcoming[0] if upcoming else festivals[-1]
+        # Step 3: BẮT BUỘC khớp NGÀY + địa điểm. Tour KHÔNG có ngày khởi hành → KHÔNG
+        # gắn. Mỗi tour chỉ gắn vào lễ (trong nhóm location) mà ngày KH rơi trong
+        # khoảng ±window của lễ. (Trước đây gắn mọi tour vào 1 lễ "gần nhất" bất kể
+        # ngày → tour không ngày KH vẫn dính.)
+        from festival_tagging import (
+            _parse_tour_lich_kh, _compute_min_distance, DEFAULT_DISTANCE_THRESHOLD_DAYS,
+        )
 
-        # Link đã tồn tại cho (festival này, các tour) — tránh vi phạm unique.
+        window = int(getattr(r, "date_window_days", 0) or 0) or DEFAULT_DISTANCE_THRESHOLD_DAYS
+        fest_ids = [f.id for f in festivals]
         tour_ids = [t.id for t in tours]
-        existing = {
-            row[0] for row in db.query(FestivalTourMapping.tour_id).filter(
-                FestivalTourMapping.festival_id == target_festival.id,
+        existing_pairs = set(
+            db.query(FestivalTourMapping.festival_id, FestivalTourMapping.tour_id).filter(
+                FestivalTourMapping.festival_id.in_(fest_ids),
                 FestivalTourMapping.tour_id.in_(tour_ids),
             ).all()
-        }
+        )
         new_links = []
+        seen_pairs: set[tuple[int, int]] = set()
+        tagged_count = 0
+        now = datetime.utcnow()
         for t in tours:
-            # festival_slug = cache PRIMARY: chỉ set khi tour chưa có (không clobber lễ
-            # primary do date-engine chọn). Liên kết rule luôn vào bảng nối.
-            if t.festival_slug is None:
-                t.festival_slug = target_festival.slug
-                t.festival_distance_days = 0
-            if t.id not in existing:
-                new_links.append({
-                    "festival_id": target_festival.id, "tour_id": t.id,
-                    "festival_slug": target_festival.slug, "distance_days": 0, "source": "rule",
-                    # bulk_insert_mappings bỏ qua Python default → set created_at tay
-                    # nếu không NULL vi phạm NOT NULL → rollback (bảng nối rỗng).
-                    "created_at": datetime.utcnow(),
-                })
+            dates = _parse_tour_lich_kh(t.lich_kh or "")
+            if not dates:
+                continue  # không có ngày KH → không thể khớp lễ → bỏ
+            best_f = None
+            best_dist = None
+            for f in festivals:
+                dist = _compute_min_distance(dates, f.date_start, f.date_end)
+                if dist is None or abs(dist) > window:
+                    continue
+                pair = (f.id, t.id)
+                if pair not in existing_pairs and pair not in seen_pairs:
+                    seen_pairs.add(pair)
+                    new_links.append({
+                        "festival_id": f.id, "tour_id": t.id,
+                        "festival_slug": f.slug, "distance_days": dist, "source": "rule",
+                        "created_at": now,
+                    })
+                if best_dist is None or abs(dist) < abs(best_dist):
+                    best_dist = dist
+                    best_f = f
+            if best_f is not None:
+                tagged_count += 1
+                if t.festival_slug is None:
+                    t.festival_slug = best_f.slug
+                    t.festival_distance_days = best_dist
         if new_links:
             db.bulk_insert_mappings(FestivalTourMapping, new_links)
 
@@ -246,10 +275,9 @@ def apply_rules(
         rule_stats.append({
             "location_keyword": loc_kw,
             "festivals_matched": len(festivals),
-            "target_festival_name": target_festival.name_vi,
-            "tagged": len(tours),
+            "tagged": tagged_count,
         })
-        total_tagged += len(tours)
+        total_tagged += tagged_count
     logger.info("Festival manual mapping: %d tours tagged across %d rules", total_tagged, len(rules))
     _invalidate_festival_caches()
     return {
