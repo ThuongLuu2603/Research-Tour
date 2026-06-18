@@ -411,6 +411,7 @@ export default function VietravelCompare() {
   const priceChartFull = (segments?.items ?? []).filter((s) => s.gap_pct != null).map((s) => ({
     name: `${s.tuyen_tour} (${s.diem_kh})`,
     gap: s.gap_pct,
+    segment_key: s.segment_key,
   }));
   const priceChart = priceChartFull.slice(0, 12).map((s) => ({ ...s, name: s.name.length > 28 ? s.name.slice(0, 27) + "…" : s.name }));
 
@@ -481,10 +482,10 @@ export default function VietravelCompare() {
     const similar2  = all.filter((s) => s.gap_pct != null && Math.abs(s.gap_pct) < 5).length;
     const cheap2    = all.filter((s) => (s.gap_pct ?? 0) <= -5).length;
     return [
-      { name: "Đắt nhiều (≥15%)", value: severe,   fill: "#dc2626" },
-      { name: "Đắt ít (5–15%)",   value: moderate, fill: "#f97316" },
-      { name: "Gần ngang",         value: similar2,  fill: "#3b82f6" },
-      { name: "Rẻ hơn TT",        value: cheap2,   fill: "#16a34a" },
+      { name: "Đắt nhiều (≥15%)", value: severe,   fill: "#dc2626", bucket: "expensive" as const },
+      { name: "Đắt ít (5–15%)",   value: moderate, fill: "#f97316", bucket: "expensive" as const },
+      { name: "Gần ngang",         value: similar2,  fill: "#3b82f6", bucket: "similar" as const },
+      { name: "Rẻ hơn TT",        value: cheap2,   fill: "#16a34a", bucket: "cheap" as const },
     ].filter((d) => d.value > 0);
   }, [segments?.items]);
 
@@ -835,7 +836,7 @@ export default function VietravelCompare() {
           )}
           <div className="card p-5">
             <div className="flex items-center justify-between mb-3 gap-2">
-              <h3 className="font-semibold inline-flex items-center">{COL.chenhPct} VTR vs {COL.giaSoSanh}<InfoTip text={GLOSSARY.chenhGia} /></h3>
+              <h3 className="font-semibold inline-flex items-center">{COL.chenhPct} VTR vs {COL.giaSoSanh}<InfoTip text={GLOSSARY.chenhGia} /><span className="ml-1.5 text-[10px] font-normal text-gray-400">· bấm thanh để xem chi tiết</span></h3>
               {priceChartFull.length > 12 && (
                 <button type="button" onClick={() => setChartModal("price")}
                   className="text-xs text-primary-600 hover:text-primary-800 font-medium whitespace-nowrap">
@@ -853,7 +854,8 @@ export default function VietravelCompare() {
               <BarChart key={priceChart.length} data={priceChart} layout="vertical"><XAxis type="number" tickFormatter={(v) => `${v}%`} />
                 <YAxis dataKey="name" type="category" width={130} tick={{ fontSize: 9 }} />
                 <Tooltip formatter={(v: number) => [`${v}%`, "Chênh lệch"]} /><ReferenceLine x={0} stroke="#666" />
-                <Bar dataKey="gap" radius={[0, 4, 4, 0]}>{priceChart.map((e, i) => <Cell key={i} fill={(e.gap ?? 0) <= 0 ? "#16a34a" : "#dc2626"} />)}</Bar>
+                <Bar dataKey="gap" radius={[0, 4, 4, 0]} className="cursor-pointer"
+                  onClick={(d: any) => d?.segment_key && setSelectedKey(d.segment_key)}>{priceChart.map((e, i) => <Cell key={i} fill={(e.gap ?? 0) <= 0 ? "#16a34a" : "#dc2626"} />)}</Bar>
               </BarChart>
             </ResponsiveContainer>
             </div>
@@ -866,6 +868,7 @@ export default function VietravelCompare() {
                 ? `${COL.chenhPct} theo ${COL.giaSoSanh}`
                 : `${COL.giaTbVtr} vs ${COL.giaSoSanh}`}
               <InfoTip text={GLOSSARY.scatterGia} />
+              <span className="ml-1.5 text-[10px] font-normal text-gray-400">· bấm điểm để xem chi tiết</span>
             </h3>
             <div className="flex flex-wrap gap-2 mb-3">
               <button
@@ -967,6 +970,7 @@ export default function VietravelCompare() {
                 )}
                 <Scatter
                   data={scatterData}
+                  onClick={(d: any) => d?.segment_key && setSelectedKey(d.segment_key)}
                   shape={(props) => {
                     const { cx, cy, payload } = props as {
                       cx?: number;
@@ -985,6 +989,7 @@ export default function VietravelCompare() {
                         fillOpacity={0.82}
                         stroke="#fff"
                         strokeWidth={1}
+                        style={{ cursor: "pointer" }}
                       />
                     );
                   }}
@@ -1032,6 +1037,8 @@ export default function VietravelCompare() {
                       innerRadius={48} outerRadius={75}
                       paddingAngle={3}
                       dataKey="value"
+                      className="cursor-pointer"
+                      onClick={(d: any) => { if (d?.bucket) { setPriceFilter(d.bucket); setTab("price"); } }}
                     >
                       {positionDonut.map((entry, i) => (
                         <Cell key={i} fill={entry.fill} />
@@ -1042,12 +1049,17 @@ export default function VietravelCompare() {
                 </ResponsiveContainer>
                 <ul className="space-y-1.5 mt-1">
                   {positionDonut.map((d) => (
-                    <li key={d.name} className="flex items-center justify-between text-xs">
-                      <span className="flex items-center gap-1.5">
-                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: d.fill }} />
-                        {d.name}
-                      </span>
-                      <span className="font-bold" style={{ color: d.fill }}>{d.value}</span>
+                    <li key={d.name}>
+                      <button type="button"
+                        className="w-full flex items-center justify-between text-xs hover:bg-gray-50 rounded px-1 py-0.5 transition-colors"
+                        title="Bấm để xem danh sách tuyến nhóm này"
+                        onClick={() => { setPriceFilter(d.bucket); setTab("price"); }}>
+                        <span className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: d.fill }} />
+                          {d.name}
+                        </span>
+                        <span className="font-bold" style={{ color: d.fill }}>{d.value}</span>
+                      </button>
                     </li>
                   ))}
                 </ul>
