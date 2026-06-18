@@ -1409,6 +1409,7 @@ export interface FestivalTourLite {
   gia: number | null;
   so_ngay: number | null;
   nguon: string;
+  link_url: string;
   festival_distance_days: number | null;
 }
 

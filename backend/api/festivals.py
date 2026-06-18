@@ -194,6 +194,7 @@ class TourLite(BaseModel):
     gia: float | None
     so_ngay: float | None
     nguon: str
+    link_url: str = ""
     festival_distance_days: int | None
 
 
@@ -233,6 +234,7 @@ def festival_tours(
             gia=t.gia,
             so_ngay=t.so_ngay,
             nguon=t.nguon or "",
+            link_url=t.link_url or "",
             festival_distance_days=t.festival_distance_days,
         )
         for t in rows

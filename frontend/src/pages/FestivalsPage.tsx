@@ -1918,6 +1918,44 @@ function LunarTab() {
   );
 }
 
+// Danh sách tour của 1 công ty gắn lễ — xổ ra khi bấm "Chi tiết".
+function CompanyTourList({ slug, company }: { slug: string; company: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["festival-tours", slug, company],
+    queryFn: () => listFestivalTours(slug, company),
+  });
+  if (isLoading) return <div className="text-xs text-gray-500 py-2 flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> Đang tải tour…</div>;
+  if (!data || data.length === 0) return <div className="text-xs text-gray-400 py-2">Không có tour.</div>;
+  return (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-gray-500">
+          <th className="px-2 py-1 text-left">Tên tour</th>
+          <th className="px-2 py-1 text-left whitespace-nowrap">Tuyến</th>
+          <th className="px-2 py-1 text-right whitespace-nowrap">Giá</th>
+          <th className="px-2 py-1 text-center whitespace-nowrap">Link</th>
+        </tr>
+      </thead>
+      <tbody>
+        {data.map((t) => (
+          <tr key={t.id} className="border-t border-gray-200/70">
+            <td className="px-2 py-1 max-w-[420px] truncate" title={t.ten_tour}>{t.ten_tour || "—"}</td>
+            <td className="px-2 py-1 whitespace-nowrap text-gray-500">{t.tuyen_tour || "—"}</td>
+            <td className="px-2 py-1 text-right font-mono whitespace-nowrap">{fmtVND(t.gia)}</td>
+            <td className="px-2 py-1 text-center">
+              {t.link_url ? (
+                <a href={t.link_url} target="_blank" rel="noreferrer" className="text-primary-600 hover:underline inline-flex items-center gap-0.5">
+                  <ExternalLink size={11} /> Mở
+                </a>
+              ) : "—"}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 // ── Festival Detail Modal ────────────────────────────────────────────────
 
 function FestivalDetailModal({ slug, onClose }: { slug: string; onClose: () => void }) {
@@ -1932,6 +1970,7 @@ function FestivalDetailModal({ slug, onClose }: { slug: string; onClose: () => v
     queryFn: () => getFestivalSummary(slug),
     enabled: !!slug,
   });
+  const [expandedCo, setExpandedCo] = useState<string | null>(null);
   const cat = festival?.category;
   const catMeta = cat ? CATEGORY_META[cat] : null;
   const daysAway = festival ? daysUntil(festival.date_start) : null;
@@ -2090,12 +2129,15 @@ function FestivalDetailModal({ slug, onClose }: { slug: string; onClose: () => v
                           <th className="px-3 py-2 text-right whitespace-nowrap">SL sản phẩm</th>
                           <th className="px-3 py-2 text-right whitespace-nowrap">SL đoàn KH</th>
                           <th className="px-3 py-2 text-right whitespace-nowrap">Giá từ</th>
-                          <th className="px-3 py-2 text-center whitespace-nowrap">Link</th>
+                          <th className="px-3 py-2 text-center whitespace-nowrap">Chi tiết</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {summary.companies.map((c) => (
-                          <tr key={c.cong_ty} className={cn("border-t", c.is_vtr ? "bg-primary-50/60" : "hover:bg-gray-50")}>
+                        {summary.companies.map((c) => {
+                          const open = expandedCo === c.cong_ty;
+                          return (
+                          <Fragment key={c.cong_ty}>
+                          <tr className={cn("border-t", c.is_vtr ? "bg-primary-50/60" : "hover:bg-gray-50")}>
                             <td className="px-3 py-2 whitespace-nowrap">
                               <span className={cn(
                                 "px-1.5 py-0.5 rounded text-[11px] font-medium",
@@ -2109,14 +2151,24 @@ function FestivalDetailModal({ slug, onClose }: { slug: string; onClose: () => v
                             <td className="px-3 py-2 text-right text-gray-600">{c.departures || "—"}</td>
                             <td className="px-3 py-2 text-right font-mono whitespace-nowrap">{c.price_from ? fmtVND(c.price_from) : "—"}</td>
                             <td className="px-3 py-2 text-center">
-                              {c.link ? (
-                                <a href={c.link} target="_blank" rel="noreferrer" className="text-primary-600 hover:underline inline-flex items-center gap-0.5">
-                                  <ExternalLink size={12} /> Mở
-                                </a>
-                              ) : "—"}
+                              <button type="button"
+                                onClick={() => setExpandedCo(open ? null : c.cong_ty)}
+                                className="text-primary-600 hover:underline inline-flex items-center gap-0.5">
+                                {open ? <ChevronLeft size={12} className="rotate-90" /> : <ChevronRight size={12} className="rotate-90" />}
+                                {open ? "Ẩn" : "Chi tiết"}
+                              </button>
                             </td>
                           </tr>
-                        ))}
+                          {open && (
+                            <tr>
+                              <td colSpan={5} className="px-3 py-2 bg-gray-50/70">
+                                <CompanyTourList slug={slug} company={c.cong_ty} />
+                              </td>
+                            </tr>
+                          )}
+                          </Fragment>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
