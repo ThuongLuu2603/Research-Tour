@@ -336,6 +336,7 @@ def _segment_detail_payload(seg) -> dict:
     ):
         companies.append({
             "cong_ty": co,
+            "canonical": resolve_company_name(co),  # để FE lọc theo đối thủ đang chọn (tab Đối thủ)
             "is_vietravel": is_vietravel(co),
             "tour_count": len(tours_list),
             "product_count": len({_prog(t) for t in tours_list}),  # số CHƯƠNG TRÌNH

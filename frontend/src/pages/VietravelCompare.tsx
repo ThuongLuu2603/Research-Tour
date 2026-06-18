@@ -2029,7 +2029,12 @@ export default function VietravelCompare() {
           <div className="bg-gray-50 rounded-lg p-3 mb-4">
             <SegmentHistoryMini segmentKey={selectedKey} />
           </div>
-          {(detail.companies ?? []).map((co: any) => {
+          {(() => {
+            // Tab Đối thủ: chỉ hiện VTR + (các) đối thủ ĐANG CHỌN ở trên. Tab khác: hiện tất cả.
+            const sel = new Set<string>([...cmpSet, ...(selectedCompetitor ? [selectedCompetitor] : [])]);
+            const filterCo = tab === "competitors" && sel.size > 0;
+            return (detail.companies ?? []).filter((co: any) => !filterCo || co.is_vietravel || sel.has(co.canonical));
+          })().map((co: any) => {
             // STT theo CHƯƠNG TRÌNH (ma_tour) — mỗi ctrinh 1 số, gộp (rowSpan) các dòng giá.
             const tours: any[] = co.tours ?? [];
             const progKey = (t: any) => String(t.ma_tour || t.ten_tour || "").trim();
