@@ -12,6 +12,7 @@
  */
 import { Fragment, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Portal } from "@/components/Portal";
 import {
   listFestivals, getFestivalStats, refreshFestivals,
   listFestivalTours, getFestival, getFestivalSummary, getCoverageGap, retagFestivals,
@@ -1093,6 +1094,7 @@ function AutoSuggestModal({
   };
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div className="bg-white rounded-lg shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
@@ -1199,6 +1201,7 @@ function AutoSuggestModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -1244,6 +1247,7 @@ function MappingCreateModal({
   });
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div className="bg-white rounded-lg shadow-2xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b">
@@ -1335,6 +1339,7 @@ function MappingCreateModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -1894,6 +1899,7 @@ function FestivalDetailModal({ slug, onClose }: { slug: string; onClose: () => v
   }, [festival]);
 
   return (
+    <Portal>
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}>
@@ -2076,6 +2082,7 @@ function FestivalDetailModal({ slug, onClose }: { slug: string; onClose: () => v
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
