@@ -192,6 +192,17 @@ def tag_tours_with_festivals(
             rs = _rules_for(f)
             fest_meta[f.id] = ("rule", rs) if rs else ("none", None)
 
+    # Xoá HẾT link source='date' cũ trước khi quét lại → loại link cũ/sai còn sót,
+    # KỂ CẢ tour không còn lich_kh (vốn không nằm trong query 'lich_kh != \"\"' nên
+    # vòng lặp batch không đụng tới được). Không xoá 'rule'/'manual'.
+    try:
+        db.query(FestivalTourMapping).filter(
+            FestivalTourMapping.source == "date"
+        ).delete(synchronize_session=False)
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+
     offset = 0
     while offset < total:
         tours = q.offset(offset).limit(TOUR_BATCH_SIZE).all()
@@ -488,16 +499,20 @@ def get_festival_tours_summary(db, slug: str) -> dict[str, Any]:
             "vtr_tours": 0, "competitor_tours": 0,
         }
 
-    # Gộp theo CÔNG TY: số sản phẩm (tour) / số đoàn KH (tổng ngày khởi hành) /
-    # giá thấp nhất (giá từ) + link tour rẻ nhất.
+    # Gộp theo CÔNG TY:
+    #   • SL sản phẩm = số CHƯƠNG TRÌNH KHÁC NHAU (distinct ma_tour, fallback tên tour).
+    #     Nhiều dòng cùng 1 chương trình (khác ngày/giá) chỉ tính 1 sản phẩm.
+    #   • SL đoàn KH = tổng ngày khởi hành. Giá từ = giá thấp nhất + link tour rẻ nhất.
     agg: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {"products": 0, "departures": 0, "price_from": None, "link": ""}
+        lambda: {"prods": set(), "departures": 0, "price_from": None, "link": ""}
     )
     prices: list[float] = []
     for t in rows:
         co = t.cong_ty or "(không rõ)"
         a = agg[co]
-        a["products"] += 1
+        prog_key = (t.ma_tour or "").strip() or (t.ten_tour or "").strip().lower()
+        if prog_key:
+            a["prods"].add(prog_key)
         a["departures"] += len(_parse_tour_lich_kh(t.lich_kh or ""))
         if t.gia and 500_000 <= t.gia <= 500_000_000:
             prices.append(t.gia)
@@ -511,7 +526,7 @@ def get_festival_tours_summary(db, slug: str) -> dict[str, Any]:
         {
             "cong_ty": co,
             "is_vtr": "vietravel" in co.lower(),
-            "products": v["products"],
+            "products": len(v["prods"]),
             "departures": v["departures"],
             "price_from": float(v["price_from"]) if v["price_from"] else None,
             "link": v["link"],
@@ -521,7 +536,7 @@ def get_festival_tours_summary(db, slug: str) -> dict[str, Any]:
     # VTR lên đầu, rồi theo số sản phẩm giảm dần.
     companies.sort(key=lambda x: (0 if x["is_vtr"] else 1, -x["products"]))
 
-    total = len(rows)
+    total = sum(c["products"] for c in companies)  # tổng = tổng SẢN PHẨM (đã dedup)
     vtr = sum(c["products"] for c in companies if c["is_vtr"])
     avg_price = (sum(prices) / len(prices)) if prices else None
     return {
