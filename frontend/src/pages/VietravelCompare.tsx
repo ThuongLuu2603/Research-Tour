@@ -290,6 +290,36 @@ export default function VietravelCompare() {
     queryFn: () => getCoverageSegment(covDetail!.thi_truong, covDetail!.tuyen_tour),
     enabled: !!covDetail,
   });
+  // Phủ sóng — biểu đồ 1: cột chồng độ phủ theo thị trường (Cả hai/Chỉ VTR/Chỉ TT)
+  const coverageByMarket = useMemo(() => {
+    const m: Record<string, { thi_truong: string; both: number; vtr_only: number; market_only: number }> = {};
+    for (const r of (coverage?.matrix ?? []) as any[]) {
+      const k = r.thi_truong || "Khác";
+      if (!m[k]) m[k] = { thi_truong: k, both: 0, vtr_only: 0, market_only: 0 };
+      if (r.status === "both") m[k].both++;
+      else if (r.status === "vtr_only") m[k].vtr_only++;
+      else if (r.status === "market_only") m[k].market_only++;
+    }
+    return Object.values(m)
+      .map((x) => ({ ...x, total: x.both + x.vtr_only + x.market_only }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 14);
+  }, [coverage]);
+
+  // Phủ sóng — biểu đồ 2: bubble cơ hội khoảng trống (X=cầu, Y=số ĐT, size=score)
+  const opportunityBubbles = useMemo(() => {
+    return ((coverage?.gaps ?? []) as any[])
+      .filter((g) => (g.market_departures_monthly ?? 0) > 0)
+      .map((g) => ({
+        x: parseFloat((g.market_departures_monthly ?? 0).toFixed(1)),
+        y: g.companies ?? 0,
+        z: g.opportunity_score ?? 1,
+        name: g.tuyen_tour,
+        thi_truong: g.thi_truong,
+      }))
+      .slice(0, 60);
+  }, [coverage]);
+
   const { data: matcherSuggest } = useQuery({ queryKey: ["matcher-suggest"], queryFn: getMatcherSuggest, enabled: tab === "matcher" });
   const { data: matcherDetail } = useQuery({
     queryKey: ["matcher-detail", selectedMatcherTour],
@@ -1533,6 +1563,64 @@ export default function VietravelCompare() {
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+
+          {/* Biểu đồ phủ sóng — góc nhìn RIÊNG của tab này (Market Lab không có) */}
+          <div className="grid lg:grid-cols-2 gap-4">
+            {/* 1. Cột chồng độ phủ theo thị trường */}
+            <div className="card p-4">
+              <h3 className="font-semibold text-sm mb-1 flex items-center gap-2">
+                Độ phủ VTR theo thị trường
+                <InfoTip text="Mỗi thanh = 1 thị trường, chia: Cả hai (VTR & TT cùng có) / Chỉ VTR / Chỉ TT (khoảng trống VTR chưa khai thác). Thị trường nhiều 'Chỉ TT' = nhiều cơ hội bỏ ngỏ." />
+              </h3>
+              <p className="text-[11px] text-gray-400 mb-2">Số tuyến theo trạng thái phủ · top 14 thị trường</p>
+              <ResponsiveContainer width="100%" height={Math.max(220, coverageByMarket.length * 26)}>
+                <BarChart data={coverageByMarket} layout="vertical" margin={{ top: 4, right: 12, bottom: 0, left: 4 }}>
+                  <CartesianGrid horizontal={false} stroke="#eee" />
+                  <XAxis type="number" tick={{ fontSize: 10, fill: "#64748b" }} />
+                  <YAxis type="category" dataKey="thi_truong" width={96} tick={{ fontSize: 10, fill: "#334155" }} />
+                  <Tooltip contentStyle={{ fontSize: 11 }} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Bar dataKey="both" name="Cả hai" stackId="a" fill="#16a34a" />
+                  <Bar dataKey="vtr_only" name="Chỉ VTR" stackId="a" fill="#2563eb" />
+                  <Bar dataKey="market_only" name="Chỉ TT (gap)" stackId="a" fill="#f59e0b" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* 2. Bubble cơ hội khoảng trống */}
+            <div className="card p-4">
+              <h3 className="font-semibold text-sm mb-1 flex items-center gap-2">
+                Bản đồ cơ hội khoảng trống
+                <InfoTip text="Mỗi bong bóng = 1 tuyến VTR CHƯA có SP. X = cầu thị trường (đoàn/tháng), Y = số đối thủ đang khai thác, kích thước = Score cơ hội. Bong bóng to + lệch phải = ưu tiên đánh." />
+              </h3>
+              <p className="text-[11px] text-gray-400 mb-2">Chỉ tuyến 'Chỉ TT' có ngày KH · click để xem chi tiết</p>
+              <ResponsiveContainer width="100%" height={300}>
+                <ScatterChart margin={{ top: 8, right: 16, bottom: 16, left: 4 }}>
+                  <CartesianGrid stroke="#eee" />
+                  <XAxis type="number" dataKey="x" name="Đoàn/tháng" tick={{ fontSize: 10, fill: "#64748b" }}
+                    label={{ value: "Cầu TT (đoàn/tháng)", position: "insideBottom", offset: -8, fontSize: 10, fill: "#64748b" }} />
+                  <YAxis type="number" dataKey="y" name="Số đối thủ" tick={{ fontSize: 10, fill: "#64748b" }}
+                    label={{ value: "Số ĐT", angle: -90, position: "insideLeft", fontSize: 10, fill: "#64748b" }} />
+                  <ZAxis type="number" dataKey="z" range={[40, 600]} name="Score" />
+                  <Tooltip cursor={{ strokeDasharray: "3 3" }} contentStyle={{ fontSize: 11 }}
+                    content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null;
+                      const p: any = payload[0].payload;
+                      return (
+                        <div className="bg-white border rounded shadow px-2 py-1 text-[11px]">
+                          <p className="font-semibold">{p.thi_truong} · {p.name}</p>
+                          <p>Cầu: <strong>{p.x}</strong> đoàn/tháng · {p.y} đối thủ</p>
+                          <p>Score cơ hội: <strong className="text-amber-700">{p.z}</strong></p>
+                        </div>
+                      );
+                    }} />
+                  <Scatter data={opportunityBubbles} fill="#f59e0b" fillOpacity={0.6}
+                    onClick={(d: any) => d?.thi_truong && setCovDetail({ thi_truong: d.thi_truong, tuyen_tour: d.name })}
+                    className="cursor-pointer" />
+                </ScatterChart>
+              </ResponsiveContainer>
             </div>
           </div>
 
