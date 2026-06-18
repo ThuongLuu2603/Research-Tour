@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -228,6 +229,9 @@ def apply_rules(
                 new_links.append({
                     "festival_id": target_festival.id, "tour_id": t.id,
                     "festival_slug": target_festival.slug, "distance_days": 0, "source": "rule",
+                    # bulk_insert_mappings bỏ qua Python default → set created_at tay
+                    # nếu không NULL vi phạm NOT NULL → rollback (bảng nối rỗng).
+                    "created_at": datetime.utcnow(),
                 })
         if new_links:
             db.bulk_insert_mappings(FestivalTourMapping, new_links)

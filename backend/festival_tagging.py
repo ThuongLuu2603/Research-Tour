@@ -171,6 +171,9 @@ def tag_tours_with_festivals(
                 batch_links.append({
                     "festival_id": f.id, "tour_id": t.id, "festival_slug": f.slug,
                     "distance_days": dist, "source": "date",
+                    # bulk_insert_mappings KHÔNG chạy Python default → phải set tay,
+                    # nếu không created_at=NULL vi phạm NOT NULL → cả batch rollback.
+                    "created_at": datetime.utcnow(),
                 })
                 if best_eff is None or effective_dist < best_eff:
                     best_eff = effective_dist
