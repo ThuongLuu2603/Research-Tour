@@ -232,6 +232,14 @@ def tag_tours_with_festivals(
         "tours_province_updated": province_updated,
     }
     logger.info("Festival tagging done: %s", stats)
+    # Bảng nối vừa đổi → xoá MỌI cache lễ hội (coverage_gap TTL 1h, dashboard,
+    # pricing-premium, heatmap...) để các tab đọc lại số mới, không lệch nhau.
+    try:
+        from redis_cache import redis_invalidate_pattern
+        n = redis_invalidate_pattern("ota:festival.*")
+        logger.info("Invalidated %d festival cache keys after tagging", n)
+    except Exception:  # noqa: BLE001
+        pass
     return stats
 
 

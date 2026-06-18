@@ -259,6 +259,12 @@ def seed_lunar_festivals(db) -> dict[str, int]:
             inserted += 1
     db.commit()
     logger.info("Lunar festivals seed: inserted=%d skipped=%d", inserted, skipped)
+    if inserted:
+        try:
+            from redis_cache import redis_invalidate_pattern
+            redis_invalidate_pattern("ota:festival.*")
+        except Exception:  # noqa: BLE001
+            pass
     return {"inserted": inserted, "skipped": skipped}
 
 
