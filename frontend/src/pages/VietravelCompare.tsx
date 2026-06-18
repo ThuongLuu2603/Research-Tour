@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -340,6 +340,14 @@ export default function VietravelCompare() {
     queryFn: () => getSegmentDetail(selectedKey!),
     enabled: !!selectedKey,
   });
+  // Khi mở chi tiết (click card/thanh/điểm/hàng) → cuộn xuống bảng "Chi tiết nhóm so sánh".
+  const detailRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (selectedKey && detail?.found) {
+      const t = setTimeout(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+      return () => clearTimeout(t);
+    }
+  }, [selectedKey, detail?.found]);
   const { data: coverage } = useQuery({ queryKey: ["coverage", filters], queryFn: () => getCoverageMap(filters), enabled: tab === "coverage", staleTime: compareStale, placeholderData: (prev) => prev });
   const [covDetail, setCovDetail] = useState<{ thi_truong: string; tuyen_tour: string } | null>(null);
   const [chartModal, setChartModal] = useState<null | "price" | "market" | "freq">(null);
@@ -1963,7 +1971,7 @@ export default function VietravelCompare() {
 
       {/* Segment drill-down */}
       {selectedKey && detail?.found && (
-        <div className="card p-5 border-2 border-primary-200">
+        <div ref={detailRef} className="card p-5 border-2 border-primary-200 scroll-mt-4">
           <div className="flex items-start justify-between mb-4">
             <div>
               <h3 className="font-semibold inline-flex items-center">Chi tiết nhóm so sánh<InfoTip text={GLOSSARY.segment} /></h3>
