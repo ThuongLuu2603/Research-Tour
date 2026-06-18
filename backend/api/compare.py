@@ -329,7 +329,11 @@ def _segment_detail_payload(seg) -> dict:
         return (t["ma_tour"] or "").strip() or (t["ten_tour"] or "").strip()
 
     companies = []
-    for co, tours_list in sorted(by_company.items(), key=lambda x: (-len(x[1]), x[0])):
+    # VTR LÊN ĐẦU, sau đó đối thủ theo số dòng giảm dần rồi tên.
+    for co, tours_list in sorted(
+        by_company.items(),
+        key=lambda x: (0 if is_vietravel(x[0]) else 1, -len(x[1]), x[0]),
+    ):
         companies.append({
             "cong_ty": co,
             "is_vietravel": is_vietravel(co),

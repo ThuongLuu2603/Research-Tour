@@ -34,9 +34,9 @@ def generate_insights(db: Session, tours: list[Tour], daily: DailySnapshot) -> s
             "category": "price",
             "severity": "warning" if (s.gap_pct or 0) >= 15 else "info",
             "title": f"VTR đắt hơn TT {s.gap_pct}% — {s.tuyen_tour}",
-            "description": f"{s.thi_truong} · {s.diem_kh} · {s.so_ngay:.0f}N · Giá SS {_fmt(s.comparison_price)}",
+            "description": f"{s.thi_truong} · {s.diem_kh} · {(s.vtr_avg_days or 0):.0f}N · Giá SS {_fmt(s.comparison_price)}",
             "link_path": "/compare",
-            "link_params": {"tab": "price", "tuyen": s.tuyen_tour},
+            "link_params": {"tab": "price", "thi_truong": s.thi_truong, "tuyen_tour": s.tuyen_tour, "diem_kh": s.diem_kh, "filter": "expensive", "segment": s.key},
             "priority": 1,
         })
 
@@ -50,7 +50,7 @@ def generate_insights(db: Session, tours: list[Tour], daily: DailySnapshot) -> s
             "title": f"VTR rẻ hơn TT {s.gap_pct}% — {s.tuyen_tour}",
             "description": f"{s.thi_truong} · {s.diem_kh} · lợi thế giá",
             "link_path": "/compare",
-            "link_params": {"tab": "price"},
+            "link_params": {"tab": "price", "thi_truong": s.thi_truong, "tuyen_tour": s.tuyen_tour, "diem_kh": s.diem_kh, "filter": "cheap", "segment": s.key},
             "priority": 2,
         })
 
@@ -65,7 +65,7 @@ def generate_insights(db: Session, tours: list[Tour], daily: DailySnapshot) -> s
             "title": f"Ít đoàn hơn đối thủ TB {s.freq_gap_vs_avg_pct}% — {s.tuyen_tour}",
             "description": f"TB đoàn/tháng VTR {s.vtr_avg_departures_per_month} vs đối thủ TB {s.market_freq_avg_per_company}",
             "link_path": "/compare",
-            "link_params": {"tab": "frequency", "thi_truong": s.thi_truong, "tuyen_tour": s.tuyen_tour},
+            "link_params": {"tab": "frequency", "thi_truong": s.thi_truong, "tuyen_tour": s.tuyen_tour, "diem_kh": s.diem_kh, "segment": s.key},
             "priority": 3,
         })
 
@@ -108,15 +108,23 @@ def generate_alerts(db: Session, tours: list[Tour], daily: DailySnapshot, insigh
     except json.JSONDecodeError:
         insights = []
 
+    from urllib.parse import urlencode
+
     for ins in insights[:15]:
+        params = ins.get("link_params") or {}
+        # Bake filter + segment vào link_path → click cảnh báo cũng lọc + mở segment-detail
+        # (FE chỉ dùng a.link_path, không đọc payload).
+        link_path = ins.get("link_path", "/")
+        if params:
+            link_path = f"{link_path}?{urlencode({k: str(v) for k, v in params.items()})}"
         db.add(IntelAlert(
             alert_type="daily_insight",
             severity=ins.get("severity", "info"),
             category=ins.get("category", "price"),
             title=ins.get("title", ""),
             message=ins.get("description", ""),
-            link_path=ins.get("link_path", "/"),
-            payload_json=json.dumps(ins.get("link_params") or {}, ensure_ascii=False),
+            link_path=link_path,
+            payload_json=json.dumps(params, ensure_ascii=False),
         ))
 
     prev = (

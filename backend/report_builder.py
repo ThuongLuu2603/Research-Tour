@@ -206,6 +206,7 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
         elif diff < -1:
             trend_direction = "Xu hướng: chênh giá đang thu hẹp so với hôm qua."
 
+    _note = "<td class='note'></td>"  # cột Ghi chú — admin gõ tay trước khi xuất
     rows_exp = "".join(
         f"<tr>"
         f"<td>{s.thi_truong}</td><td>{s.tuyen_tour}</td><td>{s.diem_kh}</td>"
@@ -213,7 +214,7 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
         f"<td style='text-align:right'>{_fmt(s.vtr_avg_price)}</td>"
         f"<td style='text-align:right'>{_fmt(s.comparison_price)}</td>"
         f"<td style='text-align:center;color:{'#dc2626' if (s.gap_pct or 0)>=15 else '#ea580c'};font-weight:bold'>{_pct(s.gap_pct)}</td>"
-        f"</tr>"
+        f"{_note}</tr>"
         for s in expensive
     )
     rows_cheap = "".join(
@@ -221,15 +222,15 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
         f"<td style='text-align:center'>{(s.vtr_avg_days or 0):.0f}N</td>"
         f"<td style='text-align:right'>{_fmt(s.vtr_avg_price)}</td>"
         f"<td style='text-align:right'>{_fmt(s.comparison_price)}</td>"
-        f"<td style='text-align:center;color:#16a34a;font-weight:bold'>{_pct(s.gap_pct)}</td></tr>"
+        f"<td style='text-align:center;color:#16a34a;font-weight:bold'>{_pct(s.gap_pct)}</td>{_note}</tr>"
         for s in cheap
     )
     rows_freq = "".join(
         f"<tr><td>{s.tuyen_tour}</td><td>{s.diem_kh}</td><td>{s.thi_truong}</td>"
         f"<td style='text-align:center'>{round(getattr(s, 'vtr_avg_departures_per_month', None) or s.vtr_freq_monthly, 1)}</td>"
         f"<td style='text-align:center'>{round(s.market_freq_avg_per_company or 0, 1)}</td>"
-        f"<td style='text-align:center;color:#d97706;font-weight:bold'>{_pct(s.freq_gap_pct)}</td>"
-        f"</tr>"
+        f"<td style='text-align:center;color:#d97706;font-weight:bold'>{_pct(s.freq_gap_vs_avg_pct)}</td>"
+        f"{_note}</tr>"
         for s in freq_lag
     )
     gap_rows = "".join(
@@ -255,6 +256,10 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
   .header {{ border-bottom: 3px solid #003580; padding-bottom: 16px; margin-bottom: 24px; }}
   .header h1 {{ font-size: 22px; font-weight: 700; color: #003580; }}
   .header .meta {{ font-size: 12px; color: #64748b; margin-top: 4px; }}
+
+  /* Cột ghi chú — admin gõ tay trước khi xuất (editable bật ở trang Báo cáo) */
+  td.note {{ min-width: 110px; color: #111827; }}
+  body[contenteditable="true"] td.note {{ background: #fffbeb; outline: 1px dashed #f59e0b; }}
 
   /* Executive summary */
   .exec-box {{ background: #eff6ff; border-left: 4px solid #003580; border-radius: 6px; padding: 16px 20px; margin-bottom: 24px; }}
@@ -364,25 +369,25 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
 <p class="meta" style="margin-bottom:8px"><em>Giá SS (Giá so sánh)</em> = giá thị trường quy đổi về cùng số ngày tour VTR để so công bằng (giá/ngày × số ngày VTR), chỉ tính chương trình thỏa điều kiện (đúng phân khúc, có ngày khởi hành trong giai đoạn VTR). <em>Chênh</em> = VTR so với Giá SS.</p>
 {f'<p style="margin-bottom:8px">Biểu đồ chênh lệch: {spark_exp}</p>' if spark_exp else ''}
 <table>
-  <thead><tr><th>Thị trường</th><th>Tuyến tour</th><th>Điểm KH</th><th style="text-align:center">Ngày</th><th style="text-align:right">Giá VTR</th><th style="text-align:right">Giá SS</th><th style="text-align:center">Chênh</th></tr></thead>
+  <thead><tr><th>Thị trường</th><th>Tuyến tour</th><th>Điểm KH</th><th style="text-align:center">Ngày</th><th style="text-align:right">Giá VTR</th><th style="text-align:right">Giá SS</th><th style="text-align:center">Chênh</th><th>Ghi chú</th></tr></thead>
   <tbody>
-    {rows_exp or '<tr><td colspan="7" style="text-align:center;color:#6b7280">Không có tuyến đắt hơn TT ≥5%</td></tr>'}
+    {rows_exp or '<tr><td colspan="8" style="text-align:center;color:#6b7280">Không có tuyến đắt hơn TT ≥5%</td></tr>'}
   </tbody>
 </table>
 
 <h3>VTR rẻ hơn thị trường (lợi thế giá)</h3>
 <table>
-  <thead><tr><th>Tuyến tour</th><th>Điểm KH</th><th>Thị trường</th><th style="text-align:center">Ngày</th><th style="text-align:right">Giá VTR</th><th style="text-align:right">Giá SS</th><th style="text-align:center">Chênh</th></tr></thead>
+  <thead><tr><th>Tuyến tour</th><th>Điểm KH</th><th>Thị trường</th><th style="text-align:center">Ngày</th><th style="text-align:right">Giá VTR</th><th style="text-align:right">Giá SS</th><th style="text-align:center">Chênh</th><th>Ghi chú</th></tr></thead>
   <tbody>
-    {rows_cheap or '<tr><td colspan="7" style="text-align:center;color:#6b7280">Không có</td></tr>'}
+    {rows_cheap or '<tr><td colspan="8" style="text-align:center;color:#6b7280">Không có</td></tr>'}
   </tbody>
 </table>
 
 <h2>II. Tần suất Khởi hành — VTR vs đối thủ</h2>
 <table>
-  <thead><tr><th>Tuyến tour</th><th>Điểm KH</th><th>Thị trường</th><th style="text-align:center">VTR đoàn/tháng</th><th style="text-align:center">TT tb/CT</th><th style="text-align:center">Gap TS</th></tr></thead>
+  <thead><tr><th>Tuyến tour</th><th>Điểm KH</th><th>Thị trường</th><th style="text-align:center">VTR đoàn/tháng</th><th style="text-align:center">TT tb/CT</th><th style="text-align:center">Gap TS</th><th>Ghi chú</th></tr></thead>
   <tbody>
-    {rows_freq or '<tr><td colspan="6" style="text-align:center;color:#6b7280">Không có tuyến thiếu lịch KH nghiêm trọng</td></tr>'}
+    {rows_freq or '<tr><td colspan="7" style="text-align:center;color:#6b7280">Không có tuyến thiếu lịch KH nghiêm trọng</td></tr>'}
   </tbody>
 </table>
 <p style="font-size:11px;color:#6b7280;margin-top:6px">Gap TS: % chênh tần suất VTR so với TB đối thủ trên cùng tuyến. Âm = VTR ít lịch hơn.</p>

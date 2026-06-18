@@ -215,7 +215,8 @@ export default function VietravelCompare() {
   const [thiTruong, setThiTruong] = useState(() => params.get("thi_truong") || "");
   const [tuyenTour, setTuyenTour] = useState(() => params.get("tuyen_tour") || "");
   const [diemKh, setDiemKh] = useState(() => params.get("diem_kh") || "");
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  // segment trong URL → tự mở popup chi tiết (từ Insight/Cảnh báo Trang chủ CI).
+  const [selectedKey, setSelectedKey] = useState<string | null>(() => params.get("segment"));
   const [selectedCompetitor, setSelectedCompetitor] = useState("");
 
   const [selectedMatcherTour, setSelectedMatcherTour] = useState<number | null>(null);

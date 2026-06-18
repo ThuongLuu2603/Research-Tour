@@ -81,7 +81,7 @@ export default function IntelligenceHome() {
   })();
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl">
+    <div className="p-6 space-y-6 w-full">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <PageTitle title="Vietravel Intelligence Hub" tip="Brief hàng ngày — ưu tiên Giá → Tần suất → Phủ sóng" />
@@ -130,11 +130,13 @@ export default function IntelligenceHome() {
           <p className="text-2xl font-bold tabular-nums"><CountUp value={kpis?.segment_count} /></p>
         </Link>
         <Link to="/compare?tab=frequency" className="kpi-card hover-lift block hover:border-primary-300 border border-transparent transition-colors">
-          <span className="text-xs text-gray-500 inline-flex items-center">TS dẫn/kém ↗<InfoTip text="VTR dẫn / kém so với ĐỐI THỦ TRUNG BÌNH tuyến (cùng cấp độ 1 công ty), KHÔNG so với tổng thị trường hay đối thủ mạnh nhất. Dẫn = VTR khai thác dày hơn 1 đối thủ điển hình." /></span>
-          <p className="text-2xl font-bold tabular-nums">
+          <span className="text-xs text-gray-500 inline-flex items-center">TS dẫn/kém ↗<InfoTip text="Tần suất khởi hành: số TUYẾN mà VTR khai thác DÀY hơn (dẫn) / THƯA hơn (kém) so với 1 đối thủ TRUNG BÌNH trên tuyến đó (chênh ≥20%). So cùng cấp độ 1 công ty vs 1 đối thủ điển hình — KHÔNG so tổng thị trường. VD '15 dẫn / 61 kém' = VTR dày hơn ĐT TB ở 15 tuyến, thưa hơn ở 61 tuyến." /></span>
+          <p className="text-xl font-bold tabular-nums flex items-baseline gap-1">
             <span className="text-emerald-700"><CountUp value={kpis?.freq_leading ?? 0} /></span>
-            <span className="text-gray-300 mx-1">/</span>
+            <span className="text-[11px] font-normal text-emerald-600">dẫn</span>
+            <span className="text-gray-300">·</span>
             <span className="text-amber-700"><CountUp value={kpis?.freq_lagging ?? 0} /></span>
+            <span className="text-[11px] font-normal text-amber-600">kém</span>
           </p>
         </Link>
         <Link to="/data" className="kpi-card hover-lift block hover:border-amber-300 border border-transparent transition-colors">

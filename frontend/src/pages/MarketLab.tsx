@@ -281,7 +281,7 @@ export default function MarketLab() {
   };
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl">
+    <div className="p-6 space-y-6 w-full">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <PageTitle title="Tour Market Lab" tip="Nghiên cứu thị trường theo Tuyến tour — cung KH, giá/ngày, cơ hội & vận hành VTR." />
