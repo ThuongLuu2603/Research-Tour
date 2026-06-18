@@ -13,7 +13,17 @@ EXCLUDED_MARKETS: frozenset[str] = frozenset({
     "Khong xac dinh",
     "Chưa xác định",
     "Chua xac dinh",
+    # DV lẻ (dịch vụ lẻ) — không phải tour trọn gói, không tham gia so sánh VTR.
+    "DV lẻ",
+    "DV Lẻ",
+    "DV LẺ",
+    "DV le",
+    "Dịch vụ lẻ",
+    "Dịch Vụ Lẻ",
 })
+
+# So khớp KHÔNG phân biệt hoa thường (Python-side) — bắt mọi cách viết "DV lẻ".
+_EXCLUDED_LOWER: frozenset[str] = frozenset(m.strip().lower() for m in EXCLUDED_MARKETS)
 
 
 def excluded_market_values() -> list[str]:
@@ -50,5 +60,5 @@ def market_filter_clause(Tour):
 def is_excluded_market(thi_truong: str | None) -> bool:
     """Python-level check: tour có thi_truong này có bị loại không?"""
     if not thi_truong:
-        return False  # NULL/empty không bị loại (chỉ loại explicit "Không xác định")
-    return thi_truong.strip() in EXCLUDED_MARKETS
+        return False  # NULL/empty không bị loại (chỉ loại explicit market trong set)
+    return thi_truong.strip().lower() in _EXCLUDED_LOWER

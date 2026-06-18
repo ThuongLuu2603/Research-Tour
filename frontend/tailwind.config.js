@@ -54,21 +54,24 @@ export default {
           "0%": { opacity: "0" },
           "100%": { opacity: "1" },
         },
+        // 100% dùng transform:none (không phải translateY(0)/scale(1)) — fill 'both' giữ
+        // frame cuối; nếu giữ 1 transform value sẽ tạo containing block khiến mọi modal
+        // position:fixed bên trong bị lệch khỏi giữa màn hình. 'none' = hết containing block.
         "fade-in-up": {
           "0%": { opacity: "0", transform: "translateY(12px)" },
-          "100%": { opacity: "1", transform: "translateY(0)" },
+          "100%": { opacity: "1", transform: "none" },
         },
         "fade-in-down": {
           "0%": { opacity: "0", transform: "translateY(-12px)" },
-          "100%": { opacity: "1", transform: "translateY(0)" },
+          "100%": { opacity: "1", transform: "none" },
         },
         "scale-in": {
           "0%": { opacity: "0", transform: "scale(0.96)" },
-          "100%": { opacity: "1", transform: "scale(1)" },
+          "100%": { opacity: "1", transform: "none" },
         },
         "slide-in-left": {
           "0%": { opacity: "0", transform: "translateX(-16px)" },
-          "100%": { opacity: "1", transform: "translateX(0)" },
+          "100%": { opacity: "1", transform: "none" },
         },
         float: {
           "0%, 100%": { transform: "translateY(0)" },
