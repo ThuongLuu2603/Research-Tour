@@ -503,6 +503,31 @@ def invalidate_compare_cache() -> None:
         invalidate_market_lab_cache()
     except Exception:
         pass
+    # Disk fast-path no-filter (/summary, /segments, home_brief, report) KHÔNG có fingerprint
+    # guard → giữ JSON cũ tới 24h sau sync nếu không xoá. Xoá tay để KPI/bảng tuyến tươi.
+    try:
+        from persistent_cache import delete_json
+
+        for ns in ("compare_summary_default", "compare_segments_default", "home_brief", "report_daily"):
+            try:
+                delete_json(ns)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    # home_brief Redis key dùng v=1 (không fingerprint) → pattern ota:compare:* không phủ.
+    try:
+        from redis_cache import redis_invalidate_pattern
+
+        redis_invalidate_pattern("ota:home_brief:*")
+    except Exception:
+        pass
+    # Dropdown filter của tab So sánh (cache riêng TTL 600s, không có caller invalidate).
+    try:
+        from api.compare import invalidate_compare_filter_cache
+        invalidate_compare_filter_cache()
+    except Exception:
+        pass
 
 
 def prewarm_compare_cache(db: Session) -> None:

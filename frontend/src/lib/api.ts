@@ -1004,8 +1004,9 @@ export const getHomeBrief = async (): Promise<HomeBrief> => {
   return data;
 };
 
-export const getCoverageMap = async () => {
-  const { data } = await api.get("/intelligence/coverage");
+export const getCoverageMap = async (filters: CompareFilters = {}) => {
+  const q = buildCompareParams(filters);
+  const { data } = await api.get(`/intelligence/coverage${q ? "?" + q : ""}`);
   return data;
 };
 
@@ -1163,7 +1164,9 @@ export interface SegmentHistoryPoint {
 
 export const getCompareSegmentHistory = async (segment_key: string, days = 30) => {
   const p = new URLSearchParams({ segment_key, days: String(days) });
-  const { data } = await compareApi.get(`/compare/segment-history?${p}`);
+  // Endpoint thật nằm ở router market-lab (/api/market-lab/segment-history) — trước
+  // đây gọi /compare/segment-history (không tồn tại) → 404 → mini-chart luôn báo "chưa có".
+  const { data } = await marketLabApi.get(`/market-lab/segment-history?${p}`);
   return data as { segment_key: string; points: SegmentHistoryPoint[] };
 };
 

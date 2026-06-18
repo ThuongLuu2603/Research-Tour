@@ -74,11 +74,19 @@ def capture_snapshot(_: User = Depends(require_admin), db: Session = Depends(get
 @router.get("/coverage")
 def coverage(
     response: Response,
+    thi_truong: list[str] = Query([]),
+    tuyen_tour: str = Query(""),
+    diem_kh: str = Query(""),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
     response.headers["Cache-Control"] = f"private, max-age={_INTELLIGENCE_CACHE_SEC}"
-    tours = filter_tours_for_market_compare(_market_compare_tour_query(db).all())
+    # Áp ĐỦ bộ lọc (thị trường + tuyến + điểm KH) qua compare context để đồng bộ với
+    # mọi tab khác — trước đây load toàn bộ tour nên ma trận/KPI phủ sóng luôn hiện
+    # toàn thị trường, lệch với thanh lọc chung. ctx.tours đã qua filter nguồn sẵn.
+    from compare_cache import get_compare_context
+
+    tours = get_compare_context(db, thi_truong, tuyen_tour, diem_kh, allow_stale=False).tours
     # coverage_engine tự tính metrics khoảng trống (đoàn TT/tháng, giá/ngày, score) TỪ
     # tour CÓ lịch KH → không phụ thuộc snapshot RouteDailyMetrics (vốn hay trống/lệch key).
     result = build_coverage_for_api(tours)
@@ -143,30 +151,10 @@ def matcher_suggest(
     _: User = Depends(get_current_user),
 ):
     response.headers["Cache-Control"] = f"private, max-age={_INTELLIGENCE_CACHE_SEC}"
-    tours = (
-        db.query(Tour)
-        .options(load_only(
-            Tour.id,
-            Tour.ten_tour,
-            Tour.ma_tour,
-            Tour.link_url,
-            Tour.gia_raw,
-            Tour.lich_trinh,
-            Tour.updated_at,
-            Tour.created_at,
-            Tour.cong_ty,
-            Tour.thi_truong,
-            Tour.tuyen_tour,
-            Tour.diem_kh,
-            Tour.thoi_gian,
-            Tour.so_ngay,
-            Tour.gia,
-            Tour.lich_kh,
-            Tour.nguon,
-            Tour.sheet_source,
-        ))
-        .all()
-    )
+    # Dùng CÙNG nguồn như matcher_detail (loại FindTourGo / VTR ảo trên catalog / FIT /
+    # market 'Không xác định') — trước đây query thẳng toàn bảng nên gợi ý cả tour
+    # không thuộc tập compare → click ra "tour không tồn tại". Phải khớp 2 dataset.
+    tours = filter_tours_for_market_compare(_market_compare_tour_query(db).all())
     return {"items": suggest_vtr_tours(tours)}
 
 

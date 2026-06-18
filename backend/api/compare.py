@@ -149,10 +149,14 @@ def invalidate_compare_filter_cache() -> None:
 @router.get("/classification-gaps")
 def classification_gaps(
     thi_truong: list[str] = Query([]),
+    tuyen_tour: str = Query(""),
+    diem_kh: str = Query(""),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    tours = _load_vtr_tours(db, thi_truong)
+    # Áp đủ filter (FE đã gửi) — trước đây bỏ tuyen_tour/diem_kh nên panel "Chưa map"
+    # luôn tính trên toàn thị trường dù đang lọc theo tuyến/điểm KH.
+    tours = _load_vtr_tours(db, thi_truong, tuyen_tour, diem_kh)
     return collect_unmatched_values(tours, vtr_only=True)
 
 
@@ -407,15 +411,24 @@ def list_competitors(
             if co not in stats:
                 stats[co] = {
                     "cong_ty": co,
-                    "prog_keys": set(),   # đếm CHƯƠNG TRÌNH, không đếm dòng giá
                     "overlap_segments": 0,
                     "freq_monthly": 0.0,
-                    "price_days": [],
+                    "pd_num": 0.0,   # giá/ngày có TRỌNG SỐ theo tần suất (khớp toàn hệ thống)
+                    "pd_den": 0.0,
                 }
-            # 1 chương trình price-split = nhiều entry (cùng ma_tour) → chỉ tính 1
-            stats[co]["prog_keys"].add((e.ma_tour or "").strip() or (e.ten_tour or "").strip())
             stats[co]["freq_monthly"] += e.freq_score
-            stats[co]["price_days"].append(e.price_day)
+            if e.freq_score > 0 and e.price_day:
+                stats[co]["pd_num"] += e.price_day * e.freq_score
+                stats[co]["pd_den"] += e.freq_score
+
+    # "Sản phẩm" = số CHƯƠNG TRÌNH (dedup ma_tour) đếm trên ctx.tours — CÙNG cơ sở với
+    # total_tours của popup chi tiết → 2 nơi không lệch số. (Trước: đếm theo entry segment.)
+    comp_prog: dict[str, set] = defaultdict(set)
+    for t in ctx.tours:
+        co = resolve_company_name(t.cong_ty)
+        if is_vietravel(co):
+            continue
+        comp_prog[co].add((t.ma_tour or "").strip() or (t.ten_tour or "").strip())
 
     seg_companies: dict[str, set] = defaultdict(set)
     for seg in segments:
@@ -441,10 +454,10 @@ def list_competitors(
 
     rows = []
     for co, s in stats.items():
-        avg_day = round(sum(s["price_days"]) / len(s["price_days"]), 0) if s["price_days"] else None
+        avg_day = round(s["pd_num"] / s["pd_den"], 0) if s["pd_den"] else None
         rows.append({
             "cong_ty": co,
-            "tour_count": len(s["prog_keys"]),          # số chương trình (đã dedup price-split)
+            "tour_count": len(comp_prog.get(co, set())),  # số chương trình (khớp popup detail)
             "overlap_segments": len(seg_companies.get(co, set())),
             "freq_monthly": round(s["freq_monthly"], 1),
             "avg_price_day": avg_day,

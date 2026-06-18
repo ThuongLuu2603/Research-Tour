@@ -282,7 +282,7 @@ export default function VietravelCompare() {
     queryFn: () => getSegmentDetail(selectedKey!),
     enabled: !!selectedKey,
   });
-  const { data: coverage } = useQuery({ queryKey: ["coverage"], queryFn: getCoverageMap, enabled: tab === "coverage" });
+  const { data: coverage } = useQuery({ queryKey: ["coverage", filters], queryFn: () => getCoverageMap(filters), enabled: tab === "coverage", staleTime: compareStale });
   const [covDetail, setCovDetail] = useState<{ thi_truong: string; tuyen_tour: string } | null>(null);
   const [chartModal, setChartModal] = useState<null | "price" | "market" | "freq">(null);
   const { data: covDetailData, isLoading: covDetailLoading } = useQuery({
@@ -476,9 +476,9 @@ export default function VietravelCompare() {
         fill: colorMap[s.thi_truong] ?? "#64748b",
         // Thông tin thêm cho tooltip
         competitorName: s.top_freq_competitor ?? "Đối thủ mạnh nhất",
-        vtrCount: (s as any).vietravel_count ?? (s as any).vtr_tour_count ?? "—",
+        vtrCount: (s as any).vietravel_count ?? "—",
         vtrFreq: parseFloat((s.vietravel_freq_monthly || 0).toFixed(1)),
-        mktCount: (s as any).market_tour_count ?? "—",
+        mktCount: (s as any).market_count ?? "—",  // BE trả market_count (không phải market_tour_count)
         mktFreq: parseFloat((s.market_freq_monthly || 0).toFixed(1)),
         freqGap: s.freq_gap_pct,
       }));

@@ -881,9 +881,14 @@ def build_competitor_overview(tours: list[Tour], competitor: str) -> dict:
     for t in comp_tours:
         markets[t.thi_truong or "Khác"] += 1
 
+    # total_tours đếm theo CHƯƠNG TRÌNH (dedup ma_tour) — khớp cột "Sản phẩm" ở bảng
+    # list_competitors (vốn cũng đếm chương trình), tránh lệch số giữa bảng & popup.
+    total_programs = len({
+        (t.ma_tour or "").strip() or (t.ten_tour or "").strip() for t in comp_tours
+    })
     return {
         "competitor": competitor,
-        "total_tours": len(comp_tours),
+        "total_tours": total_programs,
         "avg_price_day": avg_day,
         "total_freq_monthly": round(total_freq, 1),
         "overlap_segments": len(overlap_segments),
