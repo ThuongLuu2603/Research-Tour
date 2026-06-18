@@ -284,6 +284,7 @@ export default function VietravelCompare() {
     queryKey: ["compare-summary", filters],
     queryFn: () => getCompareSummary(filters),
     staleTime: compareStale,
+    placeholderData: (prev) => prev,  // giữ KPI cũ khi đổi filter → không chớp trắng
   });
   const { data: segments, isLoading: segmentsLoading, isError: segmentsError, refetch: refetchSegments } = useQuery({
     queryKey: ["compare-segments", segmentQueryFilters],
@@ -291,6 +292,7 @@ export default function VietravelCompare() {
     enabled: needsSegments,
     staleTime: compareStale,
     retry: 2,
+    placeholderData: (prev) => prev,  // giữ bảng/biểu đồ cũ khi đổi filter/sort
   });
   const { data: classGaps } = useQuery({
     queryKey: ["compare-class-gaps", filters],
@@ -303,6 +305,7 @@ export default function VietravelCompare() {
     queryFn: () => getCompareWeekdayDistribution(filters),
     enabled: tab === "frequency",
     staleTime: compareStale,
+    placeholderData: (prev) => prev,
   });
 
   // Weekday drill-down cho 1 tuyến cụ thể trong tab Tần suất
@@ -321,6 +324,7 @@ export default function VietravelCompare() {
     queryFn: () => getCompareCompetitors(filters),
     enabled: tab === "competitors",
     staleTime: compareStale,
+    placeholderData: (prev) => prev,
   });
   const { data: compDetail } = useQuery({
     queryKey: ["compare-competitor-detail", selectedCompetitor, filters],
@@ -332,7 +336,7 @@ export default function VietravelCompare() {
     queryFn: () => getSegmentDetail(selectedKey!),
     enabled: !!selectedKey,
   });
-  const { data: coverage } = useQuery({ queryKey: ["coverage", filters], queryFn: () => getCoverageMap(filters), enabled: tab === "coverage", staleTime: compareStale });
+  const { data: coverage } = useQuery({ queryKey: ["coverage", filters], queryFn: () => getCoverageMap(filters), enabled: tab === "coverage", staleTime: compareStale, placeholderData: (prev) => prev });
   const [covDetail, setCovDetail] = useState<{ thi_truong: string; tuyen_tour: string } | null>(null);
   const [chartModal, setChartModal] = useState<null | "price" | "market" | "freq">(null);
   const { data: covDetailData, isLoading: covDetailLoading } = useQuery({

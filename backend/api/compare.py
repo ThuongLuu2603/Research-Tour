@@ -263,22 +263,30 @@ def compare_segments(
             except Exception:  # noqa: BLE001
                 pass
 
-    sort_key = {
-        "gap_pct": lambda r: r.get("gap_pct") if r.get("gap_pct") is not None else -999,
-        "freq_gap_pct": lambda r: r.get("freq_gap_pct") if r.get("freq_gap_pct") is not None else -999,
-        "vietravel_avg": lambda r: r.get("vietravel_avg_day") or 0,
-        "vietravel_avg_price": lambda r: r.get("vietravel_avg_price") or 0,
-        "comparison_price": lambda r: r.get("comparison_price") or 0,
-        "market_min_price": lambda r: r.get("market_min_price") or 0,
-        "market_avg": lambda r: r.get("market_avg_day") or 0,
-        "vietravel_freq": lambda r: r.get("vietravel_freq_monthly") or 0,
-        "thi_truong": lambda r: r.get("thi_truong") or "",
-        "tuyen_tour": lambda r: r.get("tuyen_tour") or "",
-        "diem_kh": lambda r: r.get("diem_kh") or "",
-        "so_ngay": lambda r: r.get("so_ngay") or 0,
-    }.get(sort_by, lambda r: r.get("gap_pct") or -999)
+    # raw getter (KHÔNG default -999/0) để phân biệt None thật → đẩy None xuống ĐÁY bất
+    # kể chiều sort (trước đây None→-999 nên tuyến 'không tính được gap' nhảy lên đầu khi asc).
+    _num_field = {
+        "gap_pct": "gap_pct", "freq_gap_pct": "freq_gap_pct",
+        "vietravel_avg": "vietravel_avg_day", "vietravel_avg_price": "vietravel_avg_price",
+        "comparison_price": "comparison_price", "market_min_price": "market_min_price",
+        "market_avg": "market_avg_day", "vietravel_freq": "vietravel_freq_monthly",
+        "so_ngay": "so_ngay",
+    }
+    _str_field = {"thi_truong": "thi_truong", "tuyen_tour": "tuyen_tour", "diem_kh": "diem_kh"}
     reverse = sort_dir != "asc"
-    rows.sort(key=sort_key, reverse=reverse)
+    if sort_by in _str_field:
+        f = _str_field[sort_by]
+        rows.sort(key=lambda r: (r.get(f) or ""), reverse=reverse)
+    else:
+        f = _num_field.get(sort_by, "gap_pct")
+
+        def _k(r):
+            v = r.get(f)
+            if v is None:
+                return (1, 0.0)  # None: nhóm sau cùng
+            return (0, -v if reverse else v)
+
+        rows.sort(key=_k)
     return {"methodology": METHODOLOGY, "items": rows[:limit], "total": len(rows)}
 
 
