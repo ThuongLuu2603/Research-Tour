@@ -1988,9 +1988,19 @@ export default function VietravelCompare() {
               <button className="text-xs text-gray-400 hover:text-gray-600" onClick={() => setSelectedKey(null)}>Đóng</button>
             </div>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
             <div className="bg-blue-50 rounded-lg p-3"><span className="text-xs text-blue-600 inline-flex items-center">{COL.giaTbVtr}<InfoTip text={GLOSSARY.giaTbVtr} /></span><p className="font-bold">{fmtVND(detail.segment?.vietravel_avg_price)}</p></div>
             <div className="bg-gray-50 rounded-lg p-3"><span className="text-xs text-gray-600 inline-flex items-center">{COL.giaSoSanh}<InfoTip text={GLOSSARY.giaSoSanh} /></span><p className="font-bold">{fmtVND(detail.segment?.comparison_price)}</p></div>
+            <div className="bg-blue-50 rounded-lg p-3">
+              <span className="text-xs text-blue-600 inline-flex items-center">Rẻ nhất VTR<InfoTip text="Giá thấp nhất trong các chương trình VTR thỏa điều kiện so sánh" /></span>
+              <p className="font-bold flex items-center gap-1">{fmtVND(detail.segment?.vietravel_min_price)}
+                {detail.segment?.vietravel_min_link && <a href={detail.segment.vietravel_min_link} target="_blank" rel="noopener noreferrer" title={detail.segment?.vietravel_min_tour}><ExternalLink size={12} className="text-primary-600" /></a>}</p>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3">
+              <span className="text-xs text-gray-600 inline-flex items-center">Rẻ nhất TT<InfoTip text="Giá thấp nhất trong các chương trình thị trường thỏa điều kiện (phân khúc + có ngày KH)" /></span>
+              <p className="font-bold flex items-center gap-1">{fmtVND(detail.segment?.market_min_price)}
+                {detail.segment?.market_min_link && <a href={detail.segment.market_min_link} target="_blank" rel="noopener noreferrer" title={detail.segment?.market_min_tour}><ExternalLink size={12} className="text-gray-600" /></a>}</p>
+            </div>
             <div className="bg-blue-50 rounded-lg p-3"><span className="text-xs text-blue-600 inline-flex items-center">VTR {COL.tbDoanThang}<InfoTip text={GLOSSARY.tbDoanThang} /></span><p className="font-bold">{detail.segment?.vtr_avg_departures_per_month ?? detail.segment?.vietravel_freq_monthly}</p></div>
             <div className="bg-gray-50 rounded-lg p-3"><span className="text-xs text-gray-600 inline-flex items-center">{COL.chenhPct}<InfoTip text={GLOSSARY.chenhGia} /></span><p className="font-bold"><GapBadge pct={detail.segment?.gap_pct} /></p></div>
           </div>
@@ -1998,36 +2008,50 @@ export default function VietravelCompare() {
           <div className="bg-gray-50 rounded-lg p-3 mb-4">
             <SegmentHistoryMini segmentKey={selectedKey} />
           </div>
-          {(detail.companies ?? []).map((co: any) => (
+          {(detail.companies ?? []).map((co: any) => {
+            // STT theo CHƯƠNG TRÌNH (ma_tour) — mỗi ctrinh 1 số, gộp (rowSpan) các dòng giá.
+            const tours: any[] = co.tours ?? [];
+            const progKey = (t: any) => String(t.ma_tour || t.ten_tour || "").trim();
+            let stt = 0;
+            const meta = tours.map((t, i) => {
+              const isFirst = i === 0 || progKey(t) !== progKey(tours[i - 1]);
+              if (isFirst) stt++;
+              const span = isFirst ? tours.filter((x) => progKey(x) === progKey(t)).length : 0;
+              return { isFirst, span, stt };
+            });
+            return (
             <div key={co.cong_ty} className="mb-4">
               <h4 className={cn("text-sm font-semibold mb-2 px-2 py-1 rounded", co.is_vietravel ? "bg-blue-100 text-blue-900" : "bg-gray-100")}>
-                {co.cong_ty} ({co.tour_count} tour)
+                {co.cong_ty} ({co.product_count ?? co.tour_count} sản phẩm)
               </h4>
               <table className="w-full text-xs mb-2">
                 <thead><tr className="text-gray-500 border-b">
                   {[
-                    [COL.tenTour, GLOSSARY.tenTour], [COL.gia, GLOSSARY.giaTbTour], [COL.giaTbNgay, GLOSSARY.giaTbNgay],
-                    [COL.tbDoanThang, GLOSSARY.tbDoanThang], [COL.lichKhoiHanh, GLOSSARY.lichKhoiHanh], ["Lịch trình"], [COL.linkTour],
+                    ["STT", "Số thứ tự chương trình — gộp các dòng giá cùng 1 chương trình"],
+                    [COL.tenTour, GLOSSARY.tenTour], [COL.gia, GLOSSARY.giaTbTour],
+                    [COL.tbDoanThang, GLOSSARY.tbDoanThang], [COL.lichKhoiHanh, GLOSSARY.lichKhoiHanh], [COL.linkTour],
                   ].map(([h, tip]) => (
                     <th key={h} className="text-left py-1.5 px-2"><ThTip label={h} tip={tip} /></th>
                   ))}
                 </tr></thead>
                 <tbody>
-                  {co.tours.map((t: any) => (
-                    <tr key={t.id} className="border-t hover:bg-gray-50">
-                      <td className="px-2 py-1.5 max-w-[200px] truncate" title={t.ten_tour}>{t.ten_tour}</td>
+                  {tours.map((t: any, i: number) => (
+                    <tr key={t.id} className={cn("hover:bg-gray-50", meta[i].isFirst && "border-t-2 border-gray-200")}>
+                      {meta[i].isFirst && (
+                        <td className="px-2 py-1.5 text-center font-semibold text-gray-500 align-top border-r" rowSpan={meta[i].span}>{meta[i].stt}</td>
+                      )}
+                      <td className="px-2 py-1.5 max-w-[220px] truncate" title={t.ten_tour}>{t.ten_tour}</td>
                       <td className="px-2 py-1.5">{t.gia_raw || fmtVND(t.gia)}</td>
-                      <td className="px-2 py-1.5 font-medium">{fmtVND(t.price_day)}</td>
                       <td className="px-2 py-1.5">{Math.round(t.freq_monthly)}</td>
-                      <td className="px-2 py-1.5 max-w-[120px] truncate text-gray-500" title={t.lich_kh}>{t.lich_kh || "—"}</td>
-                      <td className="px-2 py-1.5 max-w-[150px] truncate text-gray-500" title={t.lich_trinh}>{t.lich_trinh || "—"}</td>
+                      <td className="px-2 py-1.5 max-w-[150px] truncate text-gray-500" title={t.lich_kh}>{t.lich_kh || "—"}</td>
                       <td className="px-2 py-1.5">{t.link_url && <a href={t.link_url} target="_blank" rel="noopener noreferrer"><ExternalLink size={12} /></a>}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

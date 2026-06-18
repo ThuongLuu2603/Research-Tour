@@ -304,10 +304,15 @@ def compare_segments(
 
 
 def _segment_detail_payload(seg) -> dict:
+    # CHỈ entries THỎA điều kiện so sánh: VTR theo dòng tour cấu hình (vtr_price_entries),
+    # thị trường theo phân khúc + có NGÀY KH trong giai đoạn VTR (market_price_entries).
+    # Trước đây lấy seg.entries (tất cả) → hiện cả ctrinh không đủ điều kiện so sánh.
+    qualifying = list(seg.vtr_price_entries) + list(seg.market_price_entries)
     by_company: dict[str, list] = defaultdict(list)
-    for e in seg.entries:
+    for e in qualifying:
         by_company[e.cong_ty].append({
             "id": e.tour_id,
+            "ma_tour": e.ma_tour,          # gộp STT theo chương trình ở UI
             "ten_tour": e.ten_tour,
             "gia": e.gia,
             "gia_raw": e.gia_raw,
@@ -315,11 +320,13 @@ def _segment_detail_payload(seg) -> dict:
             "freq_monthly": e.freq_score,
             "freq_label": e.freq_label,
             "lich_kh": e.lich_kh,
-            "lich_trinh": e.lich_trinh[:300] if e.lich_trinh else "",
             "link_url": e.link_url,
             "thoi_gian": e.thoi_gian,
             "is_vietravel": e.is_vietravel,
         })
+
+    def _prog(t) -> str:
+        return (t["ma_tour"] or "").strip() or (t["ten_tour"] or "").strip()
 
     companies = []
     for co, tours_list in sorted(by_company.items(), key=lambda x: (-len(x[1]), x[0])):
@@ -327,7 +334,9 @@ def _segment_detail_payload(seg) -> dict:
             "cong_ty": co,
             "is_vietravel": is_vietravel(co),
             "tour_count": len(tours_list),
-            "tours": sorted(tours_list, key=lambda t: t["price_day"]),
+            "product_count": len({_prog(t) for t in tours_list}),  # số CHƯƠNG TRÌNH
+            # Sort theo chương trình rồi giá → các dòng cùng ctrinh kề nhau (merge STT).
+            "tours": sorted(tours_list, key=lambda t: (_prog(t), t["price_day"])),
         })
 
     return {

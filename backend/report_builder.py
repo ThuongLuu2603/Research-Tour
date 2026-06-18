@@ -209,7 +209,7 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
     rows_exp = "".join(
         f"<tr>"
         f"<td>{s.thi_truong}</td><td>{s.tuyen_tour}</td><td>{s.diem_kh}</td>"
-        f"<td style='text-align:center'>{s.so_ngay:.0f}N</td>"
+        f"<td style='text-align:center'>{(s.vtr_avg_days or 0):.0f}N</td>"
         f"<td style='text-align:right'>{_fmt(s.vtr_avg_price)}</td>"
         f"<td style='text-align:right'>{_fmt(s.comparison_price)}</td>"
         f"<td style='text-align:center;color:{'#dc2626' if (s.gap_pct or 0)>=15 else '#ea580c'};font-weight:bold'>{_pct(s.gap_pct)}</td>"
@@ -218,7 +218,7 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
     )
     rows_cheap = "".join(
         f"<tr><td>{s.tuyen_tour}</td><td>{s.diem_kh}</td><td>{s.thi_truong}</td>"
-        f"<td style='text-align:center'>{s.so_ngay:.0f}N</td>"
+        f"<td style='text-align:center'>{(s.vtr_avg_days or 0):.0f}N</td>"
         f"<td style='text-align:right'>{_fmt(s.vtr_avg_price)}</td>"
         f"<td style='text-align:right'>{_fmt(s.comparison_price)}</td>"
         f"<td style='text-align:center;color:#16a34a;font-weight:bold'>{_pct(s.gap_pct)}</td></tr>"
@@ -361,6 +361,7 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
 </div>''' if trend_data else ''}
 
 <h2>I. Phân tích Giá — VTR đắt hơn thị trường</h2>
+<p class="meta" style="margin-bottom:8px"><em>Giá SS (Giá so sánh)</em> = giá thị trường quy đổi về cùng số ngày tour VTR để so công bằng (giá/ngày × số ngày VTR), chỉ tính chương trình thỏa điều kiện (đúng phân khúc, có ngày khởi hành trong giai đoạn VTR). <em>Chênh</em> = VTR so với Giá SS.</p>
 {f'<p style="margin-bottom:8px">Biểu đồ chênh lệch: {spark_exp}</p>' if spark_exp else ''}
 <table>
   <thead><tr><th>Thị trường</th><th>Tuyến tour</th><th>Điểm KH</th><th style="text-align:center">Ngày</th><th style="text-align:right">Giá VTR</th><th style="text-align:right">Giá SS</th><th style="text-align:center">Chênh</th></tr></thead>
