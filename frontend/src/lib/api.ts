@@ -1308,8 +1308,13 @@ export const assignMarketKeyword = async (market: string, keyword: string) => {
 export const reportHtmlUrl = () =>
   `/api/intelligence/report/html?access_token=${localStorage.getItem("access_token")}`;
 
-export const fetchReportHtml = async (): Promise<string> => {
-  const { data } = await api.get("/intelligence/report/html", { responseType: "text" });
+export const fetchReportHtml = async (refresh = false): Promise<string> => {
+  const { data } = await api.get(`/intelligence/report/html${refresh ? "?refresh=true" : ""}`, { responseType: "text" });
+  return data;
+};
+
+export const saveReportHtml = async (html: string): Promise<{ saved: boolean }> => {
+  const { data } = await api.put("/intelligence/report/html", { html });
   return data;
 };
 

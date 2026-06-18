@@ -50,7 +50,7 @@ def capture_daily_snapshot(db: Session, tours: list[Tour] | None = None) -> Dail
                 expensive += 1
             else:
                 similar += 1
-        fg = s.freq_gap_pct
+        fg = s.freq_gap_vs_avg_pct  # dẫn/kém so đối thủ TB (cùng cấp độ), khớp Home/live
         if fg is not None:
             if fg >= 20:
                 freq_lead += 1
@@ -115,6 +115,17 @@ def capture_daily_snapshot(db: Session, tours: list[Tour] | None = None) -> Dail
 
     db.commit()
     db.refresh(daily)
+
+    # Dựng lại & LƯU báo cáo BGĐ theo dữ liệu mới (snapshot ngày / Làm mới tự chạy) →
+    # ghi đè bản đã chỉnh sửa tay. Best-effort, không làm hỏng snapshot nếu lỗi.
+    try:
+        from report_builder import build_report_html
+        from persistent_cache import save_text
+
+        save_text("report_html_saved", build_report_html(db, "daily"), ttl_hours=24 * 30)
+    except Exception:  # noqa: BLE001
+        pass
+
     return daily
 
 

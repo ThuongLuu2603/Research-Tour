@@ -170,13 +170,45 @@ def matcher_detail(
     return find_matches(tours, tour_id)
 
 
+_REPORT_NS = "report_html_saved"
+
+
 @router.get("/report/html", response_class=HTMLResponse)
 def report_html(
     type: str = Query("daily"),
+    refresh: bool = Query(False, description="Dựng lại báo cáo (xoá chỉnh sửa tay) — nút 'Làm mới'"),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    return HTMLResponse(build_report_html(db, type))
+    # Phục vụ bản ĐÃ LƯU (gồm chỉnh sửa tay của admin) — chỉ dựng lại khi refresh=true
+    # (nút Làm mới) hoặc khi snapshot ngày tự chạy. Mỗi lần vào KHÔNG dựng lại.
+    from persistent_cache import load_text, save_text
+
+    if not refresh:
+        saved = load_text(_REPORT_NS, max_age_hours=None)
+        if saved:
+            return HTMLResponse(saved)
+    html = build_report_html(db, type)
+    try:
+        save_text(_REPORT_NS, html, ttl_hours=24 * 30)
+    except Exception:  # noqa: BLE001
+        pass
+    return HTMLResponse(html)
+
+
+@router.put("/report/html")
+def save_report_html(
+    body: dict,
+    _: User = Depends(require_admin),
+):
+    """Lưu ghi đè báo cáo đã chỉnh sửa tay (admin). Giữ tới khi Làm mới / snapshot ngày."""
+    from persistent_cache import save_text
+
+    html = (body or {}).get("html") or ""
+    if not html.strip():
+        return {"saved": False, "reason": "empty"}
+    save_text(_REPORT_NS, html, ttl_hours=24 * 30)
+    return {"saved": True}
 
 
 @router.get("/alerts")

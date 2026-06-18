@@ -260,6 +260,12 @@ def _compute_home_brief(db: Session) -> dict:
                 "freq_lagging": live["freq_lagging"],
             })
             kpis_source = "live"
+            # Insights cũng regenerate LIVE → mô tả (số ngày) + link (filter + segment)
+            # mới hiện NGAY, không phải đợi snapshot kế. Snapshot insights chỉ dùng khi cold.
+            try:
+                insights = json.loads(generate_insights(db, ctx.tours, daily))
+            except Exception:  # noqa: BLE001
+                pass
         except Exception:  # noqa: BLE001
             pass  # lỗi build context → giữ KPI snapshot làm fallback
 

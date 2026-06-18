@@ -1,31 +1,32 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useEffect, useState } from "react";
-import { fetchReportHtml } from "@/lib/api";
+import { fetchReportHtml, saveReportHtml } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageTitle } from "@/components/InfoTip";
-import { Download, Printer, RefreshCw, Pencil } from "lucide-react";
+import { Download, Printer, RefreshCw, Pencil, Save } from "lucide-react";
 
 export default function ReportsPage() {
   const { user } = useAuth();
   const canEdit = user?.role === "admin" || user?.role === "super_admin";
+  const qc = useQueryClient();
 
-  const { data: html, refetch, isFetching } = useQuery({
+  const { data: html } = useQuery({
     queryKey: ["report-html"],
-    queryFn: fetchReportHtml,
-    staleTime: 5 * 60_000, // báo cáo đổi chậm — không gọi lại mỗi lần mở (vẫn có nút Làm mới)
+    queryFn: () => fetchReportHtml(false),
+    staleTime: 30 * 60_000, // báo cáo lưu sẵn — không tự dựng lại mỗi lần vào
   });
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState<"refresh" | "save" | null>(null);
+  const [msg, setMsg] = useState("");
 
-  // Bật/tắt sửa trực tiếp trên body của iframe (chỉ admin).
   const applyEditable = (on: boolean) => {
     const body = iframeRef.current?.contentDocument?.body;
     if (body) body.setAttribute("contenteditable", on ? "true" : "false");
   };
   useEffect(() => { applyEditable(editing); }, [editing, html]);
 
-  // Lấy HTML hiện tại (kèm chỉnh sửa của admin) để in/tải.
   const currentHtml = (): string => {
     const docEl = iframeRef.current?.contentDocument?.documentElement;
     if (docEl) {
@@ -36,14 +37,34 @@ export default function ReportsPage() {
     return html || "";
   };
 
+  // "Làm mới" = DỰNG LẠI từ dữ liệu mới nhất (xoá chỉnh sửa tay).
+  const doRefresh = async () => {
+    setBusy("refresh"); setMsg("");
+    try {
+      const fresh = await fetchReportHtml(true);
+      qc.setQueryData(["report-html"], fresh);
+      setEditing(false);
+      setMsg("Đã dựng lại báo cáo theo dữ liệu mới.");
+    } finally { setBusy(null); }
+  };
+
+  // "Lưu" = ghi đè bản chỉnh sửa tay vào hệ thống (giữ tới khi Làm mới / snapshot ngày).
+  const doSave = async () => {
+    setBusy("save"); setMsg("");
+    try {
+      const out = currentHtml();
+      await saveReportHtml(out);
+      qc.setQueryData(["report-html"], out);
+      setMsg("Đã lưu chỉnh sửa vào hệ thống.");
+    } catch { setMsg("Lưu thất bại — thử lại."); }
+    finally { setBusy(null); }
+  };
+
   const printReport = () => {
     const out = currentHtml();
     const w = window.open("", "_blank");
     if (!w || !out) return;
-    w.document.write(out);
-    w.document.close();
-    w.focus();
-    w.print();
+    w.document.write(out); w.document.close(); w.focus(); w.print();
   };
 
   const downloadHtml = () => {
@@ -57,21 +78,29 @@ export default function ReportsPage() {
   };
 
   return (
-    <div className="p-6 space-y-4 h-full flex flex-col">
+    <div className="p-6 space-y-4 flex flex-col">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <PageTitle title="Báo cáo CI Vietravel" tip="Báo cáo trình bày cho BGĐ — xem online hoặc in/PDF offline" />
-          <p className="text-sm text-gray-500 mt-1">Ưu tiên: Giá → Tần suất → Phủ sóng · Cập nhật theo snapshot hàng ngày</p>
+          <p className="text-sm text-gray-500 mt-1">Ưu tiên: Giá → Tần suất → Phủ sóng · Lưu sẵn, chỉ dựng lại khi “Làm mới” hoặc snapshot ngày tự chạy</p>
         </div>
-        <div className="flex gap-2">
-          <button onClick={() => refetch()} className="btn-secondary text-xs flex items-center gap-1">
-            <RefreshCw size={14} className={isFetching ? "animate-spin" : ""} /> Làm mới
+        <div className="flex gap-2 items-center">
+          {msg && <span className="text-xs text-green-700">{msg}</span>}
+          <button onClick={doRefresh} disabled={busy !== null} className="btn-secondary text-xs flex items-center gap-1">
+            <RefreshCw size={14} className={busy === "refresh" ? "animate-spin" : ""} /> Làm mới
           </button>
           {canEdit && (
-            <button onClick={() => setEditing((v) => !v)}
-              className={`text-xs flex items-center gap-1 ${editing ? "btn-primary" : "btn-secondary"}`}>
-              <Pencil size={14} /> {editing ? "Đang sửa — bấm để khoá" : "Sửa trực tiếp"}
-            </button>
+            <>
+              <button onClick={() => setEditing((v) => !v)}
+                className={`text-xs flex items-center gap-1 ${editing ? "btn-primary" : "btn-secondary"}`}>
+                <Pencil size={14} /> {editing ? "Đang sửa" : "Sửa trực tiếp"}
+              </button>
+              {editing && (
+                <button onClick={doSave} disabled={busy !== null} className="btn-primary text-xs flex items-center gap-1">
+                  <Save size={14} className={busy === "save" ? "animate-spin" : ""} /> Lưu
+                </button>
+              )}
+            </>
           )}
           <button onClick={printReport} disabled={!html} className="btn-primary text-xs flex items-center gap-1">
             <Printer size={14} /> In / PDF
@@ -84,18 +113,19 @@ export default function ReportsPage() {
 
       {editing && (
         <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-1.5">
-          ✏️ Đang bật chế độ sửa — bấm vào ô (đặc biệt cột <strong>Ghi chú</strong> nền vàng) để gõ. Sửa xong bấm <strong>In/PDF</strong> hoặc <strong>Tải HTML</strong> sẽ giữ nội dung đã sửa (không lưu vào hệ thống).
+          ✏️ Đang bật chế độ sửa — bấm vào ô (đặc biệt cột <strong>Ghi chú</strong> nền vàng) để gõ, xong bấm <strong>Lưu</strong> để ghi đè vào hệ thống (giữ tới lần Làm mới / snapshot ngày).
         </p>
       )}
 
-      <div className="card flex-1 min-h-[600px] overflow-hidden p-0 bg-white">
+      <div className="card overflow-hidden p-0 bg-white">
         {html ? (
           <iframe
             ref={iframeRef}
             title="CI Report"
             srcDoc={html}
             onLoad={() => applyEditable(editing)}
-            className="w-full h-full min-h-[600px] border-0"
+            className="w-full border-0"
+            style={{ height: "calc(100vh - 150px)", minHeight: "640px" }}
           />
         ) : (
           <div className="flex items-center justify-center h-64 text-gray-400 text-sm">Đang tải báo cáo...</div>
@@ -104,7 +134,7 @@ export default function ReportsPage() {
 
       <p className="text-xs text-gray-400">
         Mẹo: In/PDF → chọn &quot;Save as PDF&quot; để gửi file offline cho BGĐ.
-        {canEdit && " Admin có thể bấm “Sửa trực tiếp” để thêm ghi chú/chỉnh số trước khi xuất."}
+        {canEdit && " Admin có thể “Sửa trực tiếp” + “Lưu” để thêm ghi chú/chỉnh số — lưu vào hệ thống, hiện lại khi mở."}
       </p>
     </div>
   );
