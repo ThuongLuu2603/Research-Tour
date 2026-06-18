@@ -157,6 +157,15 @@ _INTL_COUNTRY_KEYWORDS = {
 }
 
 
+def _resolve_pc(location_text: str) -> str:
+    """Mã tỉnh từ location_text — để join festival ↔ tour (Phase 2 redesign)."""
+    try:
+        from provinces import resolve_province_code
+        return resolve_province_code(location_text or "") or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _classify_region(location_text: str) -> str:
     """Region: bac/trung/nam cho VN; 'intl' cho quốc tế."""
     if not location_text:
@@ -553,6 +562,7 @@ def save_festivals_to_db(db, events: list[dict[str, Any]]) -> dict[str, int]:
             existing.date_end = ev["date_end"]
             existing.location_text = (ev.get("location") or "")[:256]
             existing.region = ev.get("region", "")
+            existing.province_code = _resolve_pc(ev.get("location") or "")  # join với tour
             existing.category = ev.get("category", "other")
             existing.description = ev.get("description", "")
             existing.image_url = (ev.get("image_url") or "")[:1024]
@@ -568,6 +578,7 @@ def save_festivals_to_db(db, events: list[dict[str, Any]]) -> dict[str, int]:
                 date_end=ev["date_end"],
                 location_text=(ev.get("location") or "")[:256],
                 region=ev.get("region", ""),
+                province_code=_resolve_pc(ev.get("location") or ""),  # join với tour
                 category=ev.get("category", "other"),
                 description=ev.get("description", ""),
                 image_url=(ev.get("image_url") or "")[:1024],
@@ -586,7 +597,34 @@ def save_festivals_to_db(db, events: list[dict[str, Any]]) -> dict[str, int]:
     return {"inserted": inserted, "updated": updated, "unchanged": unchanged}
 
 
+def backfill_province_codes(db) -> int:
+    """Điền province_code cho festival đang rỗng (content_hash không đổi nên save sẽ
+    bỏ qua). Chạy mỗi lần scrape — join festival↔tour mới hoạt động đúng."""
+    from models import Festival
+
+    n = 0
+    rows = db.query(Festival).filter(
+        (Festival.province_code == "") | (Festival.province_code.is_(None))
+    ).all()
+    for f in rows:
+        pc = _resolve_pc(f.location_text or "")
+        if pc:
+            f.province_code = pc
+            n += 1
+    if n:
+        try:
+            db.commit()
+        except Exception:  # noqa: BLE001
+            db.rollback()
+    return n
+
+
 def run_festival_scrape(db) -> dict[str, int]:
-    """Top-level: scrape + save."""
+    """Top-level: scrape + save + backfill province_code."""
     events = scrape_festivals()
-    return save_festivals_to_db(db, events)
+    stats = save_festivals_to_db(db, events)
+    try:
+        stats["province_backfilled"] = backfill_province_codes(db)
+    except Exception:  # noqa: BLE001
+        pass
+    return stats

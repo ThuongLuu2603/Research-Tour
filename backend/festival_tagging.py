@@ -150,6 +150,11 @@ def tag_tours_with_festivals(
                     cleared += 1
                 continue
 
+            # Province cho khớp lễ = ĐIỂM ĐẾN (tuyến/tên tour), KHÔNG phải điểm khởi hành
+            # (diem_kh). Lễ tổ chức ở ĐÍCH đến → so province đích mới đúng.
+            dest_pc = resolve_province_code(t.tuyen_tour or "") or resolve_province_code(t.ten_tour or "")
+            dest_region = get_region_for_code(dest_pc) if dest_pc else ""
+
             # 3. Gom MỌI lễ trong ngưỡng (nhiều lễ/tour → bảng nối); best = lễ primary (cache).
             best_slug: str | None = None
             best_distance: int | None = None
@@ -159,12 +164,10 @@ def tag_tours_with_festivals(
                 if dist is None or abs(dist) > distance_threshold:
                     continue
                 effective_dist = abs(dist)
-                if t.province_code and f.province_code and t.province_code == f.province_code:
+                if dest_pc and f.province_code and dest_pc == f.province_code:
                     effective_dist = max(0, effective_dist - 1)
-                elif t.province_code and f.region:
-                    tour_region = get_region_for_code(t.province_code)
-                    if tour_region and tour_region == f.region:
-                        effective_dist = max(0, effective_dist - 1)
+                elif dest_region and f.region and dest_region == f.region:
+                    effective_dist = max(0, effective_dist - 1)
                 batch_links.append({
                     "festival_id": f.id, "tour_id": t.id, "festival_slug": f.slug,
                     "distance_days": dist, "source": "date",
