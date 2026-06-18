@@ -36,16 +36,43 @@ function exportSegmentsCsv(items: CompareSegment[]) {
     s.market_total_price ?? "", s.comparison_price ?? "", s.market_min_price ?? "",
     s.gap_pct ?? "", s.position ?? "",
   ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","));
+  downloadCsv(`so-sanh-vtr-${new Date().toISOString().slice(0,10)}.csv`, header, rows);
+}
+
+// Helper chung: header (1 dòng đã join) + rows (đã join) → tải file CSV (BOM cho Excel VN)
+function downloadCsv(filename: string, header: string, rows: string[]) {
   const csv = [header, ...rows].join("\n");
   const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `so-sanh-vtr-${new Date().toISOString().slice(0,10)}.csv`;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+const csvCell = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+
+function exportCompetitorsCsv(items: any[]) {
+  const header = ["Công ty", "Score", "Nhóm trùng", "Sản phẩm", "TB đoàn/tháng", "Giá/ngày TB", "Xu hướng TT %"].join(",");
+  const rows = items.map((c) => [
+    c.cong_ty, c.score ?? "", c.overlap_segments ?? "", c.tour_count ?? "",
+    c.freq_monthly != null && c.tour_count ? Math.round(c.freq_monthly / Math.max(c.tour_count, 1)) : "",
+    c.avg_price_day ?? "", c.market_trend ?? "",
+  ].map(csvCell).join(","));
+  downloadCsv(`doi-thu-vtr-${new Date().toISOString().slice(0,10)}.csv`, header, rows);
+}
+
+function exportCoverageCsv(matrix: any[]) {
+  const header = ["Thị trường", "Tuyến tour", "Trạng thái", "Tour VTR", "Tour TT", "Số ĐT", "Đoàn TT/tháng", "Score cơ hội", "Giá/ngày TT"].join(",");
+  const statusLabel = (s: string) => s === "both" ? "Cả hai" : s === "vtr_only" ? "Chỉ VTR" : "Chỉ TT";
+  const rows = matrix.map((r) => [
+    r.thi_truong, r.tuyen_tour, statusLabel(r.status), r.vtr_tours ?? "", r.market_tours ?? "",
+    r.competitor_count ?? "", r.market_departures_monthly ?? "", r.opportunity_score ?? "", r.market_price_day ?? "",
+  ].map(csvCell).join(","));
+  downloadCsv(`phu-song-vtr-${new Date().toISOString().slice(0,10)}.csv`, header, rows);
 }
 
 // ── Mini chart lịch sử gap_pct ────────────────────────────────────────────────
@@ -197,6 +224,7 @@ export default function VietravelCompare() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [scatterMode, setScatterMode] = useState<"chenh" | "gia">("chenh");
   const [priceFilter, setPriceFilter] = useState<"all" | "expensive" | "cheap" | "similar">("all");
+  const [priceSearch, setPriceSearch] = useState("");
   const [selectedFreqSeg, setSelectedFreqSeg] = useState<CompareSegment | null>(null);
 
   const handleSort = (col: SortCol) => {
@@ -342,14 +370,16 @@ export default function VietravelCompare() {
     [segments?.items]
   );
 
-  // Segments đã lọc theo chip filter trong tab Giá
+  // Segments đã lọc theo chip filter + ô tìm nhanh trong tab Giá
   const filteredPriceItems = useMemo(() => {
-    const all = segments?.items ?? [];
-    if (priceFilter === "expensive") return all.filter((s) => (s.gap_pct ?? 0) >= 5);
-    if (priceFilter === "cheap") return all.filter((s) => (s.gap_pct ?? 0) <= -5);
-    if (priceFilter === "similar") return all.filter((s) => s.gap_pct != null && Math.abs(s.gap_pct) < 5);
+    let all = segments?.items ?? [];
+    if (priceFilter === "expensive") all = all.filter((s) => (s.gap_pct ?? 0) >= 5);
+    else if (priceFilter === "cheap") all = all.filter((s) => (s.gap_pct ?? 0) <= -5);
+    else if (priceFilter === "similar") all = all.filter((s) => s.gap_pct != null && Math.abs(s.gap_pct) < 5);
+    const q = priceSearch.trim().toLowerCase();
+    if (q) all = all.filter((s) => `${s.thi_truong} ${s.tuyen_tour} ${s.diem_kh}`.toLowerCase().includes(q));
     return all;
-  }, [segments?.items, priceFilter]);
+  }, [segments?.items, priceFilter, priceSearch]);
 
   const priceChartFull = (segments?.items ?? []).filter((s) => s.gap_pct != null).map((s) => ({
     name: `${s.tuyen_tour} (${s.diem_kh})`,
@@ -684,6 +714,26 @@ export default function VietravelCompare() {
           </select>
         </div>
         <p className="text-[10px] text-gray-400 self-end pb-1">Bộ lọc theo dữ liệu tour VTR</p>
+        {/* Preset 1-chạm */}
+        <div className="basis-full flex flex-wrap gap-1.5 items-center pt-2 mt-1 border-t border-gray-100">
+          <span className="text-[10px] text-gray-400 mr-0.5">Góc nhìn nhanh:</span>
+          <button type="button" className="text-[11px] px-2 py-1 rounded-full bg-red-50 text-red-700 hover:bg-red-100 font-medium"
+            onClick={() => { setPriceFilter("expensive"); setSortBy("gap_pct"); setSortDir("desc"); setTab("price"); }}>
+            ⚠ Cần xử lý (đắt nhất)
+          </button>
+          <button type="button" className="text-[11px] px-2 py-1 rounded-full bg-green-50 text-green-700 hover:bg-green-100 font-medium"
+            onClick={() => { setPriceFilter("cheap"); setSortBy("gap_pct"); setSortDir("asc"); setTab("price"); }}>
+            ↑ Cơ hội tăng giá
+          </button>
+          <button type="button" className="text-[11px] px-2 py-1 rounded-full bg-amber-50 text-amber-700 hover:bg-amber-100 font-medium"
+            onClick={() => { setCovStatus("market_only"); setTab("coverage"); }}>
+            🕳 Khoảng trống
+          </button>
+          <button type="button" className="text-[11px] px-2 py-1 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 font-medium"
+            onClick={() => setTab("competitors")}>
+            🏆 Đối thủ nặng ký
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -709,8 +759,14 @@ export default function VietravelCompare() {
             <p className="text-xl font-bold tabular-nums"><CountUp value={summary.vietravel_tab_tours} /></p>
           </div>
           <div className="kpi-card hover-lift"><span className="text-xs text-gray-500 inline-flex items-center">Nhóm so sánh<InfoTip text={GLOSSARY.segment} /></span><p className="text-xl font-bold tabular-nums"><CountUp value={summary.segments_comparable ?? summary.segments_with_vietravel} /><span className="text-xs font-normal text-gray-400"> / {summary.segments_with_vietravel} tuyến VTR</span></p></div>
-          <div className="kpi-card hover-lift"><span className="text-xs text-green-600">Rẻ hơn TT</span><p className="text-xl font-bold text-green-700 tabular-nums"><CountUp value={summary.cheaper_count} /></p></div>
-          <div className="kpi-card hover-lift"><span className="text-xs text-red-600">Đắt hơn TT</span><p className="text-xl font-bold text-red-700 tabular-nums"><CountUp value={summary.expensive_count} /></p></div>
+          <button type="button" className="kpi-card hover-lift text-left cursor-pointer focus:outline-none focus:ring-2 focus:ring-green-300"
+            title="Bấm để xem danh sách tuyến rẻ hơn TT"
+            onClick={() => { setPriceFilter("cheap"); setTab("price"); }}>
+            <span className="text-xs text-green-600">Rẻ hơn TT ↗</span><p className="text-xl font-bold text-green-700 tabular-nums"><CountUp value={summary.cheaper_count} /></p></button>
+          <button type="button" className="kpi-card hover-lift text-left cursor-pointer focus:outline-none focus:ring-2 focus:ring-red-300"
+            title="Bấm để xem danh sách tuyến đắt hơn TT"
+            onClick={() => { setPriceFilter("expensive"); setTab("price"); }}>
+            <span className="text-xs text-red-600">Đắt hơn TT ↗</span><p className="text-xl font-bold text-red-700 tabular-nums"><CountUp value={summary.expensive_count} /></p></button>
           <div className="kpi-card hover-lift"><span className="text-xs text-gray-500 inline-flex items-center">{COL.chenhPct}<InfoTip text={GLOSSARY.chenhGia} /></span><p className="text-xl font-bold tabular-nums">{summary.avg_gap_pct != null ? <CountUp value={summary.avg_gap_pct} decimals={1} suffix="%" /> : "—"}</p></div>
           <div className="kpi-card hover-lift"><span className="text-xs text-gray-500 inline-flex items-center">{COL.tbDoanThang} VTR<InfoTip text={GLOSSARY.tbDoanThang} /></span><p className="text-xl font-bold tabular-nums">{summary.vtr_avg_departures_per_month ?? "—"}</p></div>
         </div>
@@ -983,6 +1039,8 @@ export default function VietravelCompare() {
               <InfoTip text={GLOSSARY.giaSoSanh} />
             </h3>
             <div className="flex items-center gap-2 flex-wrap">
+              <input value={priceSearch} onChange={(e) => setPriceSearch(e.target.value)}
+                placeholder="Tìm thị trường/tuyến/điểm KH…" className="input text-xs py-1 w-48" />
               {/* Quick-filter chips */}
               {(["all","expensive","cheap","similar"] as const).map((f) => {
                 const labels = { all: "Tất cả", expensive: `Đắt hơn (${(segments?.items??[]).filter(s=>(s.gap_pct??0)>=5).length})`, cheap: `Rẻ hơn (${(segments?.items??[]).filter(s=>(s.gap_pct??0)<=-5).length})`, similar: `Gần ngang (${(segments?.items??[]).filter(s=>s.gap_pct!=null&&Math.abs(s.gap_pct??0)<5).length})` };
@@ -1365,8 +1423,13 @@ export default function VietravelCompare() {
       {tab === "competitors" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 animate-fade-in">
           <div className="card overflow-auto max-h-[520px]">
-            <div className="px-4 py-3 border-b font-semibold text-sm sticky top-0 bg-white flex items-center gap-2">
+            <div className="px-4 py-3 border-b font-semibold text-sm sticky top-0 bg-white flex items-center gap-2 z-10">
               <Building2 size={16} /> Đối thủ cạnh tranh trực tiếp
+              <button type="button" className="btn-secondary text-[10px] py-0.5 px-1.5 flex items-center gap-1 ml-auto"
+                disabled={!(competitors?.items?.length)}
+                onClick={() => exportCompetitorsCsv(competitors?.items ?? [])}>
+                <Download size={12} /> CSV
+              </button>
             </div>
             <table className="w-full text-xs">
               <thead className="bg-gray-50"><tr>
@@ -1494,6 +1557,11 @@ export default function VietravelCompare() {
                 </select>
                 <input value={covSearch} onChange={(e) => setCovSearch(e.target.value)} placeholder="Tìm thị trường/tuyến…"
                   className="input text-xs py-1 w-40" />
+                <button type="button" className="btn-secondary text-[10px] py-1 px-1.5 flex items-center gap-1"
+                  disabled={!(coverage?.matrix?.length)}
+                  onClick={() => exportCoverageCsv(coverage?.matrix ?? [])}>
+                  <Download size={12} /> CSV
+                </button>
               </div>
               <table className="w-full text-xs">
                 <thead className="bg-gray-50 sticky top-[49px]"><tr>
@@ -1778,6 +1846,14 @@ export default function VietravelCompare() {
                 title="Mở tất cả tour tuyến này trong Sản phẩm & Data"
               >
                 <ExternalLink size={12} /> Xem tất cả tour tuyến này
+              </a>
+              {/* Link sang Market Lab xem động lượng cung-cầu của thị trường này */}
+              <a
+                href={`/market-lab?grain=route&market=${encodeURIComponent(detail.segment?.thi_truong ?? "")}`}
+                className="text-xs text-emerald-600 hover:underline flex items-center gap-1"
+                title="Xem xu hướng cung/cầu thị trường này ở Market Lab"
+              >
+                <ExternalLink size={12} /> Market Lab
               </a>
               <button className="text-xs text-gray-400 hover:text-gray-600" onClick={() => setSelectedKey(null)}>Đóng</button>
             </div>
