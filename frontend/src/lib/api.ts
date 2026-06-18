@@ -579,12 +579,15 @@ export const getSegmentTours = async (segmentKey: string) => {
 export const getCompareCompetitors = async (filters: CompareFilters = {}) => {
   const q = buildCompareParams(filters);
   const { data } = await compareApi.get(`/compare/competitors${q ? "?" + q : ""}`);
-  return data as { items: Array<{ cong_ty: string; tour_count: number; overlap_segments: number; freq_monthly: number; avg_price_day: number | null }>; total: number };
+  return data as { items: Array<{ cong_ty: string; tour_count: number; overlap_segments: number; freq_monthly: number; avg_price_day: number | null; score: number }>; total: number };
 };
 
 export const getCompareCompetitorDetail = async (company: string, filters: CompareFilters = {}) => {
   const q = buildCompareParams(filters);
-  const { data } = await compareApi.get(`/compare/competitor/${encodeURIComponent(company)}${q ? "?" + q : ""}`);
+  // company qua query param (encode) — tránh 404 khi tên có '/', '&'… trên path
+  const params = new URLSearchParams(q);
+  params.set("company", company);
+  const { data } = await compareApi.get(`/compare/competitor?${params.toString()}`);
   return data;
 };
 

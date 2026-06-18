@@ -1341,7 +1341,9 @@ export default function VietravelCompare() {
             <table className="w-full text-xs">
               <thead className="bg-gray-50"><tr>
                 {[
-                  [COL.congTy, GLOSSARY.congTy], ["Nhóm trùng", GLOSSARY.segment], [COL.sanPham, GLOSSARY.tenTour],
+                  [COL.congTy, GLOSSARY.congTy],
+                  ["Score", "Điểm 'đối thủ nặng ký' 0–100. Gia quyền: Nhóm trùng 35% (cạnh tranh trực diện) + Tần suất tổng 30% (quy mô) + Số chương trình 15% (độ phủ SP) + Giá cạnh tranh 20% (rẻ hơn VTR). Chuẩn hoá theo đối thủ mạnh nhất."],
+                  ["Nhóm trùng", GLOSSARY.segment], [COL.sanPham, GLOSSARY.tenTour],
                   [COL.tbDoanThang, GLOSSARY.tbDoanThang], [COL.giaTbNgay, GLOSSARY.giaTbNgay],
                   ["Xu hướng TT", "Avg supply_delta_pct tuyến đối thủ tham gia — TT đang tăng hay giảm cung"],
                 ].map(([h, tip]) => (
@@ -1356,6 +1358,16 @@ export default function VietravelCompare() {
                       className={cn("border-t cursor-pointer hover:bg-blue-50", selectedCompetitor === c.cong_ty && "bg-blue-50")}
                       onClick={() => setSelectedCompetitor(c.cong_ty)}>
                       <td className="px-2 py-2 font-medium">{c.cong_ty}</td>
+                      <td className="px-2 py-2">
+                        {c.score != null ? (
+                          <span className={cn("badge text-[10px] font-bold",
+                            c.score >= 60 ? "bg-red-100 text-red-700"
+                              : c.score >= 35 ? "bg-amber-100 text-amber-700"
+                              : "bg-gray-100 text-gray-600")}>
+                            {c.score}
+                          </span>
+                        ) : "—"}
+                      </td>
                       <td className="px-2 py-2">{c.overlap_segments}</td>
                       <td className="px-2 py-2">{c.tour_count}</td>
                       <td className="px-2 py-2">{Math.round(c.freq_monthly / Math.max(c.tour_count, 1))}</td>

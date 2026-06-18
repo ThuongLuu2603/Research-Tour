@@ -191,6 +191,7 @@ class TourEntry:
     tour_id: int
     cong_ty: str
     ten_tour: str
+    ma_tour: str
     gia: float
     gia_raw: str
     so_ngay: float
@@ -708,6 +709,7 @@ def _tour_to_entry(t: Tour, days: float) -> TourEntry | None:
         tour_id=t.id,
         cong_ty=t.cong_ty or "",
         ten_tour=t.ten_tour or "",
+        ma_tour=(t.ma_tour or "").strip(),
         gia=gia,
         gia_raw=t.gia_raw or "",
         so_ngay=days,

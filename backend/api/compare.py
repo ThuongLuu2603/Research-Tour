@@ -386,6 +386,16 @@ def list_competitors(
     stats: dict[str, dict] = {}
     company_routes: dict[str, set] = defaultdict(set)
 
+    # Baseline giá/ngày VTR (cho thành phần "giá cạnh tranh" trong score) — avg có
+    # trọng số theo tần suất, chỉ tính entry có ngày KH (freq_score>0).
+    vtr_pd_num = vtr_pd_den = 0.0
+    for seg in segments:
+        for e in seg.vtr_entries:
+            if e.freq_score > 0 and e.price_day:
+                vtr_pd_num += e.price_day * e.freq_score
+                vtr_pd_den += e.freq_score
+    vtr_price_day_baseline = (vtr_pd_num / vtr_pd_den) if vtr_pd_den else 0.0
+
     for seg in segments:
         for e in seg.market_entries:
             co = resolve_company_name(e.cong_ty)
@@ -394,12 +404,13 @@ def list_competitors(
             if co not in stats:
                 stats[co] = {
                     "cong_ty": co,
-                    "tour_count": 0,
+                    "prog_keys": set(),   # đếm CHƯƠNG TRÌNH, không đếm dòng giá
                     "overlap_segments": 0,
                     "freq_monthly": 0.0,
                     "price_days": [],
                 }
-            stats[co]["tour_count"] += 1
+            # 1 chương trình price-split = nhiều entry (cùng ma_tour) → chỉ tính 1
+            stats[co]["prog_keys"].add((e.ma_tour or "").strip() or (e.ten_tour or "").strip())
             stats[co]["freq_monthly"] += e.freq_score
             stats[co]["price_days"].append(e.price_day)
 
@@ -430,19 +441,45 @@ def list_competitors(
         avg_day = round(sum(s["price_days"]) / len(s["price_days"]), 0) if s["price_days"] else None
         rows.append({
             "cong_ty": co,
-            "tour_count": s["tour_count"],
+            "tour_count": len(s["prog_keys"]),          # số chương trình (đã dedup price-split)
             "overlap_segments": len(seg_companies.get(co, set())),
             "freq_monthly": round(s["freq_monthly"], 1),
             "avg_price_day": avg_day,
             "market_trend": market_trend.get(co),  # avg supply_delta_pct tuyến đang cạnh tranh
         })
-    rows.sort(key=lambda x: (-x["overlap_segments"], -x["tour_count"]))
+
+    # ── Score "đối thủ nặng ký" (0–100) — chuẩn hoá min-max 4 thành phần rồi gia quyền:
+    #   Nhóm trùng 35% (cạnh tranh trực diện) · Tần suất tổng 30% (quy mô) ·
+    #   Số chương trình 15% (độ phủ SP) · Giá cạnh tranh 20% (rẻ hơn VTR = áp lực hơn).
+    def _norm(vals: list[float]) -> dict:
+        mx = max(vals) if vals else 0
+        return {"max": mx}
+
+    n_overlap = _norm([r["overlap_segments"] for r in rows])["max"] or 1
+    n_freq = _norm([r["freq_monthly"] for r in rows])["max"] or 1
+    n_prod = _norm([r["tour_count"] for r in rows])["max"] or 1
+    for r in rows:
+        # Giá cạnh tranh: baseline VTR / giá ĐT. >1 = ĐT rẻ hơn VTR → áp lực cao. Clamp 0..1.
+        if vtr_price_day_baseline and r["avg_price_day"]:
+            ratio = vtr_price_day_baseline / r["avg_price_day"]
+            price_aggr = max(0.0, min(1.0, (ratio - 0.7) / 0.6))  # 0.7→0, 1.3→1
+        else:
+            price_aggr = 0.0
+        score = 100 * (
+            0.35 * (r["overlap_segments"] / n_overlap)
+            + 0.30 * (r["freq_monthly"] / n_freq)
+            + 0.15 * (r["tour_count"] / n_prod)
+            + 0.20 * price_aggr
+        )
+        r["score"] = round(score, 1)
+
+    rows.sort(key=lambda x: (-x["score"], -x["overlap_segments"]))
     return {"items": rows[:limit], "total": len(rows)}
 
 
-@router.get("/competitor/{company}")
+@router.get("/competitor")
 def competitor_detail(
-    company: str,
+    company: str = Query(..., description="Tên công ty (canonical) — query param tránh lỗi 404 khi tên có ký tự / & …"),
     thi_truong: list[str] = Query([]),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
