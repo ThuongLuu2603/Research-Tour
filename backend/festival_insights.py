@@ -347,25 +347,29 @@ def get_demand_forecast(db, months_ahead: int = 6) -> dict[str, Any]:
             by_region[f.region or "unknown"] += 1
         top_region = max(by_region.items(), key=lambda kv: kv[1])[0] if by_region else ""
 
-        # Tour gắn vào festival trong tháng
-        festival_slugs = [f.slug for f in festivals]
+        # Tour gắn vào festival trong tháng — đếm từ BẢNG NỐI (rule-based), distinct
+        # tour (1 tour có thể gắn nhiều lễ trong tháng).
+        festival_ids = [f.id for f in festivals]
         tour_count = 0
         vtr_count = 0
-        if festival_slugs:
+        if festival_ids:
             from tour_filters import market_filter_clause
+            from models import FestivalTourMapping
             tour_count = (
-                db.query(Tour)
-                .filter(Tour.festival_slug.in_(festival_slugs))
+                db.query(func.count(func.distinct(Tour.id)))
+                .join(FestivalTourMapping, FestivalTourMapping.tour_id == Tour.id)
+                .filter(FestivalTourMapping.festival_id.in_(festival_ids))
                 .filter(market_filter_clause(Tour))
-                .count()
-            )
+                .scalar()
+            ) or 0
             vtr_count = (
-                db.query(Tour)
-                .filter(Tour.festival_slug.in_(festival_slugs))
+                db.query(func.count(func.distinct(Tour.id)))
+                .join(FestivalTourMapping, FestivalTourMapping.tour_id == Tour.id)
+                .filter(FestivalTourMapping.festival_id.in_(festival_ids))
                 .filter(Tour.cong_ty.ilike("%vietravel%"))
                 .filter(market_filter_clause(Tour))
-                .count()
-            )
+                .scalar()
+            ) or 0
 
         # Recommendation heuristic
         if festival_count >= 5:
@@ -539,14 +543,32 @@ def get_region_heatmap(db) -> dict[str, Any]:
     )
     tour_by_province = {pc: int(c) for pc, c in tour_rows}
 
-    tour_fest_rows = (
-        db.query(Tour.province_code, func.count(Tour.id))
-        .filter(Tour.festival_slug.isnot(None))
-        .filter(Tour.province_code != "")
-        .group_by(Tour.province_code)
+    # Tour gắn lễ = BẢNG NỐI (rule-based). Group theo VÙNG/TỈNH của LỄ (không phải
+    # tỉnh khởi hành tour) — vì rule map theo tuyến/vùng của lễ.
+    from models import FestivalTourMapping
+    from tour_filters import market_filter_clause
+
+    tour_fest_region_rows = (
+        db.query(Festival.region, func.count(func.distinct(FestivalTourMapping.tour_id)))
+        .join(FestivalTourMapping, FestivalTourMapping.festival_id == Festival.id)
+        .join(Tour, Tour.id == FestivalTourMapping.tour_id)
+        .filter(Festival.date_end >= today, Festival.date_start <= end)
+        .filter(market_filter_clause(Tour))
+        .group_by(Festival.region)
         .all()
     )
-    tour_fest_by_province = {pc: int(c) for pc, c in tour_fest_rows}
+    tour_fest_by_region_direct = {(r or "unknown"): int(c) for r, c in tour_fest_region_rows}
+
+    tour_fest_prov_rows = (
+        db.query(Festival.province_code, func.count(func.distinct(FestivalTourMapping.tour_id)))
+        .join(FestivalTourMapping, FestivalTourMapping.festival_id == Festival.id)
+        .join(Tour, Tour.id == FestivalTourMapping.tour_id)
+        .filter(Festival.date_end >= today, Festival.date_start <= end)
+        .filter(market_filter_clause(Tour))
+        .group_by(Festival.province_code)
+        .all()
+    )
+    tour_fest_by_province = {(pc or ""): int(c) for pc, c in tour_fest_prov_rows}
 
     # ── VTR tours per province (cho insight under-served) ──────────────────
     vtr_tour_rows = (
@@ -562,17 +584,16 @@ def get_region_heatmap(db) -> dict[str, Any]:
     from provinces import get_region_for_code, get_name_for_code
 
     tour_by_region: dict[str, int] = defaultdict(int)
-    tour_fest_by_region: dict[str, int] = defaultdict(int)
     vtr_by_region: dict[str, int] = defaultdict(int)
     for pc, cnt in tour_by_province.items():
         r = get_region_for_code(pc) or "unknown"
         tour_by_region[r] += cnt
-    for pc, cnt in tour_fest_by_province.items():
-        r = get_region_for_code(pc) or "unknown"
-        tour_fest_by_region[r] += cnt
     for pc, cnt in vtr_by_province.items():
         r = get_region_for_code(pc) or "unknown"
         vtr_by_region[r] += cnt
+    # tour gắn lễ theo vùng = tính TRỰC TIẾP từ vùng của lễ (bảng nối), KHÔNG rollup
+    # từ tỉnh khởi hành tour (vốn sai khi rule map theo tuyến).
+    tour_fest_by_region: dict[str, int] = defaultdict(int, tour_fest_by_region_direct)
 
     regions = ["bac", "trung", "nam"]
     region_out = []

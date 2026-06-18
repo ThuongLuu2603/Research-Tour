@@ -1419,11 +1419,21 @@ export const listFestivalTours = async (slug: string, company?: string): Promise
   return data;
 };
 
+export interface FestivalCompanyAgg {
+  cong_ty: string;
+  is_vtr: boolean;
+  products: number;
+  departures: number;
+  price_from: number | null;
+  link: string;
+}
+
 export interface FestivalSummary {
   slug: string;
   name: string;
   total_tours: number;
   by_company: Record<string, number>;
+  companies: FestivalCompanyAgg[];
   avg_price: number | null;
   vtr_tours: number;
   competitor_tours: number;

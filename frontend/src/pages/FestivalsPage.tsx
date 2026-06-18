@@ -1932,16 +1932,10 @@ function FestivalDetailModal({ slug, onClose }: { slug: string; onClose: () => v
     queryFn: () => getFestivalSummary(slug),
     enabled: !!slug,
   });
-  const { data: tours, isLoading: toursLoading } = useQuery({
-    queryKey: ["festival-tours", slug],
-    queryFn: () => listFestivalTours(slug),
-    enabled: !!slug,
-  });
-
   const cat = festival?.category;
   const catMeta = cat ? CATEGORY_META[cat] : null;
   const daysAway = festival ? daysUntil(festival.date_start) : null;
-  const isLoading = festLoading || sumLoading || toursLoading;
+  const isLoading = festLoading || sumLoading;
 
   // Tần suất estimate: cùng category + cùng location_text trong DB → đếm lần xuất hiện qua năm
   // (simple heuristic: lễ âm lịch = hằng năm; lễ có "thường niên"/"hằng năm" trong tên = annual)
@@ -2082,51 +2076,53 @@ function FestivalDetailModal({ slug, onClose }: { slug: string; onClose: () => v
                 </div>
               )}
 
-              {/* Tour table */}
-              {tours && tours.length > 0 ? (
+              {/* Tour gắn lễ — gộp theo công ty (VTR đầu) */}
+              {summary && summary.companies && summary.companies.length > 0 ? (
                 <div>
-                  <h3 className="text-sm font-semibold text-gray-700 mb-2">Tour gắn lễ ({tours.length})</h3>
+                  <h3 className="text-sm font-semibold text-gray-700 mb-2">
+                    Công ty có tour gắn lễ ({summary.companies.length})
+                  </h3>
                   <div className="overflow-x-auto -mx-4 px-4 border rounded-lg">
-                    <table className="w-full text-xs min-w-[800px]">
+                    <table className="w-full text-xs min-w-[600px]">
                       <thead className="bg-gray-50">
                         <tr>
-                          <th className="px-2 py-1.5 text-left whitespace-nowrap">Công ty</th>
-                          <th className="px-2 py-1.5 text-left whitespace-nowrap">Thị trường</th>
-                          <th className="px-2 py-1.5 text-left">Tuyến / Tên tour</th>
-                          <th className="px-2 py-1.5 text-right whitespace-nowrap">Giá</th>
-                          <th className="px-2 py-1.5 text-right whitespace-nowrap">Ngày</th>
-                          <th className="px-2 py-1.5 text-right whitespace-nowrap">Cách lễ</th>
+                          <th className="px-3 py-2 text-left whitespace-nowrap">Công ty</th>
+                          <th className="px-3 py-2 text-right whitespace-nowrap">SL sản phẩm</th>
+                          <th className="px-3 py-2 text-right whitespace-nowrap">SL đoàn KH</th>
+                          <th className="px-3 py-2 text-right whitespace-nowrap">Giá từ</th>
+                          <th className="px-3 py-2 text-center whitespace-nowrap">Link</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {tours.map((t: FestivalTourLite) => (
-                          <tr key={t.id} className="border-t hover:bg-gray-50">
-                            <td className="px-2 py-1.5 whitespace-nowrap">
+                        {summary.companies.map((c) => (
+                          <tr key={c.cong_ty} className={cn("border-t", c.is_vtr ? "bg-primary-50/60" : "hover:bg-gray-50")}>
+                            <td className="px-3 py-2 whitespace-nowrap">
                               <span className={cn(
-                                "px-1 py-0.5 rounded text-[10px] font-medium",
-                                t.cong_ty.toLowerCase().includes("vietravel") ? "bg-primary-100 text-primary-800" : "bg-gray-100 text-gray-700",
+                                "px-1.5 py-0.5 rounded text-[11px] font-medium",
+                                c.is_vtr ? "bg-primary-100 text-primary-800" : "bg-gray-100 text-gray-700",
                               )}>
-                                {t.cong_ty}
+                                {c.cong_ty}
                               </span>
+                              {c.is_vtr && <span className="ml-1 text-[10px] text-primary-600 font-semibold">★ VTR</span>}
                             </td>
-                            <td className="px-2 py-1.5 whitespace-nowrap text-gray-600">{t.thi_truong || "—"}</td>
-                            <td className="px-2 py-1.5 max-w-[360px]">
-                              <div className="font-medium text-gray-800 truncate" title={t.tuyen_tour}>{t.tuyen_tour || "—"}</div>
-                              <div className="text-[10px] text-gray-400 truncate" title={t.ten_tour}>{t.ten_tour}</div>
-                            </td>
-                            <td className="px-2 py-1.5 text-right font-mono whitespace-nowrap">{fmtVND(t.gia)}</td>
-                            <td className="px-2 py-1.5 text-right text-gray-500 whitespace-nowrap">{t.so_ngay ? `${t.so_ngay}N` : "—"}</td>
-                            <td className="px-2 py-1.5 text-right text-gray-600 whitespace-nowrap">
-                              {t.festival_distance_days === 0 ? "Trùng" :
-                                t.festival_distance_days === null ? "—" :
-                                t.festival_distance_days > 0 ? `${t.festival_distance_days}d trước` :
-                                `${-t.festival_distance_days}d sau`}
+                            <td className="px-3 py-2 text-right font-semibold text-gray-800">{c.products}</td>
+                            <td className="px-3 py-2 text-right text-gray-600">{c.departures || "—"}</td>
+                            <td className="px-3 py-2 text-right font-mono whitespace-nowrap">{c.price_from ? fmtVND(c.price_from) : "—"}</td>
+                            <td className="px-3 py-2 text-center">
+                              {c.link ? (
+                                <a href={c.link} target="_blank" rel="noreferrer" className="text-primary-600 hover:underline inline-flex items-center gap-0.5">
+                                  <ExternalLink size={12} /> Mở
+                                </a>
+                              ) : "—"}
                             </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
+                  <p className="text-[10px] text-gray-400 mt-1.5">
+                    SL sản phẩm = số tour gắn lễ · SL đoàn KH = tổng ngày khởi hành · Giá từ = giá thấp nhất (kèm link tour rẻ nhất).
+                  </p>
                 </div>
               ) : (
                 <div className="rounded-lg border bg-amber-50 border-amber-200 p-4 text-center">

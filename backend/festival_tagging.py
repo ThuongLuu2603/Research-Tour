@@ -459,62 +459,77 @@ def get_festival_tours_summary(db, slug: str) -> dict[str, Any]:
     location của festival (vd lễ Đắk Lắk → tour Đắk Lắk).
     """
     from models import Festival, FestivalTourMapping, Tour
-    from sqlalchemy import func
+    from sqlalchemy.orm import load_only
 
     f = db.query(Festival).filter(Festival.slug == slug).first()
     if not f:
         return {"error": "Festival không tồn tại"}
 
+    from collections import defaultdict
+
     from tour_filters import market_filter_clause
 
-    # NGUỒN SỰ THẬT = bảng nối (engine đã khớp đúng theo địa điểm / ngày nghỉ lễ).
+    # NGUỒN SỰ THẬT = bảng nối (engine đã khớp đúng theo quy tắc / ngày nghỉ lễ).
     # Loại market "Không xác định" + "DV lẻ" như So sánh VTR (market_filter_clause).
-    base = (
+    rows = (
         db.query(Tour)
+        .options(load_only(
+            Tour.id, Tour.cong_ty, Tour.gia, Tour.lich_kh, Tour.link_url, Tour.ma_tour,
+        ))
         .join(FestivalTourMapping, FestivalTourMapping.tour_id == Tour.id)
         .filter(FestivalTourMapping.festival_id == f.id)
         .filter(market_filter_clause(Tour))
-    )
-    total = base.count()
-    if total == 0:
-        return {
-            "slug": slug,
-            "name": f.name_vi,
-            "total_tours": 0,
-            "by_company": {},
-            "avg_price": None,
-            "vtr_tours": 0,
-            "competitor_tours": 0,
-        }
-
-    by_company = dict(
-        db.query(Tour.cong_ty, func.count(Tour.id))
-        .join(FestivalTourMapping, FestivalTourMapping.tour_id == Tour.id)
-        .filter(FestivalTourMapping.festival_id == f.id)
-        .filter(market_filter_clause(Tour))
-        .group_by(Tour.cong_ty)
         .all()
     )
+    if not rows:
+        return {
+            "slug": slug, "name": f.name_vi, "total_tours": 0,
+            "by_company": {}, "companies": [], "avg_price": None,
+            "vtr_tours": 0, "competitor_tours": 0,
+        }
 
-    avg_price = (
-        db.query(func.avg(Tour.gia))
-        .join(FestivalTourMapping, FestivalTourMapping.tour_id == Tour.id)
-        .filter(
-            FestivalTourMapping.festival_id == f.id,
-            Tour.gia.isnot(None),
-            Tour.gia >= 500_000,
-            Tour.gia <= 500_000_000,
-            market_filter_clause(Tour),
-        )
-        .scalar()
+    # Gộp theo CÔNG TY: số sản phẩm (tour) / số đoàn KH (tổng ngày khởi hành) /
+    # giá thấp nhất (giá từ) + link tour rẻ nhất.
+    agg: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"products": 0, "departures": 0, "price_from": None, "link": ""}
     )
+    prices: list[float] = []
+    for t in rows:
+        co = t.cong_ty or "(không rõ)"
+        a = agg[co]
+        a["products"] += 1
+        a["departures"] += len(_parse_tour_lich_kh(t.lich_kh or ""))
+        if t.gia and 500_000 <= t.gia <= 500_000_000:
+            prices.append(t.gia)
+            if a["price_from"] is None or t.gia < a["price_from"]:
+                a["price_from"] = t.gia
+                a["link"] = t.link_url or ""
+        if not a["link"] and t.link_url:
+            a["link"] = t.link_url
 
-    vtr = sum(c for co, c in by_company.items() if "vietravel" in (co or "").lower())
+    companies = [
+        {
+            "cong_ty": co,
+            "is_vtr": "vietravel" in co.lower(),
+            "products": v["products"],
+            "departures": v["departures"],
+            "price_from": float(v["price_from"]) if v["price_from"] else None,
+            "link": v["link"],
+        }
+        for co, v in agg.items()
+    ]
+    # VTR lên đầu, rồi theo số sản phẩm giảm dần.
+    companies.sort(key=lambda x: (0 if x["is_vtr"] else 1, -x["products"]))
+
+    total = len(rows)
+    vtr = sum(c["products"] for c in companies if c["is_vtr"])
+    avg_price = (sum(prices) / len(prices)) if prices else None
     return {
         "slug": slug,
         "name": f.name_vi,
         "total_tours": total,
-        "by_company": {k or "(không rõ)": v for k, v in by_company.items()},
+        "by_company": {c["cong_ty"]: c["products"] for c in companies},
+        "companies": companies,
         "avg_price": float(avg_price) if avg_price else None,
         "vtr_tours": vtr,
         "competitor_tours": total - vtr,

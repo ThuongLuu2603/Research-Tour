@@ -239,11 +239,21 @@ def festival_tours(
     ]
 
 
+class FestivalCompanyAgg(BaseModel):
+    cong_ty: str
+    is_vtr: bool = False
+    products: int = 0
+    departures: int = 0
+    price_from: float | None = None
+    link: str = ""
+
+
 class FestivalSummary(BaseModel):
     slug: str
     name: str
     total_tours: int
     by_company: dict[str, int]
+    companies: list[FestivalCompanyAgg] = []
     avg_price: float | None
     vtr_tours: int
     competitor_tours: int
