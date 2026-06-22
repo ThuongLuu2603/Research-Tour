@@ -52,24 +52,25 @@ export default function ReportConfigTab({ canEdit }: { canEdit: boolean }) {
   const { data, isLoading } = useQuery({ queryKey: ["competitor-report-config"], queryFn: getCompetitorReportConfig });
 
   const [selDeps, setSelDeps] = useState<Set<string>>(new Set());
-  const [selRoutes, setSelRoutes] = useState<Set<string>>(new Set());
+  const [selMarkets, setSelMarkets] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
     if (data) {
       setSelDeps(new Set(data.selected_departures));
-      setSelRoutes(new Set(data.selected_routes));
+      setSelMarkets(new Set(data.selected_markets));
     }
   }, [data]);
 
   const save = async () => {
     setBusy(true); setMsg("");
     try {
-      await saveCompetitorReportConfig([...selDeps], [...selRoutes]);
+      await saveCompetitorReportConfig([...selDeps], [...selMarkets]);
       qc.invalidateQueries({ queryKey: ["competitor-report-config"] });
       qc.invalidateQueries({ queryKey: ["competitor-report-html"] });
       qc.invalidateQueries({ queryKey: ["competitor-departures"] });
+      qc.invalidateQueries({ queryKey: ["competitor-report-html"] });
       setMsg("Đã lưu cấu hình báo cáo. Vào Báo cáo BGĐ → So sánh đối thủ bấm “Làm mới”.");
     } catch { setMsg("Lưu thất bại — thử lại."); }
     finally { setBusy(false); }
@@ -81,7 +82,7 @@ export default function ReportConfigTab({ canEdit }: { canEdit: boolean }) {
     <div className="space-y-3">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <p className="text-xs text-gray-500 max-w-3xl">
-          Chọn <b>đầu khởi hành</b> và <b>tuyến tour</b> sẽ đưa vào báo cáo <b>So sánh đối thủ</b> (Báo cáo BGĐ).
+          Chọn <b>đầu khởi hành</b> và <b>thị trường</b> sẽ đưa vào báo cáo <b>So sánh đối thủ</b> (Báo cáo BGĐ).
           Để trống một cột = lấy <b>tất cả</b>. Sau khi lưu, vào Báo cáo → bấm “Làm mới” để dựng lại.
         </p>
         {canEdit && (
@@ -93,7 +94,7 @@ export default function ReportConfigTab({ canEdit }: { canEdit: boolean }) {
       {msg && <div className="text-xs text-green-700">{msg}</div>}
       <div className="grid md:grid-cols-2 gap-3">
         <CheckList title="Đầu khởi hành" options={data.departures_options} selected={selDeps} setSelected={setSelDeps} />
-        <CheckList title="Tuyến tour" options={data.routes_options} selected={selRoutes} setSelected={setSelRoutes} />
+        <CheckList title="Thị trường" options={data.markets_options} selected={selMarkets} setSelected={setSelMarkets} />
       </div>
       {!canEdit && <p className="text-xs text-amber-600">Chỉ admin mới sửa được cấu hình.</p>}
     </div>

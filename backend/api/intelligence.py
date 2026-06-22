@@ -265,14 +265,14 @@ def save_competitor_report_config(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    """Lưu cấu hình báo cáo (admin): đầu KH + tuyến được chọn. Rỗng = tất cả."""
+    """Lưu cấu hình báo cáo (admin): đầu KH + thị trường được chọn. Rỗng = tất cả."""
     from competitor_report import save_config
 
     departures = (body or {}).get("departures")
-    routes = (body or {}).get("routes")
-    if not isinstance(departures, list) or not isinstance(routes, list):
+    markets = (body or {}).get("markets")
+    if not isinstance(departures, list) or not isinstance(markets, list):
         return {"saved": False, "reason": "invalid"}
-    save_config(db, departures, routes)
+    save_config(db, departures, markets)
     return {"saved": True}
 
 

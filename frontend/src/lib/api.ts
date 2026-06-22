@@ -1345,16 +1345,16 @@ export const fetchCompetitorReportHtml = async (refresh = false): Promise<string
 
 export interface CompetitorReportConfig {
   departures_options: string[];
-  routes_options: string[];
+  markets_options: string[];
   selected_departures: string[];
-  selected_routes: string[];
+  selected_markets: string[];
 }
 export const getCompetitorReportConfig = async (): Promise<CompetitorReportConfig> => {
   const { data } = await api.get("/intelligence/competitor-report/config");
   return data;
 };
-export const saveCompetitorReportConfig = async (departures: string[], routes: string[]): Promise<{ saved: boolean }> => {
-  const { data } = await api.put("/intelligence/competitor-report/config", { departures, routes });
+export const saveCompetitorReportConfig = async (departures: string[], markets: string[]): Promise<{ saved: boolean }> => {
+  const { data } = await api.put("/intelligence/competitor-report/config", { departures, markets });
   return data;
 };
 
