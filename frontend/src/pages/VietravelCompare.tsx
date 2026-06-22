@@ -2094,7 +2094,8 @@ export default function VietravelCompare() {
                 <thead><tr className="text-gray-500 border-b">
                   {[
                     ["STT", "Số thứ tự chương trình — gộp các dòng giá cùng 1 chương trình"],
-                    [COL.tenTour, GLOSSARY.tenTour], [COL.gia, GLOSSARY.giaTbTour],
+                    [COL.tenTour, GLOSSARY.tenTour], ["Đầu KH", "Điểm khởi hành"], ["Số ngày", "Số ngày tour"],
+                    [COL.gia, GLOSSARY.giaTbTour],
                     [COL.tbDoanThang, GLOSSARY.tbDoanThang], [COL.lichKhoiHanh, GLOSSARY.lichKhoiHanh], [COL.linkTour],
                   ].map(([h, tip]) => (
                     <th key={h} className="text-left py-1.5 px-2"><ThTip label={h} tip={tip} /></th>
@@ -2107,6 +2108,8 @@ export default function VietravelCompare() {
                         <td className="px-2 py-1.5 text-center font-semibold text-gray-500 align-top border-r" rowSpan={meta[i].span}>{meta[i].stt}</td>
                       )}
                       <td className="px-2 py-1.5 max-w-[220px] truncate" title={t.ten_tour}>{t.ten_tour}</td>
+                      <td className="px-2 py-1.5 whitespace-nowrap text-gray-600">{t.diem_kh || "—"}</td>
+                      <td className="px-2 py-1.5 whitespace-nowrap">{t.so_ngay ? `${Math.round(t.so_ngay)}N` : (t.thoi_gian || "—")}</td>
                       <td className="px-2 py-1.5">{t.gia_raw || fmtVND(t.gia)}</td>
                       <td className="px-2 py-1.5">{Math.round(t.freq_monthly)}</td>
                       <td className="px-2 py-1.5 max-w-[150px] truncate text-gray-500" title={t.lich_kh}>{t.lich_kh || "—"}</td>

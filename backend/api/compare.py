@@ -317,6 +317,8 @@ def _segment_detail_payload(seg) -> dict:
             "gia": e.gia,
             "gia_raw": e.gia_raw,
             "price_day": e.price_day,
+            "so_ngay": e.so_ngay,
+            "diem_kh": seg.diem_kh,        # segment gom theo điểm KH → cùng 1 đầu KH
             "freq_monthly": e.freq_score,
             "freq_label": e.freq_label,
             "lich_kh": e.lich_kh,
