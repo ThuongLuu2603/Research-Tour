@@ -70,6 +70,7 @@ def build_competitor_report(db) -> dict[str, Any]:
     from compare_cache import get_compare_context
     from compare_engine import is_vietravel
     from festival_tagging import _parse_tour_lich_kh
+    from classification import _match_departure_alias
 
     ctx = get_compare_context(db, [], "", "", allow_stale=False)
     tours = ctx.tours
@@ -85,7 +86,12 @@ def build_competitor_report(db) -> dict[str, Any]:
     for t in tours:
         if not fdates.get(t.id):
             continue  # bỏ tour không còn ngày KH tương lai
-        dep = (t.diem_kh or "").strip() or "Không rõ"
+        # CHỈ lấy đầu khởi hành chuẩn theo "Quy tắc phân loại" (DepartureAliasRule).
+        # diem_kh thô lẫn route/market/rác ("TP.HCM ✈ Sydney", "1 bữa"…) → KHÔNG khớp
+        # alias → bỏ khỏi báo cáo.
+        dep = _match_departure_alias(t.diem_kh or "")
+        if not dep:
+            continue
         mkt = (t.thi_truong or "").strip() or "Không rõ"
         by_dep[dep][mkt].append(t)
 
@@ -200,8 +206,13 @@ def render_competitor_html(data: dict) -> str:
     def dep_id(i):
         return f"dep-{i}"
 
+    # Jump trong iframe: inline scrollIntoView + preventDefault (anchor '#' trong
+    # srcdoc hay điều hướng lệch). href giữ làm fallback.
     nav = " ".join(
-        f"<a class='chip' href='#{dep_id(i)}'>{d['diem_kh']}</a>" for i, d in enumerate(deps)
+        f"<a class='chip' href='#{dep_id(i)}' "
+        f"onclick=\"var e=document.getElementById('{dep_id(i)}');if(e){{e.scrollIntoView({{behavior:'smooth',block:'start'}});if(event){{event.preventDefault();}}}}\">"
+        f"{d['diem_kh']}</a>"
+        for i, d in enumerate(deps)
     )
 
     sections = []
@@ -248,7 +259,7 @@ def render_competitor_html(data: dict) -> str:
     .nav .lbl{font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-right:6px}
     .chip{display:inline-block;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:999px;padding:3px 11px;margin:3px;font-size:12px;text-decoration:none;font-weight:600}
     .chip:hover{background:#dbeafe}
-    section{margin-bottom:28px}
+    section{margin-bottom:28px;scroll-margin-top:72px}
     h2{font-size:18px;color:#0f172a;border-left:4px solid #003580;padding-left:10px;margin:18px 0 10px}
     .mkt{background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
     .mkt-h{background:linear-gradient(90deg,#003580,#0050b3);color:#fff;padding:9px 14px;font-weight:700;font-size:15px}
