@@ -220,6 +220,7 @@ export default function VietravelCompare() {
   const [selectedCompetitor, setSelectedCompetitor] = useState("");
 
   const [selectedMatcherTour, setSelectedMatcherTour] = useState<string | null>(null);
+  const [matcherFocus, setMatcherFocus] = useState<string | null>(null); // key tuyến đang lọc
   const [covStatus, setCovStatus] = useState<"all" | "both" | "vtr_only" | "market_only">("all");
   const [covSearch, setCovSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortCol>("gap_pct");
@@ -1912,43 +1913,57 @@ export default function VietravelCompare() {
         const sortedMatches = [...(matcherDetail?.matches ?? [])].sort(
           (a: any, b: any) => (a.cong_ty || "").localeCompare(b.cong_ty || "") || (b.match_score - a.match_score),
         );
+        const groupKey = (g: any) => `${g.diem_kh}|${g.thi_truong}|${g.tuyen_tour}`;
+        const focusGroup = matcherFocus ? groups.find((g: any) => groupKey(g) === matcherFocus) : null;
+        const renderGroup = (g: any) => {
+          const key = groupKey(g);
+          const active = isActiveGroup(g) || matcherFocus === key;
+          return (
+            <div key={key} className={cn("border-b", active && "bg-blue-50/40")}>
+              <button type="button"
+                onClick={() => { setMatcherFocus(matcherFocus === key ? null : key); setSelectedMatcherTour(g.rep.id); }}
+                className={cn("w-full text-left px-4 py-2.5 hover:bg-blue-50 text-xs", active && "border-l-4 border-l-primary-600")}>
+                <p className="font-semibold text-gray-800">{g.tuyen_tour || "—"} <span className="text-gray-400 font-normal">· {g.thi_truong}</span></p>
+                <p className="text-gray-500 mt-0.5 line-clamp-1">{g.rep.ten_tour}</p>
+                <p className="text-gray-400 mt-0.5">Giá từ <b className="text-primary-700">{fmtVND(g.price_from)}</b> · {g.count} SP {matcherFocus === key ? "▾ (đang lọc)" : "▸"}</p>
+              </button>
+              {active && (
+                <div className="bg-white/70 pb-1">
+                  {g.members.map((m: any) => (
+                    <button key={m.id} type="button" onClick={() => setSelectedMatcherTour(m.id)}
+                      className={cn("w-full text-left pl-8 pr-4 py-1.5 text-[11px] hover:bg-blue-50 border-t border-gray-100",
+                        selectedMatcherTour === m.id && "bg-blue-100/60 font-medium")}>
+                      <span className="line-clamp-1">{m.ten_tour}</span>
+                      <span className="text-gray-400">{fmtVND(m.gia)} · 🗓 {m.thoi_gian || (m.so_ngay ? `${m.so_ngay}N` : "—")}
+                        {m.link_url && <a href={m.link_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="ml-1 text-primary-600 inline-flex items-center"><ExternalLink size={10} /></a>}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        };
         return (
         <div className="grid lg:grid-cols-3 gap-4 animate-fade-in">
           <div className="card overflow-auto max-h-[600px]">
-            <div className="px-4 py-3 border-b font-semibold text-sm">Tuyến VTR (mỗi tuyến 1 SP đại diện)</div>
+            <div className="px-4 py-3 border-b font-semibold text-sm flex items-center justify-between">
+              <span>Tuyến VTR {focusGroup ? "(đang lọc 1 tuyến)" : "(mỗi tuyến 1 SP)"}</span>
+              {focusGroup && (
+                <button type="button" onClick={() => setMatcherFocus(null)} className="text-[11px] text-primary-600 font-normal">Xem tất cả tuyến ✕</button>
+              )}
+            </div>
             <div>
-              {Object.entries(byDep).map(([dep, gs]) => (
-                <div key={dep}>
-                  <div className="px-4 py-1.5 bg-gray-50 text-[11px] font-semibold text-gray-600 sticky top-0">🛫 {dep} <span className="font-normal text-gray-400">· {gs.length} tuyến</span></div>
-                  {gs.map((g: any) => {
-                    const active = isActiveGroup(g);
-                    return (
-                      <div key={`${dep}|${g.thi_truong}|${g.tuyen_tour}`} className={cn("border-b", active && "bg-blue-50/40")}>
-                        <button type="button" onClick={() => setSelectedMatcherTour(g.rep.id)}
-                          className={cn("w-full text-left px-4 py-2.5 hover:bg-blue-50 text-xs", active && "border-l-4 border-l-primary-600")}>
-                          <p className="font-semibold text-gray-800">{g.tuyen_tour || "—"} <span className="text-gray-400 font-normal">· {g.thi_truong}</span></p>
-                          <p className="text-gray-500 mt-0.5 line-clamp-1">{g.rep.ten_tour}</p>
-                          <p className="text-gray-400 mt-0.5">Giá từ <b className="text-primary-700">{fmtVND(g.price_from)}</b> · {g.count} SP {active ? "▾" : "▸"}</p>
-                        </button>
-                        {active && (
-                          <div className="bg-white/70 pb-1">
-                            {g.members.map((m: any) => (
-                              <button key={m.id} type="button" onClick={() => setSelectedMatcherTour(m.id)}
-                                className={cn("w-full text-left pl-8 pr-4 py-1.5 text-[11px] hover:bg-blue-50 border-t border-gray-100",
-                                  selectedMatcherTour === m.id && "bg-blue-100/60 font-medium")}>
-                                <span className="line-clamp-1">{m.ten_tour}</span>
-                                <span className="text-gray-400">{fmtVND(m.gia)} · 🗓 {m.thoi_gian || (m.so_ngay ? `${m.so_ngay}N` : "—")}
-                                  {m.link_url && <a href={m.link_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="ml-1 text-primary-600 inline-flex items-center"><ExternalLink size={10} /></a>}
-                                </span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
+              {focusGroup ? (
+                renderGroup(focusGroup)
+              ) : (
+                Object.entries(byDep).map(([dep, gs]) => (
+                  <div key={dep}>
+                    <div className="px-4 py-1.5 bg-gray-50 text-[11px] font-semibold text-gray-600 sticky top-0">🛫 {dep} <span className="font-normal text-gray-400">· {gs.length} tuyến</span></div>
+                    {gs.map((g: any) => renderGroup(g))}
+                  </div>
+                ))
+              )}
               {groups.length === 0 && <div className="px-4 py-6 text-center text-gray-400 text-xs">Không có tour.</div>}
             </div>
           </div>
@@ -1966,9 +1981,12 @@ export default function VietravelCompare() {
                   <p className="text-xs text-blue-700 mt-1">
                     {matcherDetail.vtr_tour?.thi_truong} · {matcherDetail.vtr_tour?.tuyen_tour} · 📍 {matcherDetail.vtr_tour?.diem_kh} · 🗓 {matcherDetail.vtr_tour?.thoi_gian}
                   </p>
-                  <div className="flex gap-4 mt-2 text-xs">
+                  <div className="flex gap-4 mt-2 text-xs flex-wrap">
                     <span>Giá: <strong>{fmtVND(matcherDetail.vtr_tour?.gia)}</strong></span>
                     <span>Giá/ngày: <strong>{fmtVND(matcherDetail.vtr_tour?.price_day)}</strong></span>
+                    <span>TS khởi hành: <strong>{(matcherDetail.vtr_tour?.freq_min ?? 0) === (matcherDetail.vtr_tour?.freq_max ?? 0)
+                      ? `${matcherDetail.vtr_tour?.freq_max ?? 0}`
+                      : `${matcherDetail.vtr_tour?.freq_min ?? 0}–${matcherDetail.vtr_tour?.freq_max ?? 0}`} đoàn/tháng</strong></span>
                     {matcherDetail.vtr_tour?.link_url && (
                       <a href={matcherDetail.vtr_tour.link_url} target="_blank" rel="noopener noreferrer" className="text-primary-600 flex items-center gap-1"><ExternalLink size={12} /> Link</a>
                     )}
@@ -1978,8 +1996,8 @@ export default function VietravelCompare() {
                   <div className="px-4 py-3 border-b font-semibold text-sm">Tour đối thủ gợi ý (cùng tuyến · sắp theo công ty)</div>
                   <table className="w-full text-xs">
                     <thead className="bg-gray-50"><tr>
-                      {["Điểm", COL.congTy, COL.tenTour, "Điểm KH", COL.gia, COL.giaTbNgay, "Chênh %", COL.tbDoanThang, ""].map((h) => (
-                        <th key={h || "link"} className="px-2 py-2 text-left">{h}</th>
+                      {["Điểm", COL.congTy, COL.tenTour, "Điểm KH", COL.gia, COL.giaTbNgay, "Chênh %", "TS khởi hành", ""].map((h) => (
+                        <th key={h || "link"} className="px-2 py-2 text-left whitespace-nowrap">{h}</th>
                       ))}
                     </tr></thead>
                     <tbody>
@@ -1992,7 +2010,7 @@ export default function VietravelCompare() {
                           <td className="px-2 py-2">{m.gia_raw || fmtVND(m.gia)}</td>
                           <td className="px-2 py-2">{fmtVND(m.price_day)}</td>
                           <td className="px-2 py-2"><GapBadge pct={m.price_gap_pct} /></td>
-                          <td className="px-2 py-2">{m.departures_monthly}</td>
+                          <td className="px-2 py-2 whitespace-nowrap">{(m.freq_min ?? 0) === (m.freq_max ?? 0) ? `${m.freq_max ?? 0}` : `${m.freq_min ?? 0}–${m.freq_max ?? 0}`} đoàn/th</td>
                           <td className="px-2 py-2">{m.link_url && <a href={m.link_url} target="_blank" rel="noopener noreferrer"><ExternalLink size={12} /></a>}</td>
                         </tr>
                       ))}

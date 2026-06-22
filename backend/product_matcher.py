@@ -14,6 +14,22 @@ from departure_parser import parse_departure_frequency
 from models import Tour
 
 
+def _monthly_range(lich_kh: str) -> tuple[int, int]:
+    """TS khởi hành: (min, max) số đoàn/tháng từ lich_kh (chỉ ngày tương lai)."""
+    from collections import Counter
+    from datetime import datetime
+
+    dates = parse_departure_dates(lich_kh or "")
+    today = datetime.now()
+    future = [d for d in dates if d >= today]
+    use = future or dates
+    if not use:
+        return (0, 0)
+    c = Counter((d.year, d.month) for d in use)
+    vals = list(c.values())
+    return (min(vals), max(vals))
+
+
 def _score_match(vtr: Tour, cand: Tour) -> float | None:
     v_days = parse_duration_days(vtr.thoi_gian, vtr.so_ngay)
     c_days = parse_duration_days(cand.thoi_gian, cand.so_ngay)
@@ -70,9 +86,12 @@ def find_matches(tours: list[Tour], vtr_tour_id: int, limit: int = 8) -> dict:
         if score is None or score < 0.35:
             continue
         freq = parse_departure_frequency(t.lich_kh)["monthly_estimate"]
+        f_min, f_max = _monthly_range(t.lich_kh)
         days = parse_duration_days(t.thoi_gian, t.so_ngay) or 1
         candidates.append({
             "tour_id": str(t.id),  # chuỗi để JS không làm tròn id INT8
+            "freq_min": f_min,
+            "freq_max": f_max,
             "cong_ty": t.cong_ty,
             "ten_tour": t.ten_tour,
             "gia": t.gia,
@@ -94,6 +113,8 @@ def find_matches(tours: list[Tour], vtr_tour_id: int, limit: int = 8) -> dict:
         "found": True,
         "vtr_tour": {
             "id": str(vtr.id),
+            "freq_min": _monthly_range(vtr.lich_kh)[0],
+            "freq_max": _monthly_range(vtr.lich_kh)[1],
             "ten_tour": vtr.ten_tour,
             "gia": vtr.gia,
             "thi_truong": vtr.thi_truong,
