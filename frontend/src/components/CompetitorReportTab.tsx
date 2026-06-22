@@ -3,26 +3,43 @@ import { useEffect, useState } from "react";
 import { ExternalLink, Loader2, Save, Pencil, X } from "lucide-react";
 import {
   getCompetitorReport, saveCompetitorReportOverrides,
-  type CompetitorReport, type CompetitorMetrics,
+  type CompetitorReport, type CompMetrics, type CompRoute,
 } from "@/lib/api";
 
 const fmtVND = (n: number | null | undefined) =>
   n == null ? "—" : new Intl.NumberFormat("vi-VN").format(Math.round(n)) + "đ";
-
+const fmtVNDk = (n: number | null | undefined) =>
+  n == null ? "—" : Math.round(n / 1000).toLocaleString("vi-VN") + "K";
+const mLabel = (ym: string) => { const [, m] = ym.split("-"); return "T" + parseInt(m, 10); };
 const keyOf = (dep: string, mkt: string) => `${dep}|||${mkt}`;
 
-function MetricCell({ m }: { m: CompetitorMetrics }) {
+// Dòng tần suất theo tháng: "T5: 11 · T6: 16 · T7: 27"
+function freqLine(m: CompMetrics) {
+  if (!m.monthly.length) return <span className="text-gray-400">—</span>;
   return (
-    <div className="text-xs space-y-0.5">
-      <div><span className="text-gray-500">SL sản phẩm:</span> <b>{m.products}</b></div>
-      <div><span className="text-gray-500">Giá từ:</span> <b className="text-primary-700">{fmtVND(m.price_from)}</b></div>
-      <div><span className="text-gray-500">Tần suất:</span> <b>{m.departures || "—"}</b> đoàn</div>
-      {m.cheapest_name && <div className="text-gray-400 truncate" title={m.cheapest_name}>SP rẻ nhất: {m.cheapest_name}</div>}
-      {m.link ? (
-        <a href={m.link} target="_blank" rel="noreferrer" className="text-primary-600 hover:underline inline-flex items-center gap-0.5">
-          <ExternalLink size={11} /> Link tour
-        </a>
-      ) : null}
+    <div className="text-[11px] leading-snug">
+      <div className="text-gray-500">Mở bán {mLabel(m.sell_from)}–{mLabel(m.sell_to)}</div>
+      <div className="text-gray-700">{m.monthly.map((x) => `${mLabel(x.month)}: ${x.count}`).join(" · ")} đoàn</div>
+    </div>
+  );
+}
+
+// Liệt kê từng tuyến trong 1 cột (vtr | competitor | peer)
+function routeLines(routes: CompRoute[], pick: "vtr" | "competitor" | "peer") {
+  const rows = routes
+    .map((r) => ({ tuyen: r.tuyen, m: r[pick] as (CompMetrics & { company?: string }) | null }))
+    .filter((x) => x.m);
+  if (!rows.length) return <span className="text-gray-300">—</span>;
+  return (
+    <div className="space-y-1">
+      {rows.map(({ tuyen, m }) => (
+        <div key={tuyen} className="text-[11px] leading-snug">
+          <span className="font-medium text-gray-800">{tuyen}</span>
+          {m!.company ? <span className="text-gray-400"> · {m!.company}</span> : null}
+          <span className="text-gray-600">: từ <b className="text-primary-700">{fmtVNDk(m!.price_from)}</b> ({m!.products} sp, {m!.departures} đoàn)</span>
+          {m!.link ? <a href={m!.link} target="_blank" rel="noreferrer" className="ml-1 text-primary-600 inline-flex items-center"><ExternalLink size={10} /></a> : null}
+        </div>
+      ))}
     </div>
   );
 }
@@ -40,13 +57,10 @@ export default function CompetitorReportTab({ canEdit }: { canEdit: boolean }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
-  // Nạp nhận định đã lưu vào state khi data về.
   useEffect(() => {
     if (data?.overrides) {
       const init: Record<string, string> = {};
-      for (const [k, v] of Object.entries(data.overrides)) {
-        if (v?.note) init[k] = v.note;
-      }
+      for (const [k, v] of Object.entries(data.overrides)) if (v?.note) init[k] = v.note;
       setNotes(init);
     }
   }, [data]);
@@ -55,31 +69,25 @@ export default function CompetitorReportTab({ canEdit }: { canEdit: boolean }) {
     setBusy(true); setMsg("");
     try {
       const overrides: Record<string, { note?: string }> = {};
-      for (const [k, note] of Object.entries(notes)) {
-        if (note && note.trim()) overrides[k] = { note: note.trim() };
-      }
+      for (const [k, note] of Object.entries(notes)) if (note?.trim()) overrides[k] = { note: note.trim() };
       await saveCompetitorReportOverrides(overrides);
-      qc.setQueryData<CompetitorReport>(["competitor-report"], (old) =>
-        old ? { ...old, overrides } : old);
-      setEditing(false);
-      setMsg("Đã lưu nhận định vào hệ thống.");
+      qc.setQueryData<CompetitorReport>(["competitor-report"], (old) => old ? { ...old, overrides } : old);
+      setEditing(false); setMsg("Đã lưu nhận định.");
     } catch { setMsg("Lưu thất bại — thử lại."); }
     finally { setBusy(false); }
   };
 
-  if (isLoading) {
-    return <div className="flex items-center gap-2 text-sm text-gray-500 p-6"><Loader2 size={16} className="animate-spin" /> Đang dựng báo cáo so sánh đối thủ…</div>;
-  }
-  if (!data || data.departures.length === 0) {
-    return <div className="text-sm text-gray-400 p-6">Chưa có dữ liệu so sánh.</div>;
-  }
+  if (isLoading) return <div className="flex items-center gap-2 text-sm text-gray-500 p-6"><Loader2 size={16} className="animate-spin" /> Đang dựng báo cáo so sánh đối thủ…</div>;
+  if (!data || data.departures.length === 0) return <div className="text-sm text-gray-400 p-6">Chưa có dữ liệu so sánh.</div>;
+
+  const peer = data.peer_name || "Saigontourist";
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <p className="text-xs text-gray-500">
-          So sánh 1:1 VTR vs <b>đối thủ mạnh nhất</b> mỗi thị trường, theo từng đầu khởi hành (đầu lớn trước).
-          Số liệu tự tính từ dữ liệu cào. {canEdit && "Admin điền/sửa Nhận định rồi Lưu."}
+          So sánh theo <b>đầu khởi hành → thị trường → từng tuyến</b>. Cột Đối thủ lấy <b>cty mạnh nhất mỗi tuyến</b>;
+          Cột ngang tầm = <b>{peer}</b>. {canEdit && "Admin điền Nhận định rồi Lưu."}
         </p>
         <div className="flex items-center gap-2">
           {msg && <span className="text-xs text-green-700">{msg}</span>}
@@ -88,62 +96,96 @@ export default function CompetitorReportTab({ canEdit }: { canEdit: boolean }) {
               <button onClick={save} disabled={busy} className="btn-primary text-xs flex items-center gap-1">
                 {busy ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Lưu nhận định
               </button>
-              <button onClick={() => setEditing(false)} className="btn-secondary text-xs flex items-center gap-1">
-                <X size={13} /> Thoát
-              </button>
+              <button onClick={() => setEditing(false)} className="btn-secondary text-xs flex items-center gap-1"><X size={13} /> Thoát</button>
             </>
           ) : (
-            <button onClick={() => { setEditing(true); setMsg(""); }} className="btn-secondary text-xs flex items-center gap-1">
-              <Pencil size={13} /> Điền / sửa nhận định
-            </button>
+            <button onClick={() => { setEditing(true); setMsg(""); }} className="btn-secondary text-xs flex items-center gap-1"><Pencil size={13} /> Điền / sửa nhận định</button>
           ))}
         </div>
       </div>
 
       {data.departures.map((dep) => (
         <div key={dep.diem_kh} className="card p-4">
-          <h2 className="text-lg font-bold text-gray-900 mb-1">
+          <h2 className="text-lg font-bold text-gray-900 mb-2">
             Khách từ {dep.diem_kh}
             <span className="ml-2 text-xs font-normal text-gray-400">{dep.total_tours} tour · {dep.markets.length} thị trường</span>
           </h2>
-          <div className="space-y-3 mt-2">
+          <div className="space-y-4">
             {dep.markets.map((mk) => {
               const k = keyOf(dep.diem_kh, mk.thi_truong);
               return (
                 <div key={k} className="border rounded-lg overflow-hidden">
-                  <div className="bg-gray-50 px-3 py-2 flex items-center justify-between gap-2 flex-wrap">
-                    <span className="font-semibold text-gray-800">{mk.thi_truong}</span>
-                    <span className="text-xs text-gray-500">
-                      Đối thủ mạnh nhất: <b className="text-gray-700">{mk.competitor || "—"}</b>
-                      {mk.competitor_company_count > 1 && <> · {mk.competitor_company_count} đối thủ trong TT</>}
-                      {" · "}Giá SS thị trường: <b className="text-amber-700">{fmtVND(mk.market_price_from)}</b>
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 divide-x">
-                    <div className="p-3">
-                      <div className="text-[11px] font-semibold text-primary-700 mb-1">★ VIETRAVEL</div>
-                      <MetricCell m={mk.vtr} />
-                    </div>
-                    <div className="p-3">
-                      <div className="text-[11px] font-semibold text-gray-700 mb-1">{mk.competitor || "Đối thủ"}</div>
-                      <MetricCell m={mk.competitor_metrics} />
-                    </div>
-                  </div>
-                  <div className="px-3 py-2 border-t bg-amber-50/40">
-                    <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Nhận định</div>
-                    {editing ? (
-                      <textarea
-                        value={notes[k] || ""}
-                        onChange={(e) => setNotes((s) => ({ ...s, [k]: e.target.value }))}
-                        rows={2}
-                        placeholder="Nhập nhận định cho thị trường này…"
-                        className="w-full text-sm border rounded p-1.5 focus:outline-none focus:ring-1 focus:ring-primary-400"
-                      />
-                    ) : (
-                      <p className="text-sm text-gray-700 whitespace-pre-line">
-                        {notes[k] || <span className="text-gray-400 italic">Chưa có nhận định.</span>}
-                      </p>
+                  <div className="bg-primary-50/60 px-3 py-1.5 font-semibold text-gray-800 text-sm">
+                    Thị trường {mk.thi_truong}
+                    {mk.competitor_companies.length > 0 && (
+                      <span className="ml-2 text-[11px] font-normal text-gray-500">Đối thủ: {mk.competitor_companies.join(", ")}</span>
                     )}
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs border-collapse min-w-[820px]">
+                      <thead>
+                        <tr className="bg-gray-50 text-gray-600">
+                          <th className="border px-2 py-1.5 text-left w-[88px]">Tiêu chí</th>
+                          <th className="border px-2 py-1.5 text-left">VTR {dep.diem_kh}</th>
+                          <th className="border px-2 py-1.5 text-left">Đối thủ (mạnh nhất / tuyến)</th>
+                          <th className="border px-2 py-1.5 text-left">Ngang tầm ({peer})</th>
+                        </tr>
+                      </thead>
+                      <tbody className="align-top">
+                        {/* Sản phẩm */}
+                        <tr>
+                          <td className="border px-2 py-1.5 font-medium text-gray-700">Sản phẩm</td>
+                          <td className="border px-2 py-1.5">
+                            <div className="text-[11px] text-gray-500 mb-1">{mk.vtr_routes} tuyến · {mk.vtr.departures} đoàn</div>
+                            {routeLines(mk.routes, "vtr")}
+                          </td>
+                          <td className="border px-2 py-1.5">
+                            <div className="text-[11px] text-gray-500 mb-1">{mk.competitor_routes} tuyến · {mk.competitor.departures} đoàn</div>
+                            {routeLines(mk.routes, "competitor")}
+                          </td>
+                          <td className="border px-2 py-1.5">
+                            <div className="text-[11px] text-gray-500 mb-1">{mk.peer_routes} tuyến · {mk.peer.departures} đoàn</div>
+                            {routeLines(mk.routes, "peer")}
+                          </td>
+                        </tr>
+                        {/* Giá bán */}
+                        <tr>
+                          <td className="border px-2 py-1.5 font-medium text-gray-700">Giá bán</td>
+                          <td className="border px-2 py-1.5">
+                            <div>Giá từ: <b className="text-primary-700">{fmtVND(mk.vtr.price_from)}</b></div>
+                            <div className="text-gray-500">Giá TB: {fmtVND(mk.vtr.price_avg)}</div>
+                          </td>
+                          <td className="border px-2 py-1.5">
+                            <div>Giá từ: <b>{fmtVND(mk.competitor.price_from)}</b></div>
+                            <div className="text-amber-700">Giá SS: {fmtVND(mk.competitor.price_avg)}</div>
+                          </td>
+                          <td className="border px-2 py-1.5">
+                            <div>Giá từ: <b>{fmtVND(mk.peer.price_from)}</b></div>
+                            <div className="text-gray-500">Giá TB: {fmtVND(mk.peer.price_avg)}</div>
+                          </td>
+                        </tr>
+                        {/* Tần suất KH */}
+                        <tr>
+                          <td className="border px-2 py-1.5 font-medium text-gray-700">TS khởi hành</td>
+                          <td className="border px-2 py-1.5">{freqLine(mk.vtr)}</td>
+                          <td className="border px-2 py-1.5">{freqLine(mk.competitor)}</td>
+                          <td className="border px-2 py-1.5">{freqLine(mk.peer)}</td>
+                        </tr>
+                        {/* Nhận định */}
+                        <tr>
+                          <td className="border px-2 py-1.5 font-medium text-gray-700">Nhận định</td>
+                          <td className="border px-2 py-1.5" colSpan={3}>
+                            {editing ? (
+                              <textarea value={notes[k] || ""} onChange={(e) => setNotes((s) => ({ ...s, [k]: e.target.value }))}
+                                rows={2} placeholder="Nhập nhận định cho thị trường này…"
+                                className="w-full text-sm border rounded p-1.5 focus:outline-none focus:ring-1 focus:ring-primary-400" />
+                            ) : (
+                              <p className="text-sm text-gray-700 whitespace-pre-line">{notes[k] || <span className="text-gray-400 italic">Chưa có nhận định.</span>}</p>
+                            )}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               );
