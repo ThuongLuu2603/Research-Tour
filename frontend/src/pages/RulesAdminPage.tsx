@@ -40,10 +40,11 @@ import { formatDurationLabel, parseDurationInput } from "@/lib/durationFormat";
 import { buildRouteKeywordConflicts, mergeRouteKeywordLists, parseRouteKeywordList } from "@/lib/rulesUnmatched";
 import { dropHandlers, dragAliasProps, keepInputKeys, keywordForRouteDrop, matchRulesSearch } from "@/lib/rulesAdminUi";
 import { ClassificationRulesTab } from "@/components/ClassificationRulesTab";
+import ReportConfigTab from "@/components/ReportConfigTab";
 import { UnmatchedMembers } from "@/components/UnmatchedMembers";
 import { Plus, Trash2, RefreshCw, Database, Search, Pencil, Check, X, GripVertical } from "lucide-react";
 
-type Tab = "classify" | "company" | "departure" | "duration" | "schedule" | "festival" | "compare";
+type Tab = "classify" | "company" | "departure" | "duration" | "schedule" | "festival" | "compare" | "report";
 const matchSearch = matchRulesSearch;
 
 function RuleSearchBar({ value, onChange, total, filtered }: { value: string; onChange: (v: string) => void; total: number; filtered: number }) {
@@ -71,7 +72,7 @@ export default function RulesAdminPage() {
   const [tab, setTab] = useState<Tab>(() => {
     // Issue #5: cho phép deep-link từ Festival CoverageGapTab (/rules#festival).
     const hash = typeof window !== "undefined" ? window.location.hash.replace("#", "") : "";
-    const validTabs: Tab[] = ["classify", "company", "departure", "duration", "schedule", "festival", "compare"];
+    const validTabs: Tab[] = ["classify", "company", "departure", "duration", "schedule", "festival", "compare", "report"];
     return (validTabs as string[]).includes(hash) ? (hash as Tab) : "classify";
   });
   const [search, setSearch] = useState("");
@@ -615,6 +616,7 @@ export default function RulesAdminPage() {
             ["schedule", "Định dạng Ngày KH", unmatchedSummary?.schedule],
             ["festival", "Lễ hội", undefined as number | undefined],
             ["compare", "So sánh VTR ↔ Thị trường", undefined as number | undefined],
+            ["report", "Báo cáo", undefined as number | undefined],
           ] as const).map(([t, label, badgeCount]) => (
             <button key={t} onClick={() => { setTab(t); setSearch(""); cancelEdit(); }}
               className={cn("px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5", tab === t ? "bg-primary-600 text-white" : "bg-gray-100 hover:bg-gray-200")}>
@@ -628,6 +630,7 @@ export default function RulesAdminPage() {
             </button>
           ))}
         </div>
+        {tab !== "report" && (<>
         <div className="flex-1 min-w-[200px] max-w-md">
           <RuleSearchBar
             value={search}
@@ -662,7 +665,10 @@ export default function RulesAdminPage() {
           <RefreshCw size={14} className={applying ? "animate-spin" : ""} />
           {refreshTabLabel}
         </button>
+        </>)}
       </div>
+
+      {tab === "report" && <ReportConfigTab canEdit={isAdmin} />}
 
       {tab === "classify" && (
         <ClassificationRulesTab

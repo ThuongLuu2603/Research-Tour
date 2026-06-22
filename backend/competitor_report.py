@@ -17,7 +17,56 @@ from typing import Any
 _MIN_PRICE = 500_000
 _MAX_PRICE = 500_000_000
 _HTML_KEY = "competitor_report_html"
+_CONFIG_KEY = "competitor_report_config"
 _PEER_KEYWORD = "saigontourist"
+
+
+def get_config(db) -> dict:
+    """Cấu hình báo cáo: đầu khởi hành + tuyến được chọn (rỗng = tất cả)."""
+    from models import AppKv
+    row = db.query(AppKv).filter(AppKv.key == _CONFIG_KEY).first()
+    if not row or not row.value_json:
+        return {"departures": [], "routes": []}
+    try:
+        d = json.loads(row.value_json)
+        return {"departures": d.get("departures") or [], "routes": d.get("routes") or []}
+    except json.JSONDecodeError:
+        return {"departures": [], "routes": []}
+
+
+def save_config(db, departures: list, routes: list) -> None:
+    from models import AppKv
+    payload = json.dumps({"departures": departures or [], "routes": routes or []}, ensure_ascii=False)
+    row = db.query(AppKv).filter(AppKv.key == _CONFIG_KEY).first()
+    if row:
+        row.value_json = payload
+    else:
+        db.add(AppKv(key=_CONFIG_KEY, value_json=payload))
+    db.commit()
+
+
+def get_report_options(db) -> dict:
+    """Lựa chọn cho tab cấu hình: đầu khởi hành (canonical) + tuyến (distinct)."""
+    from sqlalchemy import distinct
+    from models import DepartureAliasRule, Tour
+    from tour_filters import market_filter_clause
+
+    deps = sorted({
+        r[0].strip() for r in db.query(distinct(DepartureAliasRule.canonical_name))
+        .filter(DepartureAliasRule.active == True).all() if r[0] and r[0].strip()  # noqa: E712
+    })
+    routes = sorted({
+        r[0].strip() for r in db.query(distinct(Tour.tuyen_tour))
+        .filter(Tour.tuyen_tour != "").filter(market_filter_clause(Tour)).all()
+        if r[0] and r[0].strip()
+    })
+    cfg = get_config(db)
+    return {
+        "departures_options": deps,
+        "routes_options": routes,
+        "selected_departures": cfg["departures"],
+        "selected_routes": cfg["routes"],
+    }
 
 
 def _is_peer(cong_ty: str) -> bool:
@@ -83,6 +132,11 @@ def build_competitor_report(db) -> dict[str, Any]:
     def route_of(t) -> str:
         return (t.tuyen_tour or "").strip() or "Khác"
 
+    # Cấu hình tab "Báo cáo" (Quy tắc phân loại): chỉ báo cáo đầu KH + tuyến được chọn.
+    cfg = get_config(db)
+    sel_deps = set(cfg.get("departures") or [])
+    sel_routes = set(cfg.get("routes") or [])
+
     by_dep: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
     for t in tours:
         if not fdates.get(t.id):
@@ -93,6 +147,10 @@ def build_competitor_report(db) -> dict[str, Any]:
         dep = _match_departure_alias(t.diem_kh or "")
         if not dep:
             continue
+        if sel_deps and dep not in sel_deps:
+            continue  # đầu KH không được tick trong cấu hình
+        if sel_routes and (t.tuyen_tour or "").strip() not in sel_routes:
+            continue  # tuyến không được tick
         mkt = (t.thi_truong or "").strip() or "Không rõ"
         by_dep[dep][mkt].append(t)
 

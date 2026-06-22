@@ -248,6 +248,34 @@ def competitor_report_html(
     return HTMLResponse(render_full_html(data, saved))
 
 
+@router.get("/competitor-report/config")
+def competitor_report_config(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Tuỳ chọn + cấu hình hiện tại (đầu KH + tuyến áp dụng cho báo cáo)."""
+    from competitor_report import get_report_options
+
+    return get_report_options(db)
+
+
+@router.put("/competitor-report/config")
+def save_competitor_report_config(
+    body: dict,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """Lưu cấu hình báo cáo (admin): đầu KH + tuyến được chọn. Rỗng = tất cả."""
+    from competitor_report import save_config
+
+    departures = (body or {}).get("departures")
+    routes = (body or {}).get("routes")
+    if not isinstance(departures, list) or not isinstance(routes, list):
+        return {"saved": False, "reason": "invalid"}
+    save_config(db, departures, routes)
+    return {"saved": True}
+
+
 @router.get("/competitor-report/departures")
 def competitor_report_departures(
     db: Session = Depends(get_db),

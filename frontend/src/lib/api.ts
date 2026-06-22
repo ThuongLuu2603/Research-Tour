@@ -1343,6 +1343,21 @@ export const fetchCompetitorReportHtml = async (refresh = false): Promise<string
   return data;
 };
 
+export interface CompetitorReportConfig {
+  departures_options: string[];
+  routes_options: string[];
+  selected_departures: string[];
+  selected_routes: string[];
+}
+export const getCompetitorReportConfig = async (): Promise<CompetitorReportConfig> => {
+  const { data } = await api.get("/intelligence/competitor-report/config");
+  return data;
+};
+export const saveCompetitorReportConfig = async (departures: string[], routes: string[]): Promise<{ saved: boolean }> => {
+  const { data } = await api.put("/intelligence/competitor-report/config", { departures, routes });
+  return data;
+};
+
 export interface CompetitorDepartureMeta { diem_kh: string; total_tours: number; markets: number }
 export const getCompetitorDepartures = async (): Promise<{ departures: CompetitorDepartureMeta[] }> => {
   const { data } = await api.get("/intelligence/competitor-report/departures");
