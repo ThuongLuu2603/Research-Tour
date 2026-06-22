@@ -7,6 +7,7 @@ import {
 } from "recharts";
 import {
   getMarketLabOverview, getMarketLabSupplyCalendar, getMarketLabRouteHistory,
+  getCompareFilterOptions,
   type MarketLabRouteRow, type MarketLabOverview,
 } from "@/lib/api";
 import { PageTitle, Tooltip as HintTip } from "@/components/InfoTip";
@@ -219,6 +220,7 @@ export default function MarketLab() {
   const [grain, setGrain] = useState<Grain>((searchParams.get("grain") as Grain) || "route");
   const [tab, setTab] = useState<Tab>((searchParams.get("tab") as Tab) || "opportunity");
   const [marketFilter, setMarketFilter] = useState(searchParams.get("market") || "");
+  const [depFilter, setDepFilter] = useState(searchParams.get("diem_kh") || "");
   const [hideSuspect, setHideSuspect] = useState(searchParams.get("hide_suspect") !== "false");
   const [minScore, setMinScore] = useState(0);
 
@@ -226,11 +228,22 @@ export default function MarketLab() {
   const [selectedRoute, setSelectedRoute] = useState<MarketLabRouteRow | null>(null);
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
-    queryKey: ["market-lab", grain, tab, marketFilter, hideSuspect],
-    queryFn: () => getMarketLabOverview({ grain, tab, thi_truong: marketFilter || undefined, hide_suspect: hideSuspect }),
+    queryKey: ["market-lab", grain, tab, marketFilter, depFilter, hideSuspect],
+    queryFn: () => getMarketLabOverview({ grain, tab, thi_truong: marketFilter || undefined, diem_kh: depFilter || undefined, hide_suspect: hideSuspect }),
     staleTime: 120_000,
     retry: 1,
   });
+
+  // Tuỳ chọn đầu khởi hành cho filter (lấy từ compare filter-options).
+  const { data: filterOpts } = useQuery({
+    queryKey: ["compare-filter-options-ml"],
+    queryFn: getCompareFilterOptions,
+    staleTime: 10 * 60_000,
+  });
+  const depOptions = useMemo(
+    () => (filterOpts?.diem_kh ?? []).map((d: any) => (typeof d === "string" ? d : d.value)).filter(Boolean),
+    [filterOpts],
+  );
 
   const pickFromParam = useMemo(() => {
     if (!routeParam || !data || grain !== "route") return null;
@@ -386,6 +399,12 @@ export default function MarketLab() {
           <option value="">Tất cả thị trường</option>
           {markets.map((m) => <option key={m} value={m}>{m}</option>)}
         </select>
+        <select className="input text-sm py-1.5 max-w-[200px]" value={depFilter}
+          onChange={(e) => { setDepFilter(e.target.value); if (e.target.value) setGrain("route"); }}
+          title="Lọc theo đầu khởi hành">
+          <option value="">Tất cả đầu KH</option>
+          {depOptions.map((d: string) => <option key={d} value={d}>{d}</option>)}
+        </select>
         {grain === "route" && (
           <div className="flex items-center gap-2 text-xs text-gray-600">
             <Filter size={13} />
@@ -454,7 +473,14 @@ export default function MarketLab() {
                     <th className="px-3 py-2">Đoàn TT</th>
                     <th className="px-3 py-2">Đoàn VTR</th>
                     <th className="px-3 py-2">Chênh %</th>
-                    <th className="px-3 py-2">Gap TS</th>
+                    <th className="px-3 py-2">
+                      <HintTip width={300} className="cursor-help"
+                        content={tab === "opportunity"
+                          ? "VTR % TS = tần suất KH của VTR chiếm bao nhiêu % tổng thị trường (VTR + tất cả đối thủ) trên tuyến."
+                          : "Gap TS = chênh tần suất KH của VTR so với ĐỐI THỦ MẠNH NHẤT tuyến đó. Âm = VTR ít lịch hơn."}>
+                        {tab === "opportunity" ? "VTR % TS" : "Gap TS (vs mạnh nhất)"}
+                      </HintTip>
+                    </th>
                     <th className="px-3 py-2">Phase</th>
                     <th className="px-3 py-2">
                       <HintTip width={320} className="cursor-help items-center gap-1"
@@ -494,7 +520,13 @@ export default function MarketLab() {
                           </span>
                         ) : "—"}
                       </td>
-                      <td className="px-3 py-2">{r.avg_freq_gap_pct != null ? `${r.avg_freq_gap_pct}%` : "—"}</td>
+                      <td className="px-3 py-2">
+                        {tab === "opportunity"
+                          ? (r.vtr_freq_share_pct != null ? <span className="font-medium">{r.vtr_freq_share_pct}%</span> : "—")
+                          : (r.freq_gap_vs_top_pct != null
+                              ? <span className={r.freq_gap_vs_top_pct <= -20 ? "text-amber-600" : r.freq_gap_vs_top_pct >= 0 ? "text-green-600" : ""}>{r.freq_gap_vs_top_pct}%</span>
+                              : "—")}
+                      </td>
                       <td className="px-3 py-2"><PhaseBadge phase={r.phase} row={r} /></td>
                       <td className="px-3 py-2 font-bold text-emerald-700">{r.opportunity_score > 0 ? r.opportunity_score : "—"}</td>
                     </tr>

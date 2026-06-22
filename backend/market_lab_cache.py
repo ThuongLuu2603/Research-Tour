@@ -134,13 +134,14 @@ def get_market_lab_overview_cached(
     grain: str = "route",
     tab: str = "opportunity",
     thi_truong: str | None = None,
+    diem_kh: str | None = None,
     hide_suspect: bool = True,
 ) -> dict[str, Any]:
     """Cache response overview — lần 2+ trong TTL ~ instant."""
     from market_lab_engine import get_market_lab_overview
 
     snap = latest_snapshot_date(db)
-    key = (grain, tab, thi_truong or "", hide_suspect, snap)
+    key = (grain, tab, thi_truong or "", diem_kh or "", hide_suspect, snap)
     now = time.time()
     with _lock:
         hit = _overview_cache.get(key)
@@ -148,7 +149,7 @@ def get_market_lab_overview_cached(
             return hit[1]
 
     data = get_market_lab_overview(
-        db, grain=grain, tab=tab, thi_truong=thi_truong, hide_suspect=hide_suspect,
+        db, grain=grain, tab=tab, thi_truong=thi_truong, diem_kh=diem_kh, hide_suspect=hide_suspect,
     )
     with _lock:
         if len(_overview_cache) > 24:
@@ -240,7 +241,7 @@ def routes_from_daily_metrics(db: Session, snap_date: date | None = None) -> dic
 
     routes: dict[str, RouteAgg] = {}
     for r in rows:
-        routes[r.route_key] = RouteAgg(
+        agg = RouteAgg(
             route_key=r.route_key,
             thi_truong=r.thi_truong,
             tuyen_tour=r.tuyen_tour,
@@ -255,4 +256,10 @@ def routes_from_daily_metrics(db: Session, snap_date: date | None = None) -> dic
             opportunity_score=r.opportunity_score,
             competitor_count=r.competitor_count,
         )
+        # TS VTR chiếm % toàn thị trường — tính từ field đã lưu (tab Cơ hội).
+        _tot = (r.vtr_departures_monthly or 0) + (r.market_departures_monthly or 0)
+        if _tot > 0:
+            agg.vtr_freq_share_pct = round((r.vtr_departures_monthly or 0) / _tot * 100, 1)
+        # freq_gap_vs_top_pct KHÔNG có trong snapshot → tab Vận hành dùng build live.
+        routes[r.route_key] = agg
     return routes

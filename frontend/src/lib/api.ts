@@ -1074,6 +1074,8 @@ export interface MarketLabRouteRow {
   vtr_departures_monthly: number;
   avg_gap_pct: number | null;
   avg_freq_gap_pct: number | null;
+  vtr_freq_share_pct: number | null;
+  freq_gap_vs_top_pct: number | null;
   market_price_day: number | null;
   phase: string;
   opportunity_score: number;
@@ -1131,12 +1133,14 @@ export const getMarketLabOverview = async (opts: {
   grain?: "route" | "market";
   tab?: "opportunity" | "operating";
   thi_truong?: string;
+  diem_kh?: string;
   hide_suspect?: boolean;
 }): Promise<MarketLabOverview> => {
   const p = new URLSearchParams();
   if (opts.grain) p.set("grain", opts.grain);
   if (opts.tab) p.set("tab", opts.tab);
   if (opts.thi_truong) p.set("thi_truong", opts.thi_truong);
+  if (opts.diem_kh) p.set("diem_kh", opts.diem_kh);
   if (opts.hide_suspect === false) p.set("hide_suspect", "false");
   const { data } = await marketLabApi.get(`/market-lab/overview?${p}`);
   return data;

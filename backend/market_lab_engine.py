@@ -63,7 +63,9 @@ class RouteAgg:
     market_departures_monthly: float = 0.0
     vtr_departures_monthly: float = 0.0
     avg_gap_pct: float | None = None
-    avg_freq_gap_pct: float | None = None
+    avg_freq_gap_pct: float | None = None         # vs đối thủ TRUNG BÌNH (tab Cơ hội cũ)
+    vtr_freq_share_pct: float | None = None        # TS VTR chiếm % toàn thị trường (Cơ hội)
+    freq_gap_vs_top_pct: float | None = None       # vs đối thủ MẠNH NHẤT (Vận hành VTR)
     market_price_day: float | None = None
     phase: str = "stable"
     opportunity_score: float = 0.0
@@ -74,6 +76,8 @@ class RouteAgg:
     gap_weight: float = 0.0
     freq_gap_sum: float = 0.0
     freq_gap_weight: float = 0.0
+    freq_gap_top_sum: float = 0.0
+    freq_gap_top_weight: float = 0.0
 
     quality: str = "ok"
     quality_note: str = ""
@@ -93,6 +97,8 @@ class RouteAgg:
             "vtr_departures_monthly": round(self.vtr_departures_monthly, 1),
             "avg_gap_pct": self.avg_gap_pct,
             "avg_freq_gap_pct": self.avg_freq_gap_pct,
+            "vtr_freq_share_pct": self.vtr_freq_share_pct,
+            "freq_gap_vs_top_pct": self.freq_gap_vs_top_pct,
             "market_price_day": self.market_price_day,
             "phase": self.phase,
             "opportunity_score": round(self.opportunity_score, 1),
@@ -160,6 +166,10 @@ def build_route_aggregates_from_context(
         if s.freq_gap_vs_avg_pct is not None and s.vtr_entries:
             agg.freq_gap_sum += s.freq_gap_vs_avg_pct * w
             agg.freq_gap_weight += w
+        # Gap vs đối thủ MẠNH NHẤT tuyến (best-of-breed) → tab Vận hành VTR.
+        if s.freq_gap_pct is not None and s.vtr_entries:
+            agg.freq_gap_top_sum += s.freq_gap_pct * w
+            agg.freq_gap_top_weight += w
         if s.market_avg_day:
             if agg.market_price_day is None:
                 agg.market_price_day = s.market_avg_day
@@ -184,6 +194,12 @@ def build_route_aggregates_from_context(
             agg.avg_gap_pct = round(agg.gap_sum / agg.gap_weight, 1)
         if agg.freq_gap_weight > 0:
             agg.avg_freq_gap_pct = round(agg.freq_gap_sum / agg.freq_gap_weight, 1)
+        if agg.freq_gap_top_weight > 0:
+            agg.freq_gap_vs_top_pct = round(agg.freq_gap_top_sum / agg.freq_gap_top_weight, 1)
+        # TS VTR chiếm % toàn thị trường (VTR + đối thủ).
+        _total_dep = agg.vtr_departures_monthly + agg.market_departures_monthly
+        if _total_dep > 0:
+            agg.vtr_freq_share_pct = round(agg.vtr_departures_monthly / _total_dep * 100, 1)
 
         mkt_dep = agg.market_departures_monthly
         vtr_dep = agg.vtr_departures_monthly
@@ -420,6 +436,7 @@ def get_market_lab_overview(
     grain: str = "route",
     tab: str = "opportunity",
     thi_truong: str | None = None,
+    diem_kh: str | None = None,
     hide_suspect: bool = True,
 ) -> dict:
     import time
@@ -428,11 +445,23 @@ def get_market_lab_overview(
 
     t0 = time.time()
     quality_hist = load_tuyen_market_histogram_cached(db)
-    routes = routes_from_daily_metrics(db)
-    data_source = "snapshot"
-    if routes is None:
+    if diem_kh:
+        # Lọc theo ĐẦU KHỞI HÀNH → build LIVE từ context đã lọc (snapshot route_daily_
+        # metrics không có chiều đầu KH).
+        from compare_cache import get_compare_context
+        ctx = get_compare_context(db, [thi_truong] if thi_truong else [], "", diem_kh, allow_stale=False)
+        routes = build_route_aggregates_from_context(ctx.segments, ctx.tours)
+        data_source = "live"
+    elif tab == "operating":
+        # Tab Vận hành cần freq_gap_vs_top (gap vs đối thủ mạnh nhất) → chỉ có ở build live.
         routes = get_cached_routes(db)
         data_source = "live"
+    else:
+        routes = routes_from_daily_metrics(db)
+        data_source = "snapshot"
+        if routes is None:
+            routes = get_cached_routes(db)
+            data_source = "live"
 
     if thi_truong:
         routes = {k: v for k, v in routes.items() if v.thi_truong == thi_truong}
