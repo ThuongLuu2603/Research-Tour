@@ -73,11 +73,13 @@ def _migrate_date_format_rules_output_value():
     if "date_format_rules" not in insp.get_table_names():
         return
     cols = {c["name"] for c in insp.get_columns("date_format_rules")}
-    if "output_value" in cols:
-        return
     with engine.begin() as conn:
         try:
-            conn.execute(text("ALTER TABLE date_format_rules ADD COLUMN output_value VARCHAR(512)"))
+            if "output_value" not in cols:
+                conn.execute(text("ALTER TABLE date_format_rules ADD COLUMN output_value TEXT"))
+            else:
+                # Nới VARCHAR(512) → TEXT (không giới hạn) cho list ngày dài (cả năm).
+                conn.execute(text("ALTER TABLE date_format_rules ALTER COLUMN output_value TYPE TEXT"))
         except Exception as e:
             logger.warning("date_format_rules output_value migration skipped: %s", e)
 

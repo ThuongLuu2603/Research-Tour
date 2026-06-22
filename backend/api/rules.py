@@ -1355,7 +1355,7 @@ class DateFormatRuleIn(BaseModel):
     output_type: str = Field(max_length=32)
     # Chỉ dùng khi output_type='explicit_dates' — user nhập list ngày đầy đủ
     # vd "25/06/2026, 28/07/2026". Bỏ qua khi output_type khác.
-    output_value: str | None = Field(default=None, max_length=512)
+    output_value: str | None = Field(default=None, max_length=32_768)  # list ngày cả năm
     priority: int = Field(default=100, ge=1, le=10_000)
     active: bool = True
     description: str = Field(default="", max_length=256)

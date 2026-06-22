@@ -200,7 +200,8 @@ class DateFormatRule(Base):
     output_type: Mapped[str] = mapped_column(String(32))  # dates|weekly|monthly_recurring|skip|verbatim|explicit_dates
     # output_value: chỉ dùng khi output_type='explicit_dates' — user nhập tay list ngày
     # đầy đủ (vd "25/06/2026, 28/07/2026") để gán cho alias.
-    output_value: Mapped[str | None] = mapped_column(String(512), nullable=True, default=None)
+    # Text (không giới hạn) — list ngày explicit_dates có thể rất dài (cả năm ~200 ngày).
+    output_value: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     priority: Mapped[int] = mapped_column(Integer, default=100, index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     description: Mapped[str] = mapped_column(String(256), default="")
