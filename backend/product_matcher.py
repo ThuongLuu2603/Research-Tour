@@ -15,19 +15,25 @@ from models import Tour
 
 
 def _monthly_range(lich_kh: str) -> tuple[int, int]:
-    """TS khởi hành: (min, max) số đoàn/tháng từ lich_kh (chỉ ngày tương lai)."""
-    from collections import Counter
-    from datetime import datetime
+    """TS khởi hành: (min, max) số đoàn/tháng từ lich_kh (ưu tiên ngày tương lai)."""
+    try:
+        from collections import Counter
+        from datetime import date as _date
 
-    dates = parse_departure_dates(lich_kh or "")
-    today = datetime.now()
-    future = [d for d in dates if d >= today]
-    use = future or dates
-    if not use:
+        dates = parse_departure_dates(lich_kh or "")
+        if not dates:
+            return (0, 0)
+        today = _date.today()
+        # parse_departure_dates có thể trả date hoặc datetime → chuẩn hoá về date.
+        def _d(x):
+            return x.date() if hasattr(x, "date") else x
+        future = [d for d in dates if _d(d) >= today]
+        use = future or dates
+        c = Counter((_d(d).year, _d(d).month) for d in use)
+        vals = list(c.values())
+        return (min(vals), max(vals))
+    except Exception:  # noqa: BLE001
         return (0, 0)
-    c = Counter((d.year, d.month) for d in use)
-    vals = list(c.values())
-    return (min(vals), max(vals))
 
 
 def _score_match(vtr: Tour, cand: Tour) -> float | None:
@@ -166,16 +172,24 @@ def suggest_vtr_tours(tours: list[Tour], limit: int = 20) -> list[dict]:
 
     items = []
     for (dep, mkt, route), members in groups.items():
-        members.sort(key=lambda x: (x.gia if x.gia else 9_999_999_999))
-        rep = members[0]
+        # DEDUP theo CHƯƠNG TRÌNH: nhiều dòng giá cùng ma_tour/tên = 1 SP (giữ rẻ nhất).
+        prog: dict[str, Tour] = {}
+        for m in members:
+            k = (m.ma_tour or "").strip().lower() or (m.ten_tour or "").strip().lower()
+            if not k:
+                k = f"__id_{m.id}"
+            if k not in prog or (m.gia or 9e18) < (prog[k].gia or 9e18):
+                prog[k] = m
+        reps = sorted(prog.values(), key=lambda x: (x.gia if x.gia else 9_999_999_999))
+        rep = reps[0]
         items.append({
             "diem_kh": dep,
             "thi_truong": mkt,
             "tuyen_tour": route,
-            "count": len(members),
+            "count": len(reps),          # SỐ CHƯƠNG TRÌNH (đã dedup), không phải số dòng giá
             "price_from": rep.gia,
             "rep": _lite(rep),
-            "members": [_lite(m) for m in members],
+            "members": [_lite(m) for m in reps],  # 1 dòng / chương trình
         })
     # Đầu lớn trước (tổng tour desc) → trong đầu: tuyến nhiều SP trước.
     items.sort(key=lambda x: (-dep_total[x["diem_kh"]], x["diem_kh"], -x["count"], x["tuyen_tour"]))
