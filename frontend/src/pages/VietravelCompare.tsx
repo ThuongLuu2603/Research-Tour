@@ -1917,7 +1917,8 @@ export default function VietravelCompare() {
         const focusGroup = matcherFocus ? groups.find((g: any) => groupKey(g) === matcherFocus) : null;
         const renderGroup = (g: any) => {
           const key = groupKey(g);
-          const active = isActiveGroup(g) || matcherFocus === key;
+          const expanded = matcherFocus === key;   // CHỈ mở khi đang lọc tuyến này
+          const active = isActiveGroup(g) || expanded;
           return (
             <div key={key} className={cn("border-b", active && "bg-blue-50/40")}>
               <button type="button"
@@ -1925,9 +1926,9 @@ export default function VietravelCompare() {
                 className={cn("w-full text-left px-4 py-2.5 hover:bg-blue-50 text-xs", active && "border-l-4 border-l-primary-600")}>
                 <p className="font-semibold text-gray-800">{g.tuyen_tour || "—"} <span className="text-gray-400 font-normal">· {g.thi_truong}</span></p>
                 <p className="text-gray-500 mt-0.5 line-clamp-1">{g.rep.ten_tour}</p>
-                <p className="text-gray-400 mt-0.5">Giá từ <b className="text-primary-700">{fmtVND(g.price_from)}</b> · {g.count} SP {matcherFocus === key ? "▾ (đang lọc)" : "▸"}</p>
+                <p className="text-gray-400 mt-0.5">Giá từ <b className="text-primary-700">{fmtVND(g.price_from)}</b> · {g.count} SP {expanded ? "▾ (đang lọc)" : "▸"}</p>
               </button>
-              {active && (
+              {expanded && (
                 <div className="bg-white/70 pb-1">
                   {g.members.map((m: any) => (
                     <button key={m.id} type="button" onClick={() => setSelectedMatcherTour(m.id)}

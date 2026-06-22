@@ -26,10 +26,10 @@ EXTRA_SHEET_HEADER = [
     "Thời gian",       # thoi_gian
     "Giá",             # gia
     "Lịch khởi hành",  # lich_kh
-    "Link",            # link_url
-    "Mã tour",         # ma_tour
-    "Hàng không",      # hang_khong (đặt TRƯỚC khách sạn)
-    "Khách sạn",       # khach_san
+    "Link",            # link_url (J)
+    "Hàng không",      # hang_khong (K)
+    "Khách sạn",       # khach_san  (L)
+    "Mã tour",         # ma_tour    (M)
     "Nguồn",           # nguon (source_key) — cột cuối phân biệt site
 ]
 
@@ -45,9 +45,9 @@ _DF_FIELDS = [
     "gia",
     "lich_kh",
     "link_url",
-    "ma_tour",
-    "hang_khong",
-    "khach_san",
+    "hang_khong",   # K
+    "khach_san",    # L
+    "ma_tour",      # M
 ]
 _NGUON_COL_IDX = len(_DF_FIELDS)  # cột "Nguồn" = index 13 (cột thứ 14)
 _LINK_FIELD_IDX = _DF_FIELDS.index("link_url")  # cột "Link" gốc = index 9 (cột J)
