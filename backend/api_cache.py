@@ -58,7 +58,8 @@ def get_tour_filter_options(db: Session) -> dict[str, list[str]]:
         "routes_by_market": routes_by_market,
         "cong_ty": distinct(Tour.cong_ty),
         "diem_kh": distinct(Tour.diem_kh),
-        "nguon": [n for n in distinct(Tour.nguon) if n in DB_CANONICAL_NGUON],
+        # Thêm tag tổng hợp "Saigontourist" (lọc theo cong_ty, không phải nguồn thật).
+        "nguon": [n for n in distinct(Tour.nguon) if n in DB_CANONICAL_NGUON] + ["Saigontourist"],
         "phan_khuc": distinct(Tour.phan_khuc),
     }
     with _lock:

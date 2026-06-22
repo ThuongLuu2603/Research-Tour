@@ -1033,8 +1033,12 @@ export const getDataQuality = async () => {
   return data;
 };
 
-export const getMatcherSuggest = async () => {
-  const { data } = await api.get("/intelligence/matcher/suggest");
+export const getMatcherSuggest = async (filters: { thi_truong?: string; tuyen_tour?: string; diem_kh?: string } = {}) => {
+  const q = new URLSearchParams();
+  if (filters.thi_truong) q.set("thi_truong", filters.thi_truong);
+  if (filters.tuyen_tour) q.set("tuyen_tour", filters.tuyen_tour);
+  if (filters.diem_kh) q.set("diem_kh", filters.diem_kh);
+  const { data } = await api.get(`/intelligence/matcher/suggest${q.toString() ? "?" + q : ""}`);
   return data;
 };
 

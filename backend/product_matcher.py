@@ -54,7 +54,8 @@ def _score_match(vtr: Tour, cand: Tour) -> float | None:
 
 
 def find_matches(tours: list[Tour], vtr_tour_id: int, limit: int = 8) -> dict:
-    tours = deduplicate_tours(tours)
+    # VTR tour = ĐÚNG tour được click (tra trên tập ĐẦY ĐỦ, KHÔNG dedup) → tránh
+    # dedup chọn đại diện khác id → phân tích nhầm tour (bug: click Miền Tây ra Huế).
     by_id = {t.id: t for t in tours}
     vtr = by_id.get(vtr_tour_id)
     if not vtr or not is_vietravel(vtr.cong_ty):
@@ -62,7 +63,7 @@ def find_matches(tours: list[Tour], vtr_tour_id: int, limit: int = 8) -> dict:
 
     seg = segment_key(vtr)
     candidates = []
-    for t in tours:
+    for t in deduplicate_tours(tours):  # chỉ dedup pool ứng viên đối thủ
         if is_vietravel(t.cong_ty) or t.id == vtr.id:
             continue
         score = _score_match(vtr, t)

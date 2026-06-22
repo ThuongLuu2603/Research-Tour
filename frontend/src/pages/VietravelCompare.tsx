@@ -386,7 +386,11 @@ export default function VietravelCompare() {
       .slice(0, 60);
   }, [coverage]);
 
-  const { data: matcherSuggest } = useQuery({ queryKey: ["matcher-suggest"], queryFn: getMatcherSuggest, enabled: tab === "matcher" });
+  const { data: matcherSuggest } = useQuery({
+    queryKey: ["matcher-suggest", thiTruong, tuyenTour, diemKh],
+    queryFn: () => getMatcherSuggest({ thi_truong: thiTruong, tuyen_tour: tuyenTour, diem_kh: diemKh }),
+    enabled: tab === "matcher",
+  });
   const { data: matcherDetail } = useQuery({
     queryKey: ["matcher-detail", selectedMatcherTour],
     queryFn: () => getMatcherDetail(selectedMatcherTour!),

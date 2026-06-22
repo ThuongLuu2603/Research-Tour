@@ -220,7 +220,23 @@ def _apply_tour_filters(q, search, thi_truong, tuyen_tour, cong_ty, nguon, flagg
     if cong_ty:
         q = q.filter(Tour.cong_ty.in_(cong_ty))
     if nguon:
-        q = q.filter(Tour.nguon.in_(nguon))
+        # Tag tổng hợp "Saigontourist" = lọc cong_ty Saigontourist (không phải 1 nguồn
+        # thật). Khi chọn "Main" → LOẠI Saigontourist ra khỏi Main (tách riêng).
+        from sqlalchemy import or_, and_, not_
+
+        sgt = "Saigontourist"
+        real = [n for n in nguon if n != sgt]
+        sgt_match = Tour.cong_ty.ilike("%saigontourist%")
+        conds = []
+        if real:
+            base = Tour.nguon.in_(real)
+            if "Main" in real:
+                base = and_(base, not_(sgt_match))
+            conds.append(base)
+        if sgt in nguon:
+            conds.append(sgt_match)
+        if conds:
+            q = q.filter(or_(*conds))
     if phan_khuc:
         q = q.filter(Tour.phan_khuc.in_(phan_khuc))
     if diem_kh:

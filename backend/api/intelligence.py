@@ -147,6 +147,9 @@ def quality(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
 @router.get("/matcher/suggest")
 def matcher_suggest(
     response: Response,
+    thi_truong: str = Query("", description="Lọc theo thị trường (giống bộ lọc trên)"),
+    tuyen_tour: str = Query(""),
+    diem_kh: str = Query(""),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
@@ -155,6 +158,14 @@ def matcher_suggest(
     # market 'Không xác định') — trước đây query thẳng toàn bảng nên gợi ý cả tour
     # không thuộc tập compare → click ra "tour không tồn tại". Phải khớp 2 dataset.
     tours = filter_tours_for_market_compare(_market_compare_tour_query(db).all())
+    # Lọc danh sách tour VTR theo bộ lọc trên cùng (thị trường/tuyến/điểm KH).
+    tt = thi_truong.strip(); rt = tuyen_tour.strip().lower(); dk = diem_kh.strip().lower()
+    if tt:
+        tours = [t for t in tours if (t.thi_truong or "").strip() == tt]
+    if rt:
+        tours = [t for t in tours if rt in (t.tuyen_tour or "").lower()]
+    if dk:
+        tours = [t for t in tours if dk in (t.diem_kh or "").lower()]
     return {"items": suggest_vtr_tours(tours)}
 
 
