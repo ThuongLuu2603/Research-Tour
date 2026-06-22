@@ -108,23 +108,54 @@ def find_matches(tours: list[Tour], vtr_tour_id: int, limit: int = 8) -> dict:
     }
 
 
+def _lite(t: Tour) -> dict:
+    return {
+        # id dạng CHUỖI: CockroachDB id ~1.18e18 > Number.MAX_SAFE_INTEGER → trả số thì
+        # JS làm tròn → click trỏ nhầm tour khác.
+        "id": str(t.id),
+        "ten_tour": t.ten_tour,
+        "thi_truong": t.thi_truong,
+        "tuyen_tour": t.tuyen_tour,
+        "diem_kh": t.diem_kh,
+        "thoi_gian": t.thoi_gian,
+        "so_ngay": t.so_ngay,
+        "link_url": t.link_url,
+        "gia": t.gia,
+    }
+
+
 def suggest_vtr_tours(tours: list[Tour], limit: int = 20) -> list[dict]:
+    """Gom tour VTR theo (đầu khởi hành × thị trường × TUYẾN) — mỗi tuyến 1 dòng đại
+    diện (giá rẻ nhất) + danh sách sản phẩm cùng nhóm để bung khi click."""
+    from collections import defaultdict
+    from classification import _match_departure_alias
+
     tours = deduplicate_tours(tours)
     vtr_tours = [t for t in tours if is_vietravel(t.cong_ty) and t.gia and t.gia >= MIN_VALID_PRICE]
-    vtr_tours.sort(key=lambda t: t.updated_at or t.created_at, reverse=True)
-    return [
-        {
-            # id dạng CHUỖI: CockroachDB id ~1.18e18 > Number.MAX_SAFE_INTEGER → nếu trả
-            # số, JS làm tròn → click trỏ nhầm tour khác (Seoul → Nhật Bản).
-            "id": str(t.id),
-            "ten_tour": t.ten_tour,
-            "thi_truong": t.thi_truong,
-            "tuyen_tour": t.tuyen_tour,
-            "diem_kh": t.diem_kh,
-            "thoi_gian": t.thoi_gian,
-            "so_ngay": t.so_ngay,
-            "link_url": t.link_url,
-            "gia": t.gia,
-        }
-        for t in vtr_tours[:limit]
-    ]
+
+    groups: dict[tuple, list[Tour]] = defaultdict(list)
+    for t in vtr_tours:
+        dep = _match_departure_alias(t.diem_kh or "") or (t.diem_kh or "").strip() or "Khác"
+        key = (dep, (t.thi_truong or "").strip(), (t.tuyen_tour or "").strip())
+        groups[key].append(t)
+
+    dep_total: dict[str, int] = defaultdict(int)
+    for (dep, _m, _r), members in groups.items():
+        dep_total[dep] += len(members)
+
+    items = []
+    for (dep, mkt, route), members in groups.items():
+        members.sort(key=lambda x: (x.gia if x.gia else 9_999_999_999))
+        rep = members[0]
+        items.append({
+            "diem_kh": dep,
+            "thi_truong": mkt,
+            "tuyen_tour": route,
+            "count": len(members),
+            "price_from": rep.gia,
+            "rep": _lite(rep),
+            "members": [_lite(m) for m in members],
+        })
+    # Đầu lớn trước (tổng tour desc) → trong đầu: tuyến nhiều SP trước.
+    items.sort(key=lambda x: (-dep_total[x["diem_kh"]], x["diem_kh"], -x["count"], x["tuyen_tour"]))
+    return items

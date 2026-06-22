@@ -1901,43 +1901,55 @@ export default function VietravelCompare() {
       )}
 
       {tab === "matcher" && (() => {
-        const selRoute = matcherDetail?.vtr_tour?.tuyen_tour;
-        const allItems = (matcherSuggest?.items ?? []);
-        // Đã chọn 1 SP → danh sách trái CHỈ còn SP cùng tuyến với SP đang chọn.
-        const shownItems = (selectedMatcherTour && selRoute)
-          ? allItems.filter((t: any) => (t.tuyen_tour || "") === selRoute)
-          : allItems;
+        const groups: any[] = (matcherSuggest?.items ?? []);
+        // Gom nhóm tuyến theo ĐẦU KHỞI HÀNH để hiển thị.
+        const byDep: Record<string, any[]> = {};
+        for (const g of groups) (byDep[g.diem_kh] ||= []).push(g);
+        // Nhóm "đang mở" = nhóm chứa SP đang chọn (rep hoặc 1 thành viên).
+        const isActiveGroup = (g: any) =>
+          !!selectedMatcherTour && (g.rep?.id === selectedMatcherTour || g.members?.some((m: any) => m.id === selectedMatcherTour));
         // Tour đối thủ gợi ý: SẮP THEO CÔNG TY (rồi theo điểm khớp).
         const sortedMatches = [...(matcherDetail?.matches ?? [])].sort(
           (a: any, b: any) => (a.cong_ty || "").localeCompare(b.cong_ty || "") || (b.match_score - a.match_score),
         );
         return (
         <div className="grid lg:grid-cols-3 gap-4 animate-fade-in">
-          <div className="card overflow-auto max-h-[560px]">
-            <div className="px-4 py-3 border-b font-semibold text-sm flex items-center justify-between">
-              <span>Chọn tour Vietravel</span>
-              {selectedMatcherTour && selRoute && (
-                <button type="button" onClick={() => setSelectedMatcherTour(null)} className="text-[11px] text-primary-600 font-normal">Bỏ lọc tuyến ✕</button>
-              )}
-            </div>
-            <div className="divide-y">
-              {shownItems.map((t: any) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => setSelectedMatcherTour(t.id)}
-                  className={cn("w-full text-left px-4 py-3 hover:bg-blue-50 text-xs", selectedMatcherTour === t.id && "bg-blue-50 border-l-4 border-l-primary-600")}
-                >
-                  <p className="font-medium line-clamp-2">{t.ten_tour}</p>
-                  <p className="text-gray-500 mt-1">{t.thi_truong} · {t.tuyen_tour} · {fmtVND(t.gia)}</p>
-                  <p className="text-gray-400 mt-0.5 flex items-center gap-2">
-                    <span>📍 {t.diem_kh || "—"}</span>
-                    <span>🗓 {t.thoi_gian || (t.so_ngay ? `${t.so_ngay}N` : "—")}</span>
-                    {t.link_url && <a href={t.link_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-primary-600 inline-flex items-center gap-0.5"><ExternalLink size={11} /> Link</a>}
-                  </p>
-                </button>
+          <div className="card overflow-auto max-h-[600px]">
+            <div className="px-4 py-3 border-b font-semibold text-sm">Tuyến VTR (mỗi tuyến 1 SP đại diện)</div>
+            <div>
+              {Object.entries(byDep).map(([dep, gs]) => (
+                <div key={dep}>
+                  <div className="px-4 py-1.5 bg-gray-50 text-[11px] font-semibold text-gray-600 sticky top-0">🛫 {dep} <span className="font-normal text-gray-400">· {gs.length} tuyến</span></div>
+                  {gs.map((g: any) => {
+                    const active = isActiveGroup(g);
+                    return (
+                      <div key={`${dep}|${g.thi_truong}|${g.tuyen_tour}`} className={cn("border-b", active && "bg-blue-50/40")}>
+                        <button type="button" onClick={() => setSelectedMatcherTour(g.rep.id)}
+                          className={cn("w-full text-left px-4 py-2.5 hover:bg-blue-50 text-xs", active && "border-l-4 border-l-primary-600")}>
+                          <p className="font-semibold text-gray-800">{g.tuyen_tour || "—"} <span className="text-gray-400 font-normal">· {g.thi_truong}</span></p>
+                          <p className="text-gray-500 mt-0.5 line-clamp-1">{g.rep.ten_tour}</p>
+                          <p className="text-gray-400 mt-0.5">Giá từ <b className="text-primary-700">{fmtVND(g.price_from)}</b> · {g.count} SP {active ? "▾" : "▸"}</p>
+                        </button>
+                        {active && (
+                          <div className="bg-white/70 pb-1">
+                            {g.members.map((m: any) => (
+                              <button key={m.id} type="button" onClick={() => setSelectedMatcherTour(m.id)}
+                                className={cn("w-full text-left pl-8 pr-4 py-1.5 text-[11px] hover:bg-blue-50 border-t border-gray-100",
+                                  selectedMatcherTour === m.id && "bg-blue-100/60 font-medium")}>
+                                <span className="line-clamp-1">{m.ten_tour}</span>
+                                <span className="text-gray-400">{fmtVND(m.gia)} · 🗓 {m.thoi_gian || (m.so_ngay ? `${m.so_ngay}N` : "—")}
+                                  {m.link_url && <a href={m.link_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="ml-1 text-primary-600 inline-flex items-center"><ExternalLink size={10} /></a>}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               ))}
-              {shownItems.length === 0 && <div className="px-4 py-6 text-center text-gray-400 text-xs">Không có tour.</div>}
+              {groups.length === 0 && <div className="px-4 py-6 text-center text-gray-400 text-xs">Không có tour.</div>}
             </div>
           </div>
           <div className="lg:col-span-2 space-y-4">
