@@ -308,6 +308,13 @@ def _run_daily_snapshot() -> None:
         try:
             run_with_retry(lambda: capture_daily_snapshot(db), db=db, label="sched-daily-snapshot")
             logger.info("Daily intelligence snapshot captured")
+            # Dựng lại báo cáo SO SÁNH ĐỐI THỦ mỗi ngày (tương tự báo cáo CI) → lưu sẵn.
+            try:
+                from competitor_report import rebuild_and_save
+                rebuild_and_save(db)
+                logger.info("Daily competitor report rebuilt")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Daily competitor report rebuild failed: %s", e)
             return {"status": "captured"}
         finally:
             db.close()

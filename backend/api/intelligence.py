@@ -232,20 +232,17 @@ def competitor_report_html(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """So sánh đối thủ — báo cáo ĐẦY ĐỦ để XEM (gộp bản sửa tay per-đầu KH nếu có).
-    refresh=true → xoá hết chỉnh sửa per-đầu, dựng lại từ dữ liệu."""
-    from competitor_report import build_competitor_report, render_full_html, get_dep_map
+    """So sánh đối thủ — phục vụ bản ĐÃ LƯU (load nhanh, KHÔNG build lại). Chỉ dựng
+    lại khi refresh=true (nút Làm mới) hoặc khi chưa có bản lưu."""
+    from competitor_report import get_saved_full, rebuild_and_save, clear_dep_map
 
-    data = build_competitor_report(db)
-    saved = {} if refresh else get_dep_map(db)
-    if refresh:
-        try:
-            from models import AppKv
-            db.query(AppKv).filter(AppKv.key == "competitor_report_dep_html").delete()
-            db.commit()
-        except Exception:  # noqa: BLE001
-            db.rollback()
-    return HTMLResponse(render_full_html(data, saved))
+    if not refresh:
+        saved = get_saved_full(db)
+        if saved:
+            return HTMLResponse(saved)
+    else:
+        clear_dep_map(db)  # Làm mới = bỏ chỉnh sửa tay per-đầu
+    return HTMLResponse(rebuild_and_save(db))
 
 
 @router.get("/competitor-report/config")
@@ -273,6 +270,11 @@ def save_competitor_report_config(
     if not isinstance(departures, list) or not isinstance(markets, list):
         return {"saved": False, "reason": "invalid"}
     save_config(db, departures, markets)
+    try:
+        from competitor_report import rebuild_and_save
+        rebuild_and_save(db)  # dựng lại bản lưu theo cấu hình mới
+    except Exception:  # noqa: BLE001
+        pass
     return {"saved": True}
 
 
@@ -314,14 +316,15 @@ def save_competitor_report_departure_html(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    """Lưu bản sửa tay của 1 đầu khởi hành (admin). Bền qua AppKv."""
-    from competitor_report import save_dep_html, extract_body
+    """Lưu bản sửa tay của 1 đầu khởi hành (admin) + dựng lại full HTML để load nhanh."""
+    from competitor_report import save_dep_html, extract_body, rebuild_and_save
 
     dep = (body or {}).get("dep") or ""
     html = (body or {}).get("html") or ""
     if not dep or not html.strip():
         return {"saved": False, "reason": "empty"}
     save_dep_html(db, dep, extract_body(html))
+    rebuild_and_save(db)  # cập nhật bản full đã lưu → lần xem sau nhanh
     return {"saved": True}
 
 

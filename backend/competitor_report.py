@@ -339,7 +339,13 @@ def render_full_html(data: dict, saved: dict | None = None) -> str:
     sections = []
     for i, d in enumerate(deps):
         body = saved.get(d["diem_kh"]) or _dep_inner(d, peer)
-        sections.append(f"<section id='dep-{i}'>{body}<a class='top' href='#top'>↑ Lên đầu</a></section>")
+        # 'Lên đầu': dùng scrollTo (anchor '#top' trong srcdoc điều hướng lệch → lỗi).
+        sections.append(
+            f"<section id='dep-{i}'>{body}"
+            f"<a class='top' href='javascript:void(0)' "
+            f"onclick=\"(document.scrollingElement||document.documentElement).scrollTo({{top:0,behavior:'smooth'}});if(event){{event.preventDefault();}}\">"
+            f"↑ Lên đầu</a></section>"
+        )
     return f"""<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"/>
 <title>So sánh đối thủ — Vietravel</title><style>{_css()}</style></head>
 <body><div class="page" id="top">
@@ -389,6 +395,36 @@ def save_dep_html(db, dep_name: str, body: str) -> None:
     else:
         db.add(AppKv(key=_DEP_KEY, value_json=payload))
     db.commit()
+
+
+# ── Full HTML đã lưu (load NHANH, không build lại mỗi lần) ────────────────────
+def get_saved_full(db) -> str | None:
+    from models import AppKv
+    row = db.query(AppKv).filter(AppKv.key == _HTML_KEY).first()
+    return row.value_json if (row and row.value_json) else None
+
+
+def save_full(db, html: str) -> None:
+    from models import AppKv
+    row = db.query(AppKv).filter(AppKv.key == _HTML_KEY).first()
+    if row:
+        row.value_json = html
+    else:
+        db.add(AppKv(key=_HTML_KEY, value_json=html))
+    db.commit()
+
+
+def clear_dep_map(db) -> None:
+    from models import AppKv
+    db.query(AppKv).filter(AppKv.key == _DEP_KEY).delete()
+    db.commit()
+
+
+def rebuild_and_save(db) -> str:
+    """Dựng lại full HTML (gộp bản sửa per-đầu) + LƯU. Dùng cho 'Làm mới' / daily."""
+    html = render_full_html(build_competitor_report(db), get_dep_map(db))
+    save_full(db, html)
+    return html
 
 
 def extract_body(html: str) -> str:
