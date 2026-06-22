@@ -9,6 +9,7 @@ HTML đầy đủ (nav nhảy đầu KH + style) → admin sửa toàn bộ qua 
 """
 from __future__ import annotations
 
+import json
 from collections import Counter, defaultdict
 from datetime import date
 from typing import Any
@@ -199,59 +200,45 @@ def _price_cell(m: dict, avg_label: str) -> str:
     )
 
 
-def render_competitor_html(data: dict) -> str:
-    peer = data.get("peer_name", "Saigontourist")
-    deps = data.get("departures", [])
-
-    def dep_id(i):
-        return f"dep-{i}"
-
-    # Jump trong iframe: inline scrollIntoView + preventDefault (anchor '#' trong
-    # srcdoc hay điều hướng lệch). href giữ làm fallback.
-    nav = " ".join(
-        f"<a class='chip' href='#{dep_id(i)}' "
-        f"onclick=\"var e=document.getElementById('{dep_id(i)}');if(e){{e.scrollIntoView({{behavior:'smooth',block:'start'}});if(event){{event.preventDefault();}}}}\">"
-        f"{d['diem_kh']}</a>"
-        for i, d in enumerate(deps)
+def _dep_inner(d: dict, peer: str) -> str:
+    """HTML BÊN TRONG 1 section đầu khởi hành (h2 + các card thị trường). Đây là phần
+    admin sửa per-đầu (nhỏ → TinyMCE mượt)."""
+    cards = []
+    for mk in d["markets"]:
+        comp_co = mk["market_best"] or "Đối thủ"
+        comp_list = (", ".join(mk["competitor_companies"])) if mk["competitor_companies"] else "—"
+        rows = f"""
+        <tr><th>Sản phẩm</th>
+          <td><div class='sum'>{mk['vtr']['products']} sp · {mk['vtr']['departures']} đoàn</div>{_route_lines(mk['routes'],'vtr')}</td>
+          <td><div class='sum'>{mk['competitor_routeagg']['products']} sp · {mk['competitor_routeagg']['departures']} đoàn</div>{_route_lines(mk['routes'],'competitor')}</td>
+          <td><div class='sum'>{mk['peer']['products']} sp · {mk['peer']['departures']} đoàn</div>{_route_lines(mk['routes'],'peer')}</td></tr>
+        <tr><th>Giá bán</th>
+          <td>{_price_cell(mk['vtr'],'Giá TB')}</td>
+          <td>{_price_cell(mk['competitor_best'],'Giá SS')}</td>
+          <td>{_price_cell(mk['peer'],'Giá TB')}</td></tr>
+        <tr><th>Tần suất KH</th>
+          <td>{_freq_html(mk['vtr'])}</td>
+          <td><div class='muted'>Đối thủ mạnh nhất: {comp_co}</div>{_freq_html(mk['competitor_best'])}</td>
+          <td>{_freq_html(mk['peer'])}</td></tr>
+        <tr><th>Nhận định</th>
+          <td colspan='3' class='note'>Nhập nhận định cho thị trường {mk['thi_truong']}…</td></tr>
+        """
+        cards.append(f"""
+        <div class='mkt'>
+          <div class='mkt-h'>🌐 {mk['thi_truong']} <span class='muted'>· Đối thủ: {comp_list}</span></div>
+          <table>
+            <thead><tr><th class='crit'>Tiêu chí</th><th class='vtr'>★ VTR {d['diem_kh']}</th><th>Đối thủ (mạnh nhất/tuyến)</th><th>Ngang tầm · {peer}</th></tr></thead>
+            <tbody>{rows}</tbody>
+          </table>
+        </div>""")
+    return (
+        f"<h2>🛫 Khách từ {d['diem_kh']} <span class='muted'>· {d['total_tours']} tour · "
+        f"{len(d['markets'])} thị trường</span></h2>" + "".join(cards)
     )
 
-    sections = []
-    for i, d in enumerate(deps):
-        cards = []
-        for mk in d["markets"]:
-            comp_co = mk["market_best"] or "Đối thủ"
-            comp_list = (", ".join(mk["competitor_companies"])) if mk["competitor_companies"] else "—"
-            rows = f"""
-            <tr><th>Sản phẩm</th>
-              <td><div class='sum'>{mk['vtr']['products']} sp · {mk['vtr']['departures']} đoàn</div>{_route_lines(mk['routes'],'vtr')}</td>
-              <td><div class='sum'>{mk['competitor_routeagg']['products']} sp · {mk['competitor_routeagg']['departures']} đoàn</div>{_route_lines(mk['routes'],'competitor')}</td>
-              <td><div class='sum'>{mk['peer']['products']} sp · {mk['peer']['departures']} đoàn</div>{_route_lines(mk['routes'],'peer')}</td></tr>
-            <tr><th>Giá bán</th>
-              <td>{_price_cell(mk['vtr'],'Giá TB')}</td>
-              <td>{_price_cell(mk['competitor_best'],'Giá SS')}</td>
-              <td>{_price_cell(mk['peer'],'Giá TB')}</td></tr>
-            <tr><th>Tần suất KH</th>
-              <td>{_freq_html(mk['vtr'])}</td>
-              <td><div class='muted'>Đối thủ mạnh nhất: {comp_co}</div>{_freq_html(mk['competitor_best'])}</td>
-              <td>{_freq_html(mk['peer'])}</td></tr>
-            <tr><th>Nhận định</th>
-              <td colspan='3' class='note'>Nhập nhận định cho thị trường {mk['thi_truong']}…</td></tr>
-            """
-            cards.append(f"""
-            <div class='mkt'>
-              <div class='mkt-h'>🌐 {mk['thi_truong']} <span class='muted'>· Đối thủ: {comp_list}</span></div>
-              <table>
-                <thead><tr><th class='crit'>Tiêu chí</th><th class='vtr'>★ VTR {d['diem_kh']}</th><th>Đối thủ (mạnh nhất/tuyến)</th><th>Ngang tầm · {peer}</th></tr></thead>
-                <tbody>{rows}</tbody>
-              </table>
-            </div>""")
-        sections.append(
-            f"<section id='{dep_id(i)}'><h2>🛫 Khách từ {d['diem_kh']} "
-            f"<span class='muted'>· {d['total_tours']} tour · {len(d['markets'])} thị trường</span></h2>"
-            + "".join(cards) + "<a class='top' href='#top'>↑ Lên đầu</a></section>"
-        )
 
-    css = """
+def _css() -> str:
+    return """
     *{box-sizing:border-box} body{font-family:'Segoe UI',Arial,sans-serif;color:#1a1a2e;margin:0;background:#f8fafc}
     .page{max-width:1100px;margin:0 auto;padding:24px}
     h1{font-size:22px;color:#003580;margin:0 0 4px} .sub{color:#64748b;font-size:13px;margin-bottom:16px}
@@ -279,8 +266,23 @@ def render_competitor_html(data: dict) -> str:
     .top{display:inline-block;margin-top:4px;font-size:11px;color:#94a3b8}
     @media print{.nav{position:static} body{background:#fff}}
     """
+def render_full_html(data: dict, saved: dict | None = None) -> str:
+    """Báo cáo ĐẦY ĐỦ để XEM: nav nhảy + mọi đầu KH (dùng bản đã sửa per-đầu nếu có)."""
+    peer = data.get("peer_name", "Saigontourist")
+    deps = data.get("departures", [])
+    saved = saved or {}
+    nav = " ".join(
+        f"<a class='chip' href='#dep-{i}' "
+        f"onclick=\"var e=document.getElementById('dep-{i}');if(e){{e.scrollIntoView({{behavior:'smooth',block:'start'}});if(event){{event.preventDefault();}}}}\">"
+        f"{d['diem_kh']}</a>"
+        for i, d in enumerate(deps)
+    )
+    sections = []
+    for i, d in enumerate(deps):
+        body = saved.get(d["diem_kh"]) or _dep_inner(d, peer)
+        sections.append(f"<section id='dep-{i}'>{body}<a class='top' href='#top'>↑ Lên đầu</a></section>")
     return f"""<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"/>
-<title>So sánh đối thủ — Vietravel</title><style>{css}</style></head>
+<title>So sánh đối thủ — Vietravel</title><style>{_css()}</style></head>
 <body><div class="page" id="top">
 <h1>So sánh đối thủ — Vietravel</h1>
 <div class="sub">Cập nhật {data.get('generated','')} · Giai đoạn từ hiện tại · Cột Đối thủ = cty mạnh nhất mỗi tuyến · Ngang tầm = {peer}</div>
@@ -289,18 +291,51 @@ def render_competitor_html(data: dict) -> str:
 </div></body></html>"""
 
 
-# ── Persist (AppKv, bền) ─────────────────────────────────────────────────────
-def get_saved_html(db) -> str | None:
-    from models import AppKv
-    row = db.query(AppKv).filter(AppKv.key == _HTML_KEY).first()
-    return row.value_json if (row and row.value_json) else None
+def render_dep_doc(d: dict, peer: str, saved_body: str | None = None) -> str:
+    """1 đầu khởi hành (standalone doc) để SỬA trong TinyMCE — nhỏ → mượt."""
+    body = saved_body or _dep_inner(d, peer)
+    return (
+        f"<!DOCTYPE html><html lang=\"vi\"><head><meta charset=\"utf-8\"/>"
+        f"<style>{_css()}</style></head><body><div class=\"page\">{body}</div></body></html>"
+    )
 
 
-def save_html(db, html: str) -> None:
+def render_competitor_html(data: dict) -> str:  # back-compat
+    return render_full_html(data, {})
+
+
+# ── Persist per-đầu khởi hành (AppKv, bền) ───────────────────────────────────
+_DEP_KEY = "competitor_report_dep_html"
+
+
+def get_dep_map(db) -> dict:
     from models import AppKv
-    row = db.query(AppKv).filter(AppKv.key == _HTML_KEY).first()
+    row = db.query(AppKv).filter(AppKv.key == _DEP_KEY).first()
+    if not row or not row.value_json:
+        return {}
+    try:
+        return json.loads(row.value_json)
+    except json.JSONDecodeError:
+        return {}
+
+
+def save_dep_html(db, dep_name: str, body: str) -> None:
+    from models import AppKv
+    m = get_dep_map(db)
+    m[dep_name] = body
+    payload = json.dumps(m, ensure_ascii=False)
+    row = db.query(AppKv).filter(AppKv.key == _DEP_KEY).first()
     if row:
-        row.value_json = html
+        row.value_json = payload
     else:
-        db.add(AppKv(key=_HTML_KEY, value_json=html))
+        db.add(AppKv(key=_DEP_KEY, value_json=payload))
     db.commit()
+
+
+def extract_body(html: str) -> str:
+    """Lấy phần ruột (.page) từ HTML TinyMCE trả về để lưu per-đầu."""
+    import re
+    m = re.search(r"<body[^>]*>(.*?)</body>", html or "", re.S | re.I)
+    inner = m.group(1) if m else (html or "")
+    m2 = re.search(r"<div[^>]*class=['\"]page['\"][^>]*>(.*)</div>", inner, re.S | re.I)
+    return (m2.group(1) if m2 else inner).strip()

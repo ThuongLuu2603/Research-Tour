@@ -228,35 +228,68 @@ def competitor_report_html(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """So sánh đối thủ — phục vụ bản ĐÃ LƯU (gồm chỉnh sửa tay admin), chỉ dựng lại
-    khi refresh=true. Admin sửa TOÀN BỘ qua TinyMCE rồi lưu (AppKv, bền)."""
-    from competitor_report import build_competitor_report, render_competitor_html, get_saved_html, save_html
+    """So sánh đối thủ — báo cáo ĐẦY ĐỦ để XEM (gộp bản sửa tay per-đầu KH nếu có).
+    refresh=true → xoá hết chỉnh sửa per-đầu, dựng lại từ dữ liệu."""
+    from competitor_report import build_competitor_report, render_full_html, get_dep_map
 
-    if not refresh:
-        saved = get_saved_html(db)
-        if saved:
-            return HTMLResponse(saved)
-    html = render_competitor_html(build_competitor_report(db))
-    try:
-        save_html(db, html)
-    except Exception:  # noqa: BLE001
-        pass
-    return HTMLResponse(html)
+    data = build_competitor_report(db)
+    saved = {} if refresh else get_dep_map(db)
+    if refresh:
+        try:
+            from models import AppKv
+            db.query(AppKv).filter(AppKv.key == "competitor_report_dep_html").delete()
+            db.commit()
+        except Exception:  # noqa: BLE001
+            db.rollback()
+    return HTMLResponse(render_full_html(data, saved))
 
 
-@router.put("/competitor-report/html")
-def save_competitor_report_html(
+@router.get("/competitor-report/departures")
+def competitor_report_departures(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Danh sách đầu khởi hành (để chọn khi sửa per-đầu)."""
+    from competitor_report import build_competitor_report
+
+    data = build_competitor_report(db)
+    return {"departures": [
+        {"diem_kh": d["diem_kh"], "total_tours": d["total_tours"], "markets": len(d["markets"])}
+        for d in data["departures"]
+    ]}
+
+
+@router.get("/competitor-report/departure-html", response_class=HTMLResponse)
+def competitor_report_departure_html(
+    dep: str = Query(..., description="Tên đầu khởi hành"),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """HTML 1 đầu khởi hành (standalone, nhỏ) để sửa trong TinyMCE."""
+    from competitor_report import build_competitor_report, render_dep_doc, get_dep_map
+
+    data = build_competitor_report(db)
+    d = next((x for x in data["departures"] if x["diem_kh"] == dep), None)
+    if not d:
+        return HTMLResponse("<p>Không có đầu khởi hành này.</p>", status_code=404)
+    saved = get_dep_map(db).get(dep)
+    return HTMLResponse(render_dep_doc(d, data.get("peer_name", "Saigontourist"), saved))
+
+
+@router.put("/competitor-report/departure-html")
+def save_competitor_report_departure_html(
     body: dict,
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    """Lưu ghi đè báo cáo so sánh đối thủ đã chỉnh sửa tay (admin). Bền qua AppKv."""
-    from competitor_report import save_html
+    """Lưu bản sửa tay của 1 đầu khởi hành (admin). Bền qua AppKv."""
+    from competitor_report import save_dep_html, extract_body
 
+    dep = (body or {}).get("dep") or ""
     html = (body or {}).get("html") or ""
-    if not html.strip():
+    if not dep or not html.strip():
         return {"saved": False, "reason": "empty"}
-    save_html(db, html)
+    save_dep_html(db, dep, extract_body(html))
     return {"saved": True}
 
 
