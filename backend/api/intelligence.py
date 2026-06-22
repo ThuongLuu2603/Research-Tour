@@ -171,14 +171,18 @@ def matcher_suggest(
 
 @router.get("/matcher/{tour_id}")
 def matcher_detail(
-    tour_id: int,
+    tour_id: str,  # CHUỖI: id CockroachDB ~1.18e18 > JS safe int → nhận str, convert int
     response: Response,
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
     response.headers["Cache-Control"] = f"private, max-age={_INTELLIGENCE_CACHE_SEC}"
     tours = filter_tours_for_market_compare(_market_compare_tour_query(db).all())
-    return find_matches(tours, tour_id)
+    try:
+        tid = int(tour_id)
+    except ValueError:
+        return {"found": False, "message": "ID không hợp lệ"}
+    return find_matches(tours, tid)
 
 
 _REPORT_NS = "report_html_saved"

@@ -219,7 +219,7 @@ export default function VietravelCompare() {
   const [selectedKey, setSelectedKey] = useState<string | null>(() => params.get("segment"));
   const [selectedCompetitor, setSelectedCompetitor] = useState("");
 
-  const [selectedMatcherTour, setSelectedMatcherTour] = useState<number | null>(null);
+  const [selectedMatcherTour, setSelectedMatcherTour] = useState<string | null>(null);
   const [covStatus, setCovStatus] = useState<"all" | "both" | "vtr_only" | "market_only">("all");
   const [covSearch, setCovSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortCol>("gap_pct");
@@ -1900,12 +1900,28 @@ export default function VietravelCompare() {
         </div>
       )}
 
-      {tab === "matcher" && (
+      {tab === "matcher" && (() => {
+        const selRoute = matcherDetail?.vtr_tour?.tuyen_tour;
+        const allItems = (matcherSuggest?.items ?? []);
+        // Đã chọn 1 SP → danh sách trái CHỈ còn SP cùng tuyến với SP đang chọn.
+        const shownItems = (selectedMatcherTour && selRoute)
+          ? allItems.filter((t: any) => (t.tuyen_tour || "") === selRoute)
+          : allItems;
+        // Tour đối thủ gợi ý: SẮP THEO CÔNG TY (rồi theo điểm khớp).
+        const sortedMatches = [...(matcherDetail?.matches ?? [])].sort(
+          (a: any, b: any) => (a.cong_ty || "").localeCompare(b.cong_ty || "") || (b.match_score - a.match_score),
+        );
+        return (
         <div className="grid lg:grid-cols-3 gap-4 animate-fade-in">
-          <div className="card overflow-auto max-h-[520px]">
-            <div className="px-4 py-3 border-b font-semibold text-sm">Chọn tour Vietravel</div>
+          <div className="card overflow-auto max-h-[560px]">
+            <div className="px-4 py-3 border-b font-semibold text-sm flex items-center justify-between">
+              <span>Chọn tour Vietravel</span>
+              {selectedMatcherTour && selRoute && (
+                <button type="button" onClick={() => setSelectedMatcherTour(null)} className="text-[11px] text-primary-600 font-normal">Bỏ lọc tuyến ✕</button>
+              )}
+            </div>
             <div className="divide-y">
-              {(matcherSuggest?.items ?? []).map((t: any) => (
+              {shownItems.map((t: any) => (
                 <button
                   key={t.id}
                   type="button"
@@ -1914,8 +1930,14 @@ export default function VietravelCompare() {
                 >
                   <p className="font-medium line-clamp-2">{t.ten_tour}</p>
                   <p className="text-gray-500 mt-1">{t.thi_truong} · {t.tuyen_tour} · {fmtVND(t.gia)}</p>
+                  <p className="text-gray-400 mt-0.5 flex items-center gap-2">
+                    <span>📍 {t.diem_kh || "—"}</span>
+                    <span>🗓 {t.thoi_gian || (t.so_ngay ? `${t.so_ngay}N` : "—")}</span>
+                    {t.link_url && <a href={t.link_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="text-primary-600 inline-flex items-center gap-0.5"><ExternalLink size={11} /> Link</a>}
+                  </p>
                 </button>
               ))}
+              {shownItems.length === 0 && <div className="px-4 py-6 text-center text-gray-400 text-xs">Không có tour.</div>}
             </div>
           </div>
           <div className="lg:col-span-2 space-y-4">
@@ -1930,7 +1952,7 @@ export default function VietravelCompare() {
                 <div className="card p-4 bg-blue-50 border border-blue-200">
                   <h3 className="font-semibold text-sm text-blue-900">{matcherDetail.vtr_tour?.ten_tour}</h3>
                   <p className="text-xs text-blue-700 mt-1">
-                    {matcherDetail.vtr_tour?.thi_truong} · {matcherDetail.vtr_tour?.tuyen_tour} · {matcherDetail.vtr_tour?.diem_kh} · {matcherDetail.vtr_tour?.thoi_gian}
+                    {matcherDetail.vtr_tour?.thi_truong} · {matcherDetail.vtr_tour?.tuyen_tour} · 📍 {matcherDetail.vtr_tour?.diem_kh} · 🗓 {matcherDetail.vtr_tour?.thoi_gian}
                   </p>
                   <div className="flex gap-4 mt-2 text-xs">
                     <span>Giá: <strong>{fmtVND(matcherDetail.vtr_tour?.gia)}</strong></span>
@@ -1941,19 +1963,20 @@ export default function VietravelCompare() {
                   </div>
                 </div>
                 <div className="card overflow-auto">
-                  <div className="px-4 py-3 border-b font-semibold text-sm">Tour đối thủ gợi ý (theo điểm khớp)</div>
+                  <div className="px-4 py-3 border-b font-semibold text-sm">Tour đối thủ gợi ý (cùng tuyến · sắp theo công ty)</div>
                   <table className="w-full text-xs">
                     <thead className="bg-gray-50"><tr>
-                      {["Điểm", COL.congTy, COL.tenTour, COL.gia, COL.giaTbNgay, "Chênh %", COL.tbDoanThang, ""].map((h) => (
+                      {["Điểm", COL.congTy, COL.tenTour, "Điểm KH", COL.gia, COL.giaTbNgay, "Chênh %", COL.tbDoanThang, ""].map((h) => (
                         <th key={h || "link"} className="px-2 py-2 text-left">{h}</th>
                       ))}
                     </tr></thead>
                     <tbody>
-                      {(matcherDetail.matches ?? []).map((m: any) => (
+                      {sortedMatches.map((m: any) => (
                         <tr key={m.tour_id} className="border-t hover:bg-gray-50">
                           <td className="px-2 py-2 font-bold text-primary-700">{(m.match_score * 100).toFixed(0)}%</td>
-                          <td className="px-2 py-2">{m.cong_ty}</td>
+                          <td className="px-2 py-2 whitespace-nowrap">{m.cong_ty}</td>
                           <td className="px-2 py-2 max-w-[180px] truncate" title={m.ten_tour}>{m.ten_tour}</td>
+                          <td className="px-2 py-2 whitespace-nowrap text-gray-500">{m.diem_kh || "—"}</td>
                           <td className="px-2 py-2">{m.gia_raw || fmtVND(m.gia)}</td>
                           <td className="px-2 py-2">{fmtVND(m.price_day)}</td>
                           <td className="px-2 py-2"><GapBadge pct={m.price_gap_pct} /></td>
@@ -1961,8 +1984,8 @@ export default function VietravelCompare() {
                           <td className="px-2 py-2">{m.link_url && <a href={m.link_url} target="_blank" rel="noopener noreferrer"><ExternalLink size={12} /></a>}</td>
                         </tr>
                       ))}
-                      {!(matcherDetail.matches?.length) && (
-                        <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">Không tìm thấy tour khớp đủ điểm</td></tr>
+                      {!sortedMatches.length && (
+                        <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-400">Không tìm thấy tour khớp đủ điểm</td></tr>
                       )}
                     </tbody>
                   </table>
@@ -1971,7 +1994,8 @@ export default function VietravelCompare() {
             )}
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Segment drill-down */}
       {selectedKey && (detailLoading || !detail) && (

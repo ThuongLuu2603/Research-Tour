@@ -72,7 +72,7 @@ def find_matches(tours: list[Tour], vtr_tour_id: int, limit: int = 8) -> dict:
         freq = parse_departure_frequency(t.lich_kh)["monthly_estimate"]
         days = parse_duration_days(t.thoi_gian, t.so_ngay) or 1
         candidates.append({
-            "tour_id": t.id,
+            "tour_id": str(t.id),  # chuỗi để JS không làm tròn id INT8
             "cong_ty": t.cong_ty,
             "ten_tour": t.ten_tour,
             "gia": t.gia,
@@ -93,7 +93,7 @@ def find_matches(tours: list[Tour], vtr_tour_id: int, limit: int = 8) -> dict:
     return {
         "found": True,
         "vtr_tour": {
-            "id": vtr.id,
+            "id": str(vtr.id),
             "ten_tour": vtr.ten_tour,
             "gia": vtr.gia,
             "thi_truong": vtr.thi_truong,
@@ -113,6 +113,18 @@ def suggest_vtr_tours(tours: list[Tour], limit: int = 20) -> list[dict]:
     vtr_tours = [t for t in tours if is_vietravel(t.cong_ty) and t.gia and t.gia >= MIN_VALID_PRICE]
     vtr_tours.sort(key=lambda t: t.updated_at or t.created_at, reverse=True)
     return [
-        {"id": t.id, "ten_tour": t.ten_tour, "thi_truong": t.thi_truong, "tuyen_tour": t.tuyen_tour, "gia": t.gia}
+        {
+            # id dạng CHUỖI: CockroachDB id ~1.18e18 > Number.MAX_SAFE_INTEGER → nếu trả
+            # số, JS làm tròn → click trỏ nhầm tour khác (Seoul → Nhật Bản).
+            "id": str(t.id),
+            "ten_tour": t.ten_tour,
+            "thi_truong": t.thi_truong,
+            "tuyen_tour": t.tuyen_tour,
+            "diem_kh": t.diem_kh,
+            "thoi_gian": t.thoi_gian,
+            "so_ngay": t.so_ngay,
+            "link_url": t.link_url,
+            "gia": t.gia,
+        }
         for t in vtr_tours[:limit]
     ]

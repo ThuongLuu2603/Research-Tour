@@ -1042,8 +1042,8 @@ export const getMatcherSuggest = async (filters: { thi_truong?: string; tuyen_to
   return data;
 };
 
-export const getMatcherDetail = async (tourId: number) => {
-  const { data } = await api.get(`/intelligence/matcher/${tourId}`);
+export const getMatcherDetail = async (tourId: string) => {
+  const { data } = await api.get(`/intelligence/matcher/${encodeURIComponent(tourId)}`);
   return data;
 };
 
