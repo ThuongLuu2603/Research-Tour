@@ -211,34 +211,41 @@ def save_report_html(
     return {"saved": True}
 
 
-@router.get("/competitor-report")
-def competitor_report(
+@router.get("/competitor-report/html", response_class=HTMLResponse)
+def competitor_report_html(
+    refresh: bool = Query(False, description="Dựng lại (xoá chỉnh sửa tay) — nút 'Làm mới'"),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """So sánh đối thủ 1:1 cho Báo cáo BGĐ: auto-tính theo đầu KH × thị trường +
-    overrides (nhận định / chỉnh sửa tay của admin) đã lưu."""
-    from competitor_report import build_competitor_report, load_overrides
+    """So sánh đối thủ — phục vụ bản ĐÃ LƯU (gồm chỉnh sửa tay admin), chỉ dựng lại
+    khi refresh=true. Admin sửa TOÀN BỘ qua TinyMCE rồi lưu (AppKv, bền)."""
+    from competitor_report import build_competitor_report, render_competitor_html, get_saved_html, save_html
 
-    data = build_competitor_report(db)
-    data["overrides"] = load_overrides(db)
-    return data
+    if not refresh:
+        saved = get_saved_html(db)
+        if saved:
+            return HTMLResponse(saved)
+    html = render_competitor_html(build_competitor_report(db))
+    try:
+        save_html(db, html)
+    except Exception:  # noqa: BLE001
+        pass
+    return HTMLResponse(html)
 
 
-@router.put("/competitor-report/overrides")
-def save_competitor_report_overrides(
+@router.put("/competitor-report/html")
+def save_competitor_report_html(
     body: dict,
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    """Lưu overrides (nhận định + giá trị chỉnh tay) cho báo cáo so sánh đối thủ.
-    Key dạng '<đầu KH>|||<thị trường>' → {note, ...}. Bền qua AppKv."""
-    from competitor_report import save_overrides
+    """Lưu ghi đè báo cáo so sánh đối thủ đã chỉnh sửa tay (admin). Bền qua AppKv."""
+    from competitor_report import save_html
 
-    overrides = (body or {}).get("overrides")
-    if not isinstance(overrides, dict):
-        return {"saved": False, "reason": "invalid"}
-    save_overrides(db, overrides)
+    html = (body or {}).get("html") or ""
+    if not html.strip():
+        return {"saved": False, "reason": "empty"}
+    save_html(db, html)
     return {"saved": True}
 
 

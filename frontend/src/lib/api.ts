@@ -1330,57 +1330,17 @@ export const saveReportHtml = async (html: string): Promise<{ saved: boolean }> 
   return data;
 };
 
-// ── So sánh đối thủ (Báo cáo BGĐ) ──────────────────────────────────────────────
-export interface CompMonthly { month: string; count: number }
-export interface CompMetrics {
-  products: number;
-  departures: number;
-  price_from: number | null;
-  price_avg: number | null;
-  link: string;
-  cheapest_name: string;
-  monthly: CompMonthly[];
-  sell_from: string;
-  sell_to: string;
-}
-export interface CompRoute {
-  tuyen: string;
-  vtr: CompMetrics | null;
-  competitor: (CompMetrics & { company: string }) | null;
-  peer: CompMetrics | null;
-}
-export interface CompetitorMarketRow {
-  thi_truong: string;
-  competitor_companies: string[];
-  has_peer: boolean;
-  vtr: CompMetrics;
-  competitor: CompMetrics;
-  peer: CompMetrics;
-  vtr_routes: number;
-  competitor_routes: number;
-  peer_routes: number;
-  routes: CompRoute[];
-}
-export interface CompetitorDeparture {
-  diem_kh: string;
-  total_tours: number;
-  markets: CompetitorMarketRow[];
-}
-export interface CompetitorReport {
-  departures: CompetitorDeparture[];
-  peer_name: string;
-  overrides: Record<string, { note?: string }>;
-}
-
-export const getCompetitorReport = async (): Promise<CompetitorReport> => {
-  const { data } = await api.get("/intelligence/competitor-report");
+// ── So sánh đối thủ (Báo cáo BGĐ) — HTML, sửa toàn bộ qua TinyMCE ───────────────
+export const fetchCompetitorReportHtml = async (refresh = false): Promise<string> => {
+  const { data } = await api.get(
+    `/intelligence/competitor-report/html${refresh ? "?refresh=true" : ""}`,
+    { responseType: "text" },
+  );
   return data;
 };
 
-export const saveCompetitorReportOverrides = async (
-  overrides: Record<string, { note?: string }>,
-): Promise<{ saved: boolean }> => {
-  const { data } = await api.put("/intelligence/competitor-report/overrides", { overrides });
+export const saveCompetitorReportHtml = async (html: string): Promise<{ saved: boolean }> => {
+  const { data } = await api.put("/intelligence/competitor-report/html", { html });
   return data;
 };
 
