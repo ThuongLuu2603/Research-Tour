@@ -3,14 +3,19 @@ import { useState, lazy, Suspense } from "react";
 import { fetchReportHtml, saveReportHtml } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageTitle } from "@/components/InfoTip";
+import { cn } from "@/lib/utils";
 import { Download, Printer, RefreshCw, Pencil } from "lucide-react";
 
 const ReportEditor = lazy(() => import("@/components/ReportEditor"));
+const CompetitorReportTab = lazy(() => import("@/components/CompetitorReportTab"));
+
+type ReportTab = "ci" | "competitor";
 
 export default function ReportsPage() {
   const { user } = useAuth();
   const canEdit = user?.role === "admin" || user?.role === "super_admin";
   const qc = useQueryClient();
+  const [tab, setTab] = useState<ReportTab>("ci");
 
   const { data: html } = useQuery({
     queryKey: ["report-html"],
@@ -67,6 +72,7 @@ export default function ReportsPage() {
           <PageTitle title="Báo cáo CI Vietravel" tip="Báo cáo trình bày cho BGĐ — xem online hoặc in/PDF offline" />
           <p className="text-sm text-gray-500 mt-1">Ưu tiên: Giá → Tần suất → Phủ sóng · Lưu sẵn, chỉ dựng lại khi “Làm mới” hoặc snapshot ngày tự chạy</p>
         </div>
+        {tab === "ci" && (
         <div className="flex gap-2 items-center">
           {msg && <span className="text-xs text-green-700">{msg}</span>}
           <button onClick={doRefresh} disabled={busy !== null} className="btn-secondary text-xs flex items-center gap-1">
@@ -84,9 +90,27 @@ export default function ReportsPage() {
             <Download size={14} /> Tải HTML offline
           </button>
         </div>
+        )}
       </div>
 
-      {editing && html ? (
+      {/* Tabs */}
+      <div className="border-b border-gray-200 flex gap-1">
+        {([["ci", "Báo cáo CI"], ["competitor", "So sánh đối thủ"]] as [ReportTab, string][]).map(([k, label]) => (
+          <button key={k} type="button" onClick={() => setTab(k)}
+            className={cn(
+              "px-4 py-2 text-sm font-medium border-b-2 transition-colors",
+              tab === k ? "border-primary-600 text-primary-700" : "border-transparent text-gray-600 hover:text-gray-900",
+            )}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "competitor" ? (
+        <Suspense fallback={<div className="flex items-center gap-2 text-sm text-gray-500 p-4"><RefreshCw size={16} className="animate-spin" /> Đang tải…</div>}>
+          <CompetitorReportTab canEdit={canEdit} />
+        </Suspense>
+      ) : editing && html ? (
         <div className="card p-3">
           <Suspense fallback={<div className="flex items-center gap-2 text-sm text-gray-500 p-4"><RefreshCw size={16} className="animate-spin" /> Đang nạp trình soạn thảo…</div>}>
             <ReportEditor html={html} onSave={handleSave} onCancel={() => setEditing(false)} saving={busy === "save"} />

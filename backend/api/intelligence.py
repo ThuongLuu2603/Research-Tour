@@ -211,6 +211,37 @@ def save_report_html(
     return {"saved": True}
 
 
+@router.get("/competitor-report")
+def competitor_report(
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """So sánh đối thủ 1:1 cho Báo cáo BGĐ: auto-tính theo đầu KH × thị trường +
+    overrides (nhận định / chỉnh sửa tay của admin) đã lưu."""
+    from competitor_report import build_competitor_report, load_overrides
+
+    data = build_competitor_report(db)
+    data["overrides"] = load_overrides(db)
+    return data
+
+
+@router.put("/competitor-report/overrides")
+def save_competitor_report_overrides(
+    body: dict,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+):
+    """Lưu overrides (nhận định + giá trị chỉnh tay) cho báo cáo so sánh đối thủ.
+    Key dạng '<đầu KH>|||<thị trường>' → {note, ...}. Bền qua AppKv."""
+    from competitor_report import save_overrides
+
+    overrides = (body or {}).get("overrides")
+    if not isinstance(overrides, dict):
+        return {"saved": False, "reason": "invalid"}
+    save_overrides(db, overrides)
+    return {"saved": True}
+
+
 @router.get("/alerts")
 def list_alerts(
     unread_only: bool = Query(False),

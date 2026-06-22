@@ -1330,6 +1330,44 @@ export const saveReportHtml = async (html: string): Promise<{ saved: boolean }> 
   return data;
 };
 
+// ── So sánh đối thủ (Báo cáo BGĐ) ──────────────────────────────────────────────
+export interface CompetitorMetrics {
+  products: number;
+  departures: number;
+  price_from: number | null;
+  link: string;
+  cheapest_name: string;
+}
+export interface CompetitorMarketRow {
+  thi_truong: string;
+  competitor: string;
+  competitor_company_count: number;
+  vtr: CompetitorMetrics;
+  competitor_metrics: CompetitorMetrics;
+  market_price_from: number | null;
+}
+export interface CompetitorDeparture {
+  diem_kh: string;
+  total_tours: number;
+  markets: CompetitorMarketRow[];
+}
+export interface CompetitorReport {
+  departures: CompetitorDeparture[];
+  overrides: Record<string, { note?: string }>;
+}
+
+export const getCompetitorReport = async (): Promise<CompetitorReport> => {
+  const { data } = await api.get("/intelligence/competitor-report");
+  return data;
+};
+
+export const saveCompetitorReportOverrides = async (
+  overrides: Record<string, { note?: string }>,
+): Promise<{ saved: boolean }> => {
+  const { data } = await api.put("/intelligence/competitor-report/overrides", { overrides });
+  return data;
+};
+
 // ── Festivals (T3 Phase 1) ────────────────────────────────────────────────────
 
 export type FestivalRegion = "bac" | "trung" | "nam" | "intl" | "";
