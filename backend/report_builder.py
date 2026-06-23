@@ -115,6 +115,29 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
     ctx = get_compare_context(db, [], "", "", allow_stale=False)  # cần tours/segments full
     tours = ctx.tours
     segments = ctx.segments
+
+    # ── Apply cấu hình tab "Báo cáo" (Quy tắc phân loại): chỉ báo cáo đầu KH + thị
+    # trường được tick (trống = tất cả). Lọc tour → dựng lại segments cho khớp.
+    try:
+        from competitor_report import get_config
+        from classification import _match_departure_alias
+        from compare_engine import build_segment_stats
+
+        _cfg = get_config(db)
+        _sel_deps = set(_cfg.get("departures") or [])
+        _sel_markets = set(_cfg.get("markets") or [])
+        if _sel_deps or _sel_markets:
+            def _keep(t) -> bool:
+                if _sel_markets and (t.thi_truong or "").strip() not in _sel_markets:
+                    return False
+                if _sel_deps and (_match_departure_alias(t.diem_kh or "") or "") not in _sel_deps:
+                    return False
+                return True
+            tours = [t for t in tours if _keep(t)]
+            segments = build_segment_stats(tours, dedup=False)
+    except Exception:  # noqa: BLE001
+        pass
+
     quality = compute_data_quality(db, tours)
     coverage = build_coverage_summary(tours)
 
@@ -271,6 +294,72 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
     except Exception:  # noqa: BLE001
         festival_rows = ""
 
+    # ── Mục I. Tổng quát — thực trạng theo ĐẦU KHỞI HÀNH ────────────────────
+    # Mỗi đầu KH: tuyến cần CẢI THIỆN (VTR đắt hơn TT hoặc thiếu lịch) + tuyến nên
+    # PHÁT HUY (VTR rẻ hơn / dẫn lịch). Chỉ xét segment VTR có mặt.
+    from collections import defaultdict as _dd
+
+    def _dep_label(s) -> str:
+        try:
+            from classification import _match_departure_alias
+            return _match_departure_alias(s.diem_kh or "") or (s.diem_kh or "Khác")
+        except Exception:  # noqa: BLE001
+            return s.diem_kh or "Khác"
+
+    _by_dep: dict[str, list] = _dd(list)
+    for s in segments:
+        if s.vtr_entries:  # chỉ tuyến VTR đang có sản phẩm
+            _by_dep[_dep_label(s)].append(s)
+
+    def _name(s) -> str:
+        return f"{s.thi_truong} · {s.tuyen_tour}"
+
+    _overview_blocks = []
+    for dep, segs in sorted(_by_dep.items(), key=lambda kv: -len(kv[1])):
+        n = len(segs)
+        n_exp = sum(1 for s in segs if (s.gap_pct or 0) >= 5)
+        n_cheap = sum(1 for s in segs if (s.gap_pct or 0) <= -5)
+        n_lag = sum(1 for s in segs if (s.freq_gap_pct is not None and s.freq_gap_pct <= -20))
+        # Cần cải thiện: ưu tiên thiếu lịch nặng + đắt hơn TT.
+        improve = sorted(
+            [s for s in segs if (s.gap_pct or 0) >= 5 or (s.freq_gap_pct is not None and s.freq_gap_pct <= -20)],
+            key=lambda s: ((s.freq_gap_pct or 0), -(s.gap_pct or 0)),
+        )[:4]
+        leverage = sorted(
+            [s for s in segs if (s.gap_pct or 0) <= -5 or (s.freq_gap_pct is not None and s.freq_gap_pct >= 15)],
+            key=lambda s: (s.gap_pct or 0),
+        )[:4]
+
+        def _reason_improve(s) -> str:
+            r = []
+            if (s.gap_pct or 0) >= 5:
+                r.append(f"đắt hơn TT {s.gap_pct:.0f}%")
+            if s.freq_gap_pct is not None and s.freq_gap_pct <= -20:
+                r.append(f"thiếu lịch {s.freq_gap_pct:.0f}%")
+            return ", ".join(r) or "—"
+
+        def _reason_leverage(s) -> str:
+            r = []
+            if (s.gap_pct or 0) <= -5:
+                r.append(f"rẻ hơn TT {abs(s.gap_pct):.0f}%")
+            if s.freq_gap_pct is not None and s.freq_gap_pct >= 15:
+                r.append(f"dẫn lịch +{s.freq_gap_pct:.0f}%")
+            return ", ".join(r) or "lợi thế giá"
+
+        imp_html = "".join(f"<li><strong>{_name(s)}</strong> — {_reason_improve(s)}</li>" for s in improve) \
+            or "<li class='muted'>Không có tuyến cần chú ý gấp</li>"
+        lev_html = "".join(f"<li><strong>{_name(s)}</strong> — {_reason_leverage(s)}</li>" for s in leverage) \
+            or "<li class='muted'>Chưa có lợi thế nổi bật</li>"
+        _overview_blocks.append(f"""
+        <div class='dep-block'>
+          <h3>🛫 Khách từ {dep} <span class='meta'>· {n} tuyến VTR · {n_exp} đắt hơn TT · {n_lag} thiếu lịch · {n_cheap} lợi thế giá</span></h3>
+          <div class='dep-cols'>
+            <div><div class='col-h improve'>⚠ Cần cải thiện</div><ul>{imp_html}</ul></div>
+            <div><div class='col-h leverage'>✓ Nên phát huy</div><ul>{lev_html}</ul></div>
+          </div>
+        </div>""")
+    overview_html = "".join(_overview_blocks) or "<p class='muted'>Chưa có dữ liệu tuyến VTR.</p>"
+
     final_html = f"""<!DOCTYPE html>
 <html lang="vi"><head><meta charset="utf-8"/>
 <title>{title}</title>
@@ -325,6 +414,16 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
 
   /* Footer */
   .footer {{ margin-top: 40px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-size: 11px; color: #9ca3af; text-align: center; }}
+  .dep-block {{ border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; background: #fcfdff; }}
+  .dep-block h3 {{ font-size: 14px; color: #0f172a; margin: 0 0 8px; }}
+  .dep-block h3 .meta {{ font-size: 11px; font-weight: 400; color: #94a3b8; }}
+  .dep-cols {{ display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }}
+  .dep-cols ul {{ margin: 4px 0 0; padding-left: 18px; font-size: 12px; }}
+  .dep-cols li {{ margin: 2px 0; }}
+  .col-h {{ font-size: 12px; font-weight: 700; }}
+  .col-h.improve {{ color: #b45309; }}
+  .col-h.leverage {{ color: #15803d; }}
+  .muted {{ color: #94a3b8; }}
 
   @media print {{
     body {{ font-size: 12px; }}
@@ -390,7 +489,11 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
   </div>
 </div>''' if trend_data else ''}
 
-<h2>I. Phân tích Giá — VTR đắt hơn thị trường</h2>
+<h2>I. Tổng quát — Thực trạng theo đầu khởi hành</h2>
+<p class="meta" style="margin-bottom:8px">Mỗi đầu khởi hành: tuyến <strong>cần cải thiện</strong> (VTR đắt hơn TT ≥5% hoặc thiếu lịch ≤−20%) và tuyến <strong>nên phát huy</strong> (VTR rẻ hơn TT hoặc dẫn lịch). Đầu lớn xếp trước.</p>
+{overview_html}
+
+<h2>II. Phân tích Giá — VTR đắt hơn thị trường</h2>
 <p class="meta" style="margin-bottom:8px"><em>Giá SS (Giá so sánh)</em> = giá thị trường quy đổi về cùng số ngày tour VTR để so công bằng (giá/ngày × số ngày VTR), chỉ tính chương trình thỏa điều kiện (đúng phân khúc, có ngày khởi hành trong giai đoạn VTR). <em>Chênh</em> = VTR so với Giá SS.</p>
 {f'<p style="margin-bottom:8px">Biểu đồ chênh lệch: {spark_exp}</p>' if spark_exp else ''}
 <table>
@@ -408,7 +511,7 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
   </tbody>
 </table>
 
-<h2>II. Tần suất Khởi hành — VTR vs đối thủ</h2>
+<h2>III. Tần suất Khởi hành — VTR vs đối thủ</h2>
 <table>
   <thead><tr><th>Tuyến tour</th><th>Điểm KH</th><th>Thị trường</th><th style="text-align:center">VTR đoàn/tháng</th><th style="text-align:center">TT tb/CT</th><th style="text-align:center">Gap TS</th><th>Ghi chú</th></tr></thead>
   <tbody>
@@ -417,7 +520,7 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
 </table>
 <p style="font-size:11px;color:#6b7280;margin-top:6px">Gap TS: % chênh tần suất VTR so với TB đối thủ trên cùng tuyến. Âm = VTR ít lịch hơn.</p>
 
-<h2>III. Phủ sóng — Khoảng trống (TT có SP, VTR chưa có)</h2>
+<h2>IV. Phủ sóng — Khoảng trống (TT có SP, VTR chưa có)</h2>
 <table>
   <thead><tr><th>Thị trường</th><th>Tuyến tour</th><th style="text-align:center">SP thị trường</th><th style="text-align:center">Số ĐT</th><th style="text-align:center">Đoàn TT/tháng</th></tr></thead>
   <tbody>
@@ -425,12 +528,12 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
   </tbody>
 </table>
 
-<h2>IV. Insight tự động</h2>
+<h2>V. Insight tự động</h2>
 <div class="insights">
   <ol>{insight_items or '<li>Không có insight mới — thử chụp snapshot</li>'}</ol>
 </div>
 
-{f'''<h2>V. Lễ hội sắp tới — cơ hội phủ tour</h2>
+{f'''<h2>VI. Lễ hội sắp tới — cơ hội phủ tour</h2>
 <p class="meta" style="margin-bottom:8px"><em>Gap</em> = mức đối thủ phủ tour quanh lễ nhiều hơn VTR (cao = VTR đang bỏ ngỏ). Chỉ liệt kê lễ sắp diễn ra mà VTR thiếu độ phủ.</p>
 <table>
   <thead><tr><th>Lễ hội</th><th style="text-align:center">Thời gian</th><th>Vùng</th><th style="text-align:center">Tour VTR</th><th style="text-align:center">Tour đối thủ</th><th style="text-align:center">Gap</th></tr></thead>
