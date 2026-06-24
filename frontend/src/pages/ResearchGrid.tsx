@@ -35,7 +35,8 @@ type GridSortCol =
   | "gia"
   | "phan_khuc"
   | "nguon"
-  | "analyst_note";
+  | "analyst_note"
+  | "freq_monthly";
 
 const GRID_SORT_COLUMNS: { label: string; col: GridSortCol; wide?: boolean }[] = [
   { label: "#", col: "id" },
@@ -1029,7 +1030,17 @@ export default function ResearchGrid() {
                   onSort={handleSort}
                 />
               ))}
-              <th className="px-3 py-2.5 text-right text-xs font-semibold text-gray-600 whitespace-nowrap" title="Trung bình số đoàn khởi hành / tháng — tính từ Lịch KH qua rule Định dạng Ngày KH">TB TS/tháng</th>
+              <th
+                className="px-3 py-2.5 text-right text-xs font-semibold text-gray-600 whitespace-nowrap cursor-pointer select-none hover:bg-gray-100"
+                title="Trung bình số đoàn khởi hành / tháng — tính từ Lịch KH qua rule Định dạng Ngày KH. Bấm để sắp xếp."
+                onClick={() => handleSort("freq_monthly")}
+              >
+                <span className="inline-flex items-center gap-1">
+                  TB TS/tháng
+                  <ArrowUpDown size={11} className={cn(sortBy === "freq_monthly" ? "text-primary-600" : "text-gray-300")} />
+                  {sortBy === "freq_monthly" && <span className="text-primary-600 text-[10px]">{sortDir === "asc" ? "↑" : "↓"}</span>}
+                </span>
+              </th>
               <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap">Flag</th>
               <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap">{COL.linkTour}</th>
             </tr>

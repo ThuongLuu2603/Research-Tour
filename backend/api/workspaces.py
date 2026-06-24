@@ -292,13 +292,25 @@ def list_workspace_tours(
         "id", "ten_tour", "cong_ty", "thi_truong", "tuyen_tour", "diem_kh", "thoi_gian",
         "gia", "phan_khuc", "nguon", "analyst_note", "updated_at", "created_at",
     })
-    sort_field = sort_by if sort_by in _sortable else "id"
-    sort_col = getattr(Tour, sort_field, Tour.id)
-    if sort_dir == "asc":
-        order = sort_col.asc()
+    if sort_by == "freq_monthly":
+        # TB TS/tháng = tính từ lich_kh (KHÔNG phải cột DB) → load hết rồi sort Python
+        # (parse_departure_frequency có cache nên ổn cho grid admin).
+        from departure_parser import parse_departure_frequency
+
+        def _freq(t) -> float:
+            try:
+                return float(parse_departure_frequency(t.lich_kh or "").get("monthly_estimate") or 0)
+            except Exception:  # noqa: BLE001
+                return 0.0
+
+        all_tours = q.order_by(Tour.id.asc()).all()
+        all_tours.sort(key=_freq, reverse=(sort_dir != "asc"))
+        tours = all_tours[(page - 1) * page_size: page * page_size]
     else:
-        order = sort_col.desc()
-    tours = q.order_by(order).offset((page - 1) * page_size).limit(page_size).all()
+        sort_field = sort_by if sort_by in _sortable else "id"
+        sort_col = getattr(Tour, sort_field, Tour.id)
+        order = sort_col.asc() if sort_dir == "asc" else sort_col.desc()
+        tours = q.order_by(order).offset((page - 1) * page_size).limit(page_size).all()
     overrides = _override_map(db, workspace_id, [t.id for t in tours])
     items = [merge_tour(t, overrides.get(t.id)).to_dict() for t in tours]
     perm = resolve_permission(db, ws, user) or "view"
