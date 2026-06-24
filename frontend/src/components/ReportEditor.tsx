@@ -73,6 +73,9 @@ export default function ReportEditor({
           skin: false,
           content_css: false,
           content_style: css,
+          // Giữ data-segkey (khóa dòng) để ghi chú gắn đúng tuyến qua mỗi lần dựng lại.
+          extended_valid_elements: "td[class|style|colspan|rowspan|align|data-segkey],tr[class|style|data-segkey]",
+          valid_children: "+td[span|div|p|br]",
           branding: false,
           promotion: false,
           table_toolbar:

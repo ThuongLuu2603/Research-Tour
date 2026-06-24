@@ -214,15 +214,26 @@ def report_html(
 @router.put("/report/html")
 def save_report_html(
     body: dict,
+    db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    """Lưu ghi đè báo cáo đã chỉnh sửa tay (admin). Giữ tới khi Làm mới / snapshot ngày."""
+    """Lưu ghi đè báo cáo đã chỉnh sửa tay (admin). Giữ tới khi Làm mới / snapshot ngày.
+
+    Đồng thời TRÍCH ghi chú theo dòng (data-segkey) vào kho bền → giữ qua mỗi lần dựng
+    lại (đổi %/giá hay đổi vị trí trong khung vẫn còn nhận định).
+    """
     from persistent_cache import save_text
+    import report_notes
 
     html = (body or {}).get("html") or ""
     if not html.strip():
         return {"saved": False, "reason": "empty"}
     save_text(_REPORT_NS, html, ttl_hours=24 * 30)
+    try:
+        notes = report_notes.extract_notes_from_html(html, base=report_notes.get_notes(db))
+        report_notes.save_notes(db, notes)
+    except Exception:  # noqa: BLE001
+        pass
     return {"saved": True}
 
 

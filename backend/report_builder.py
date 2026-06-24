@@ -247,7 +247,15 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
         elif diff < -1:
             trend_direction = "Xu hướng: chênh giá đang thu hẹp so với hôm qua."
 
-    _note = "<td class='note'></td>"  # cột Ghi chú — admin gõ tay trước khi xuất
+    # Cột Ghi chú — admin gõ tay; lưu theo KHÓA DÒNG (TT|tuyến|đầu KH) nên BỀN qua mỗi
+    # lần dựng lại (đổi %/giá hay đổi vị trí trong khung vẫn giữ nhận định cũ).
+    import report_notes
+    _notes = report_notes.get_notes(db)
+
+    def _note(s) -> str:
+        return report_notes.note_cell(
+            report_notes.seg_key(s.thi_truong, s.tuyen_tour, s.diem_kh), _notes,
+        )
     rows_exp = "".join(
         f"<tr>"
         f"<td>{s.thi_truong}</td><td>{s.tuyen_tour}</td><td>{s.diem_kh}</td>"
@@ -255,7 +263,7 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
         f"<td style='text-align:right'>{_fmt(s.vtr_avg_price)}</td>"
         f"<td style='text-align:right'>{_fmt(s.comparison_price)}</td>"
         f"<td style='text-align:center;color:{'#dc2626' if (s.gap_pct or 0)>=15 else '#ea580c'};font-weight:bold'>{_pct(s.gap_pct)}</td>"
-        f"{_note}</tr>"
+        f"{_note(s)}</tr>"
         for s in expensive
     )
     rows_cheap = "".join(
@@ -263,7 +271,7 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
         f"<td style='text-align:center'>{(s.vtr_avg_days or 0):.0f}N</td>"
         f"<td style='text-align:right'>{_fmt(s.vtr_avg_price)}</td>"
         f"<td style='text-align:right'>{_fmt(s.comparison_price)}</td>"
-        f"<td style='text-align:center;color:#16a34a;font-weight:bold'>{_pct(s.gap_pct)}</td>{_note}</tr>"
+        f"<td style='text-align:center;color:#16a34a;font-weight:bold'>{_pct(s.gap_pct)}</td>{_note(s)}</tr>"
         for s in cheap
     )
     rows_freq = "".join(
@@ -271,7 +279,7 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
         f"<td style='text-align:center'>{round(getattr(s, 'vtr_avg_departures_per_month', None) or s.vtr_freq_monthly, 1)}</td>"
         f"<td style='text-align:center'>{round(s.market_freq_avg_per_company or 0, 1)}</td>"
         f"<td style='text-align:center;color:#d97706;font-weight:bold'>{_pct(s.freq_gap_vs_avg_pct)}</td>"
-        f"{_note}</tr>"
+        f"{_note(s)}</tr>"
         for s in freq_lag
     )
     gap_rows = "".join(
