@@ -427,30 +427,34 @@ export default function VietravelCompare() {
   }, [segments?.items, priceFilter, priceSearch, watchOnly, watchlist]);
 
   // Biểu đồ "Chênh % VTR vs Giá SS" — 1 biểu đồ, switch THỊ TRƯỜNG (mặc định) / TUYẾN.
-  // Sắp theo "doanh thu" thị trường/tuyến (proxy = đoàn TT/tháng × Giá SS) giảm dần →
-  // hiển thị nhanh top 12 lớn nhất; "Xem đầy đủ" mở modal toàn bộ.
-  const _revOf = (s: any) => ((s.market_freq_monthly ?? s.vietravel_freq_monthly ?? 0) || 0) * ((s.comparison_price ?? s.vietravel_avg_price ?? 0) || 0);
-  const priceChartFull = useMemo(() => {
+  // Doanh thu VTR (đoàn VTR/tháng × giá VTR) chỉ là TRỌNG SỐ để CHỌN top 12 ưu tiên
+  // (không hiển thị). Hiển thị sắp theo CHÊNH % giảm dần.
+  const _vtrRevOf = (s: any) => ((s.vietravel_freq_monthly ?? 0) || 0) * ((s.vietravel_avg_price ?? 0) || 0);
+  const priceChartData = useMemo(() => {
     const items = (segments?.items ?? []).filter((s) => s.gap_pct != null);
+    let base: { name: string; gap: number; segment_key: string | null; revenue: number }[];
     if (chartDim === "route") {
-      return items
-        .map((s) => ({ name: `${s.tuyen_tour} (${s.diem_kh})`, gap: s.gap_pct as number, segment_key: s.segment_key, revenue: _revOf(s) }))
-        .sort((a, b) => b.revenue - a.revenue);
+      base = items.map((s) => ({ name: `${s.tuyen_tour} (${s.diem_kh})`, gap: s.gap_pct as number, segment_key: s.segment_key, revenue: _vtrRevOf(s) }));
+    } else {
+      const by: Record<string, { num: number; den: number; rev: number }> = {};
+      for (const s of items) {
+        if (!s.thi_truong) continue;
+        const w = _vtrRevOf(s) || 1;
+        (by[s.thi_truong] ||= { num: 0, den: 0, rev: 0 });
+        by[s.thi_truong].num += (s.gap_pct ?? 0) * w;
+        by[s.thi_truong].den += w;
+        by[s.thi_truong].rev += _vtrRevOf(s);
+      }
+      base = Object.entries(by).map(([m, b]) => ({ name: m, gap: b.den ? Math.round((b.num / b.den) * 10) / 10 : 0, segment_key: null, revenue: b.rev }));
     }
-    const by: Record<string, { num: number; den: number; rev: number }> = {};
-    for (const s of items) {
-      if (!s.thi_truong) continue;
-      const w = _revOf(s) || 1;
-      (by[s.thi_truong] ||= { num: 0, den: 0, rev: 0 });
-      by[s.thi_truong].num += (s.gap_pct ?? 0) * w;
-      by[s.thi_truong].den += w;
-      by[s.thi_truong].rev += _revOf(s);
-    }
-    return Object.entries(by)
-      .map(([m, b]) => ({ name: m, gap: b.den ? Math.round((b.num / b.den) * 10) / 10 : 0, segment_key: null as string | null, revenue: b.rev }))
-      .sort((a, b) => b.revenue - a.revenue);
+    const byGapDesc = (a: { gap: number }, b: { gap: number }) => (b.gap ?? 0) - (a.gap ?? 0);
+    // Top 12 = ưu tiên DOANH THU VTR lớn nhất, rồi sắp theo CHÊNH % giảm dần để hiển thị.
+    const top = [...base].sort((a, b) => b.revenue - a.revenue).slice(0, 12).sort(byGapDesc);
+    const full = [...base].sort(byGapDesc);
+    return { top, full };
   }, [segments?.items, chartDim]);
-  const priceChart = priceChartFull.slice(0, 12).map((s) => ({ ...s, name: s.name.length > 28 ? s.name.slice(0, 27) + "…" : s.name }));
+  const priceChartFull = priceChartData.full;
+  const priceChart = priceChartData.top.map((s) => ({ ...s, name: s.name.length > 28 ? s.name.slice(0, 27) + "…" : s.name }));
 
   // Bar 'Gap tần suất vs avg đối thủ' dùng vs ĐỐI THỦ TB (đúng nhãn, công bằng cấp độ).
   // Scatter 'vs đối thủ mạnh nhất' bên dưới vẫn dùng top → đủ "cả hai" góc nhìn.
@@ -875,7 +879,7 @@ export default function VietravelCompare() {
           )}
           <div className="card p-5">
             <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-              <h3 className="font-semibold inline-flex items-center">{COL.chenhPct} VTR vs {COL.giaSoSanh}<InfoTip text={GLOSSARY.chenhGia} /><span className="ml-1.5 text-[10px] font-normal text-gray-400">· bấm thanh để xem chi tiết · sắp theo doanh thu</span></h3>
+              <h3 className="font-semibold inline-flex items-center">{COL.chenhPct} VTR vs {COL.giaSoSanh}<InfoTip text={GLOSSARY.chenhGia} /><span className="ml-1.5 text-[10px] font-normal text-gray-400">· bấm thanh để xem chi tiết · top 12 theo DT VTR, sắp theo chênh %</span></h3>
               <div className="flex items-center gap-2">
                 <div className="inline-flex rounded-lg border overflow-hidden text-xs">
                   <button type="button" onClick={() => setChartDim("market")}
@@ -900,7 +904,7 @@ export default function VietravelCompare() {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart key={`${chartDim}-${priceChart.length}`} data={priceChart} layout="vertical"><XAxis type="number" tickFormatter={(v) => `${v}%`} />
                 <YAxis dataKey="name" type="category" width={130} tick={{ fontSize: 9 }} />
-                <Tooltip formatter={(v: number, _n: any, p: any) => [`${v}% · DT TT ~${fmtVND(p?.payload?.revenue)}/th`, "Chênh / Doanh thu"]} /><ReferenceLine x={0} stroke="#666" />
+                <Tooltip formatter={(v: number) => [`${v}%`, "Chênh lệch"]} /><ReferenceLine x={0} stroke="#666" />
                 <Bar dataKey="gap" radius={[0, 4, 4, 0]} className="cursor-pointer"
                   onClick={(d: any) => d?.segment_key && setSelectedKey(d.segment_key)}>{priceChart.map((e, i) => <Cell key={i} fill={(e.gap ?? 0) <= 0 ? "#16a34a" : "#dc2626"} />)}</Bar>
               </BarChart>
