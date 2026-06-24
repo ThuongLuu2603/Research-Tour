@@ -352,6 +352,7 @@ export default function VietravelCompare() {
   const { data: coverage } = useQuery({ queryKey: ["coverage", filters], queryFn: () => getCoverageMap(filters), enabled: tab === "coverage", staleTime: compareStale, placeholderData: (prev) => prev });
   const [covDetail, setCovDetail] = useState<{ thi_truong: string; tuyen_tour: string } | null>(null);
   const [chartModal, setChartModal] = useState<null | "price" | "market" | "freq">(null);
+  const [chartDim, setChartDim] = useState<"market" | "route">("market"); // biểu đồ Chênh %: theo thị trường (mặc định) / tuyến
   const { data: covDetailData, isLoading: covDetailLoading } = useQuery({
     queryKey: ["coverage-segment", covDetail?.thi_truong, covDetail?.tuyen_tour],
     queryFn: () => getCoverageSegment(covDetail!.thi_truong, covDetail!.tuyen_tour),
@@ -425,11 +426,30 @@ export default function VietravelCompare() {
     return all;
   }, [segments?.items, priceFilter, priceSearch, watchOnly, watchlist]);
 
-  const priceChartFull = (segments?.items ?? []).filter((s) => s.gap_pct != null).map((s) => ({
-    name: `${s.tuyen_tour} (${s.diem_kh})`,
-    gap: s.gap_pct,
-    segment_key: s.segment_key,
-  }));
+  // Biểu đồ "Chênh % VTR vs Giá SS" — 1 biểu đồ, switch THỊ TRƯỜNG (mặc định) / TUYẾN.
+  // Sắp theo "doanh thu" thị trường/tuyến (proxy = đoàn TT/tháng × Giá SS) giảm dần →
+  // hiển thị nhanh top 12 lớn nhất; "Xem đầy đủ" mở modal toàn bộ.
+  const _revOf = (s: any) => ((s.market_freq_monthly ?? s.vietravel_freq_monthly ?? 0) || 0) * ((s.comparison_price ?? s.vietravel_avg_price ?? 0) || 0);
+  const priceChartFull = useMemo(() => {
+    const items = (segments?.items ?? []).filter((s) => s.gap_pct != null);
+    if (chartDim === "route") {
+      return items
+        .map((s) => ({ name: `${s.tuyen_tour} (${s.diem_kh})`, gap: s.gap_pct as number, segment_key: s.segment_key, revenue: _revOf(s) }))
+        .sort((a, b) => b.revenue - a.revenue);
+    }
+    const by: Record<string, { num: number; den: number; rev: number }> = {};
+    for (const s of items) {
+      if (!s.thi_truong) continue;
+      const w = _revOf(s) || 1;
+      (by[s.thi_truong] ||= { num: 0, den: 0, rev: 0 });
+      by[s.thi_truong].num += (s.gap_pct ?? 0) * w;
+      by[s.thi_truong].den += w;
+      by[s.thi_truong].rev += _revOf(s);
+    }
+    return Object.entries(by)
+      .map(([m, b]) => ({ name: m, gap: b.den ? Math.round((b.num / b.den) * 10) / 10 : 0, segment_key: null as string | null, revenue: b.rev }))
+      .sort((a, b) => b.revenue - a.revenue);
+  }, [segments?.items, chartDim]);
   const priceChart = priceChartFull.slice(0, 12).map((s) => ({ ...s, name: s.name.length > 28 ? s.name.slice(0, 27) + "…" : s.name }));
 
   // Bar 'Gap tần suất vs avg đối thủ' dùng vs ĐỐI THỦ TB (đúng nhãn, công bằng cấp độ).
@@ -854,14 +874,22 @@ export default function VietravelCompare() {
             </div>
           )}
           <div className="card p-5">
-            <div className="flex items-center justify-between mb-3 gap-2">
-              <h3 className="font-semibold inline-flex items-center">{COL.chenhPct} VTR vs {COL.giaSoSanh}<InfoTip text={GLOSSARY.chenhGia} /><span className="ml-1.5 text-[10px] font-normal text-gray-400">· bấm thanh để xem chi tiết</span></h3>
-              {priceChartFull.length > 12 && (
-                <button type="button" onClick={() => setChartModal("price")}
-                  className="text-xs text-primary-600 hover:text-primary-800 font-medium whitespace-nowrap">
-                  Xem đầy đủ ({priceChartFull.length} tuyến) →
-                </button>
-              )}
+            <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+              <h3 className="font-semibold inline-flex items-center">{COL.chenhPct} VTR vs {COL.giaSoSanh}<InfoTip text={GLOSSARY.chenhGia} /><span className="ml-1.5 text-[10px] font-normal text-gray-400">· bấm thanh để xem chi tiết · sắp theo doanh thu</span></h3>
+              <div className="flex items-center gap-2">
+                <div className="inline-flex rounded-lg border overflow-hidden text-xs">
+                  <button type="button" onClick={() => setChartDim("market")}
+                    className={cn("px-2.5 py-1", chartDim === "market" ? "bg-primary-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50")}>Thị trường</button>
+                  <button type="button" onClick={() => setChartDim("route")}
+                    className={cn("px-2.5 py-1 border-l", chartDim === "route" ? "bg-primary-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50")}>Tuyến tour</button>
+                </div>
+                {priceChartFull.length > 12 && (
+                  <button type="button" onClick={() => setChartModal("price")}
+                    className="text-xs text-primary-600 hover:text-primary-800 font-medium whitespace-nowrap">
+                    Xem đầy đủ ({priceChartFull.length} {chartDim === "market" ? "thị trường" : "tuyến"}) →
+                  </button>
+                )}
+              </div>
             </div>
             {segmentsLoading ? (
               <div className="h-[280px] flex items-center justify-center text-gray-400 text-sm">Đang tải biểu đồ...</div>
@@ -870,9 +898,9 @@ export default function VietravelCompare() {
             ) : (
             <div className="w-full h-[280px]">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart key={priceChart.length} data={priceChart} layout="vertical"><XAxis type="number" tickFormatter={(v) => `${v}%`} />
+              <BarChart key={`${chartDim}-${priceChart.length}`} data={priceChart} layout="vertical"><XAxis type="number" tickFormatter={(v) => `${v}%`} />
                 <YAxis dataKey="name" type="category" width={130} tick={{ fontSize: 9 }} />
-                <Tooltip formatter={(v: number) => [`${v}%`, "Chênh lệch"]} /><ReferenceLine x={0} stroke="#666" />
+                <Tooltip formatter={(v: number, _n: any, p: any) => [`${v}% · DT TT ~${fmtVND(p?.payload?.revenue)}/th`, "Chênh / Doanh thu"]} /><ReferenceLine x={0} stroke="#666" />
                 <Bar dataKey="gap" radius={[0, 4, 4, 0]} className="cursor-pointer"
                   onClick={(d: any) => d?.segment_key && setSelectedKey(d.segment_key)}>{priceChart.map((e, i) => <Cell key={i} fill={(e.gap ?? 0) <= 0 ? "#16a34a" : "#dc2626"} />)}</Bar>
               </BarChart>
@@ -2146,7 +2174,7 @@ export default function VietravelCompare() {
       {/* Modal CHUNG: xem biểu đồ đầy đủ (tất cả tuyến/thị trường) — dùng cho 3 biểu đồ brief */}
       {chartModal && (() => {
         const cfg = chartModal === "price"
-          ? { title: `${COL.chenhPct} VTR vs ${COL.giaSoSanh} — đầy đủ ${priceChartFull.length} tuyến`,
+          ? { title: `${COL.chenhPct} VTR vs ${COL.giaSoSanh} — đầy đủ ${priceChartFull.length} ${chartDim === "market" ? "thị trường" : "tuyến"}`,
               data: priceChartFull, rows: priceChartFull.length, kind: "gap" as const, unit: "%" }
           : chartModal === "freq"
           ? { title: `Gap tần suất VTR vs avg đối thủ — đầy đủ ${freqChartFull.length} tuyến`,
