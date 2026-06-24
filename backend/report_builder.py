@@ -146,9 +146,9 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
     except json.JSONDecodeError:
         insights = []
 
-    # QUY MÔ thị trường/tuyến (doanh thu TT/tháng ≈ đoàn TT × Giá SS) → trọng số ưu
-    # tiên: BGĐ chỉ quan tâm top thị trường lớn, bỏ qua ngách nhỏ lẻ. Sắp mục II/III
-    # theo (mức độ × quy mô) giảm dần → tuyến vừa lớn vừa lệch nổi lên đầu.
+    # QUY MÔ thị trường/tuyến (doanh thu TT/tháng ≈ đoàn TT × Giá SS) — chỉ dùng để
+    # LỌC BỎ NGÁCH nhỏ lẻ (BGĐ không quan tâm), KHÔNG dùng để sắp xếp. Sau khi lọc,
+    # vẫn SẮP THEO ĐỘ CHÊNH như cũ.
     def _seg_rev(s) -> float:
         try:
             price = getattr(s, "comparison_price", None) or getattr(s, "vtr_avg_price", None) or 0
@@ -156,17 +156,26 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
         except Exception:  # noqa: BLE001
             return 0.0
 
+    def _drop_niche(cands: list, n: int) -> list:
+        # Pool đủ lớn → bỏ ~1/3 tuyến/thị trường nhỏ nhất theo quy mô (ngách).
+        if len(cands) <= n:
+            return cands
+        revs = sorted(_seg_rev(s) for s in cands)
+        thr = revs[len(revs) // 3]
+        kept = [s for s in cands if _seg_rev(s) >= thr]
+        return kept or cands
+
     expensive = sorted(
-        [s for s in segments if s.gap_pct is not None and s.gap_pct >= 5],
-        key=lambda s: (s.gap_pct or 0) * _seg_rev(s), reverse=True,
+        _drop_niche([s for s in segments if s.gap_pct is not None and s.gap_pct >= 5], 12),
+        key=lambda s: s.gap_pct or 0, reverse=True,
     )[:12]
     cheap = sorted(
-        [s for s in segments if s.gap_pct is not None and s.gap_pct <= -5],
-        key=lambda s: abs(s.gap_pct or 0) * _seg_rev(s), reverse=True,
+        _drop_niche([s for s in segments if s.gap_pct is not None and s.gap_pct <= -5], 8),
+        key=lambda s: s.gap_pct or 0,
     )[:8]
     freq_lag = sorted(
-        [s for s in segments if s.freq_gap_pct is not None and s.freq_gap_pct <= -20 and s.vtr_entries],
-        key=lambda s: abs(s.freq_gap_pct or 0) * _seg_rev(s), reverse=True,
+        _drop_niche([s for s in segments if s.freq_gap_pct is not None and s.freq_gap_pct <= -20 and s.vtr_entries], 8),
+        key=lambda s: s.freq_gap_pct or 0,
     )[:8]
 
     snap_date = daily.snapshot_date.isoformat() if daily else date.today().isoformat()
