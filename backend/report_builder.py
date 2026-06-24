@@ -146,18 +146,27 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
     except json.JSONDecodeError:
         insights = []
 
-    # Phân loại segments
+    # QUY MÔ thị trường/tuyến (doanh thu TT/tháng ≈ đoàn TT × Giá SS) → trọng số ưu
+    # tiên: BGĐ chỉ quan tâm top thị trường lớn, bỏ qua ngách nhỏ lẻ. Sắp mục II/III
+    # theo (mức độ × quy mô) giảm dần → tuyến vừa lớn vừa lệch nổi lên đầu.
+    def _seg_rev(s) -> float:
+        try:
+            price = getattr(s, "comparison_price", None) or getattr(s, "vtr_avg_price", None) or 0
+            return (getattr(s, "market_freq_monthly", 0) or 0) * float(price)
+        except Exception:  # noqa: BLE001
+            return 0.0
+
     expensive = sorted(
         [s for s in segments if s.gap_pct is not None and s.gap_pct >= 5],
-        key=lambda s: s.gap_pct or 0, reverse=True,
+        key=lambda s: (s.gap_pct or 0) * _seg_rev(s), reverse=True,
     )[:12]
     cheap = sorted(
         [s for s in segments if s.gap_pct is not None and s.gap_pct <= -5],
-        key=lambda s: s.gap_pct or 0,
+        key=lambda s: abs(s.gap_pct or 0) * _seg_rev(s), reverse=True,
     )[:8]
     freq_lag = sorted(
         [s for s in segments if s.freq_gap_pct is not None and s.freq_gap_pct <= -20 and s.vtr_entries],
-        key=lambda s: s.freq_gap_pct or 0,
+        key=lambda s: abs(s.freq_gap_pct or 0) * _seg_rev(s), reverse=True,
     )[:8]
 
     snap_date = daily.snapshot_date.isoformat() if daily else date.today().isoformat()
@@ -241,7 +250,7 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
         for s in expensive
     )
     rows_cheap = "".join(
-        f"<tr><td>{s.tuyen_tour}</td><td>{s.diem_kh}</td><td>{s.thi_truong}</td>"
+        f"<tr><td>{s.thi_truong}</td><td>{s.tuyen_tour}</td><td>{s.diem_kh}</td>"
         f"<td style='text-align:center'>{(s.vtr_avg_days or 0):.0f}N</td>"
         f"<td style='text-align:right'>{_fmt(s.vtr_avg_price)}</td>"
         f"<td style='text-align:right'>{_fmt(s.comparison_price)}</td>"
@@ -249,7 +258,7 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
         for s in cheap
     )
     rows_freq = "".join(
-        f"<tr><td>{s.tuyen_tour}</td><td>{s.diem_kh}</td><td>{s.thi_truong}</td>"
+        f"<tr><td>{s.thi_truong}</td><td>{s.tuyen_tour}</td><td>{s.diem_kh}</td>"
         f"<td style='text-align:center'>{round(getattr(s, 'vtr_avg_departures_per_month', None) or s.vtr_freq_monthly, 1)}</td>"
         f"<td style='text-align:center'>{round(s.market_freq_avg_per_company or 0, 1)}</td>"
         f"<td style='text-align:center;color:#d97706;font-weight:bold'>{_pct(s.freq_gap_vs_avg_pct)}</td>"
@@ -505,7 +514,7 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
 
 <h3>VTR rẻ hơn thị trường (lợi thế giá)</h3>
 <table>
-  <thead><tr><th>Tuyến tour</th><th>Điểm KH</th><th>Thị trường</th><th style="text-align:center">Ngày</th><th style="text-align:right">Giá VTR</th><th style="text-align:right">Giá SS</th><th style="text-align:center">Chênh</th><th>Ghi chú</th></tr></thead>
+  <thead><tr><th>Thị trường</th><th>Tuyến tour</th><th>Điểm KH</th><th style="text-align:center">Ngày</th><th style="text-align:right">Giá VTR</th><th style="text-align:right">Giá SS</th><th style="text-align:center">Chênh</th><th>Ghi chú</th></tr></thead>
   <tbody>
     {rows_cheap or '<tr><td colspan="8" style="text-align:center;color:#6b7280">Không có</td></tr>'}
   </tbody>
@@ -513,7 +522,7 @@ def build_report_html(db: Session, report_type: str = "daily") -> str:
 
 <h2>III. Tần suất Khởi hành — VTR vs đối thủ</h2>
 <table>
-  <thead><tr><th>Tuyến tour</th><th>Điểm KH</th><th>Thị trường</th><th style="text-align:center">VTR đoàn/tháng</th><th style="text-align:center">TT tb/CT</th><th style="text-align:center">Gap TS</th><th>Ghi chú</th></tr></thead>
+  <thead><tr><th>Thị trường</th><th>Tuyến tour</th><th>Điểm KH</th><th style="text-align:center">VTR đoàn/tháng</th><th style="text-align:center">TT tb/CT</th><th style="text-align:center">Gap TS</th><th>Ghi chú</th></tr></thead>
   <tbody>
     {rows_freq or '<tr><td colspan="7" style="text-align:center;color:#6b7280">Không có tuyến thiếu lịch KH nghiêm trọng</td></tr>'}
   </tbody>
