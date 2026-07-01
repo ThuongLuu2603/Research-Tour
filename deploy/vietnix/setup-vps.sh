@@ -100,6 +100,14 @@ apt install -y postgresql-16 postgresql-contrib-16
 systemctl enable --now postgresql
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 7b. Redis (cache compare — optional nhưng khuyến nghị production)
+# ─────────────────────────────────────────────────────────────────────────────
+echo "▸ Install Redis…"
+apt install -y redis-server
+sed -i 's/^supervised no/supervised systemd/' /etc/redis/redis.conf 2>/dev/null || true
+systemctl enable --now redis-server
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 8. Certbot (Let's Encrypt)
 # ─────────────────────────────────────────────────────────────────────────────
 echo "▸ Install Certbot…"

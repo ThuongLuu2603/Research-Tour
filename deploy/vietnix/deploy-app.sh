@@ -93,7 +93,7 @@ systemctl status ota-backend --no-pager | head -15
 echo
 echo "▸ Smoke test (chờ 5s)…"
 sleep 5
-if curl -sf --unix-socket /var/www/ota/backend/ota.sock http://localhost/api/health; then
+if curl -sf --unix-socket /var/www/ota/backend/ota.sock http://localhost/health; then
     echo
     echo "✓ Backend healthy"
 else

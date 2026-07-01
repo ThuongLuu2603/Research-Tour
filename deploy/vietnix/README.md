@@ -95,7 +95,7 @@ Lần này script sẽ:
 - Build frontend
 - Cài systemd unit `ota-backend`
 - Start service
-- Smoke test `/api/health` qua unix socket
+- Smoke test `/health` qua unix socket
 
 ### Phase E — Nginx + SSL (15 phút)
 
@@ -147,7 +147,7 @@ Nếu fail → check log + fix → rerun với `--skip-schema` (schema đã có)
 3. **Verify**:
    ```bash
    dig +short ota.example.com
-   curl -I https://ota.example.com/api/health
+   curl -I https://ota.example.com/healthz
    ```
    Check propagation: https://www.whatsmydns.net
 

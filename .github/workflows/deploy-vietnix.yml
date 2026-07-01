@@ -97,7 +97,7 @@ jobs:
             # Wait + verify
             sleep 5
             curl -sf --unix-socket /var/www/ota/backend/ota.sock \
-              http://localhost/api/health || {
+              http://localhost/health || {
               echo "✗ Health check FAIL — kiểm tra journalctl -u ota-backend"
               exit 1
             }

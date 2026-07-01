@@ -73,7 +73,7 @@ certbot renew --dry-run
 # ─────────────────────────────────────────────────────────────────────────────
 echo "▸ Smoke test HTTPS…"
 sleep 2
-if curl -sf -o /dev/null -w "%{http_code}\n" "https://${DOMAIN}/api/health"; then
+if curl -sf -o /dev/null -w "%{http_code}\n" "https://${DOMAIN}/healthz"; then
     echo "✓ HTTPS endpoint live"
 else
     echo "✗ HTTPS chưa response — kiểm tra DNS đã trỏ về VPS chưa?"
