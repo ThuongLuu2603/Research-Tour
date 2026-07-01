@@ -31,3 +31,8 @@ backend/tmp_*.txt
 
 # Manual classification helpers (regenerated on demand)
 rules_to_add.txt
+rules_remapped.txt
+rules_*_remapped.txt
+
+# Draft PRD / local workspace notes (not shipped)
+_workspace/PRD_*.md
