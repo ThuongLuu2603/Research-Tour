@@ -1,0 +1,207 @@
+# ============================================================
+# RULES REMAPPED: Thị Trường Trung Quốc / Hongkong
+# Nguồn: Rule hiện tại.xlsx → Tuyen tour cần chỉnh.xlsx
+# Ghi chú: dấu phẩy trong keyword = AND condition
+# ============================================================
+
+Thị Trường      | Tuyến Tour                                                                       | Keyword(s)
+----------------+----------------------------------------------------------------------------------+-----------------------------------------
+
+# Liên tuyến Hoa Đông - Hoa Bắc (đổi tên)
+Trung Quốc      | Liên tuyến Hoa Đông Hoa Bắc                                                      | bắc kinh, thượng hải
+
+# Hoa Bắc (đổi tên)
+Trung Quốc      | Hoa Bắc                   | bắc kinh, vạn lý trường thành
+Trung Quốc      | Hoa Bắc                   | bắc kinh
+Trung Quốc      | Hoa Bắc                   | huyền không tự
+Trung Quốc      | Hoa Bắc                   | khúc phụ
+Trung Quốc      | Hoa Bắc                   | ngũ đài sơn
+Trung Quốc      | Hoa Bắc                   | thiên an môn
+Trung Quốc      | Hoa Bắc                   | thẩm dương
+Trung Quốc      | Hoa Bắc                   | trường bạch sơn
+Trung Quốc      | Hoa Bắc                   | tần hoàng đảo
+Trung Quốc      | Hoa Bắc                   | tế nam
+Trung Quốc      | Hoa Bắc                   | tứ đại danh sơn
+Trung Quốc      | Hoa Bắc                   | tử cấm thành
+Trung Quốc      | Hoa Bắc                   | vạn lý trường thành
+Trung Quốc      | Hoa Bắc                   | wtown
+
+# Hoa Đông (đổi tên)
+Trung Quốc      | Hoa Đông         | thượng hải, hàng châu, tô châu
+Trung Quốc      | Hoa Đông         | thượng hải, hàng châu
+Trung Quốc      | Hoa Đông         | du lịch trung quốc
+Trung Quốc      | Hoa Đông         | giang nam
+Trung Quốc      | Hoa Đông         | hàng châu
+Trung Quốc      | Hoa Đông         | khám phá trung quốc
+Trung Quốc      | Hoa Đông         | nam kinh
+Trung Quốc      | Hoa Đông         | thanh đảo
+Trung Quốc      | Hoa Đông         | thượng hải
+Trung Quốc      | Hoa Đông         | trung hoa
+Trung Quốc      | Hoa Đông         | tô châu
+Trung Quốc      | Hoa Đông         | vô tích
+Trung Quốc      | Hoa Đông         | ô trấn
+
+# Tứ Xuyên (đổi tên; trùng khánh → entry point Tứ Xuyên)
+Trung Quốc      | Tứ Xuyên         | thành đô, cửu trại câu
+Trung Quốc      | Tứ Xuyên         | cửu trại câu
+Trung Quốc      | Tứ Xuyên         | khang định
+Trung Quốc      | Tứ Xuyên         | lôi định
+Trung Quốc      | Tứ Xuyên         | nhã giang
+Trung Quốc      | Tứ Xuyên         | thành đô
+Trung Quốc      | Tứ Xuyên         | trùng khánh
+Trung Quốc      | Tứ Xuyên         | tứ xuyên
+Trung Quốc      | Tứ Xuyên         | á đinh
+Trung Quốc      | Tứ Xuyên         | đạo thành
+
+# Vân Nam (đổi tên)
+Trung Quốc      | Vân Nam                 | côn minh, đại lý, lệ giang
+Trung Quốc      | Vân Nam                 | côn minh, lệ giang
+Trung Quốc      | Vân Nam                 | côn minh
+Trung Quốc      | Vân Nam                 | lệ giang
+Trung Quốc      | Vân Nam                 | shangrila
+Trung Quốc      | Vân Nam                 | vân nam
+Trung Quốc      | Vân Nam                 | đại lý
+
+# Đường Bộ Hà Khẩu (tách từ Vân Nam + Trung Quốc đường bộ cũ)
+Trung Quốc      | TQ ĐB Hà Khẩu                 | bình biên
+Trung Quốc      | TQ ĐB Hà Khẩu                 | kiến thủy
+Trung Quốc      | TQ ĐB Hà Khẩu                 | mông tự
+Trung Quốc      | TQ ĐB Hà Khẩu                 | đường bộ
+
+# Quảng Tây (đổi tên; thái bình cổ trấn → Đông Hưng route)
+Trung Quốc      | Quảng Tây                                                   | nam ninh, quế lâm
+Trung Quốc      | Quảng Tây                                                   | quế lâm, dương só
+Trung Quốc      | Quảng Tây                                                   | nam ninh
+Trung Quốc      | Quảng Tây                                                   | quế lâm
+
+# Quảng Đông (đổi tên)
+Trung Quốc      | Quảng Đông                                 | quảng châu, thẩm quyến
+Trung Quốc      | Quảng Đông                                 | chu hải
+Trung Quốc      | Quảng Đông                                 | quảng châu
+Trung Quốc      | Quảng Đông                                 | quảng đông
+Trung Quốc      | Quảng Đông                                 | thẩm quyến
+
+# Hắc Long Giang (đổi tên)
+Trung Quốc      | Hắc Long Giang                                                     | hắc long giang, cáp nhĩ tân
+Trung Quốc      | Hắc Long Giang                                                     | cáp nhĩ tân
+Trung Quốc      | Hắc Long Giang                                                     | hắc long giang
+Trung Quốc      | Hắc Long Giang                                                     | yabuli
+
+# Phúc Kiến (gộp Hạ Môn - Thổ Lâu vào)
+Trung Quốc      | Phúc Kiến                          | hạ môn, thổ lâu
+Trung Quốc      | Phúc Kiến                          | hạ môn
+Trung Quốc      | Phúc Kiến                          | phúc châu
+Trung Quốc      | Phúc Kiến                          | phúc kiến
+Trung Quốc      | Phúc Kiến                          | thổ lâu
+Trung Quốc      | Phúc Kiến                          | tuyền châu
+Trung Quốc      | Phúc Kiến                          | vũ di sơn
+
+# Tân Cương (đổi tên)
+Trung Quốc      | Tân Cương                | tân cương, ô lỗ mộc tề
+Trung Quốc      | Tân Cương                | burqin
+Trung Quốc      | Tân Cương                | bắc cương
+Trung Quốc      | Tân Cương                | jiadengyu
+Trung Quốc      | Tân Cương                | kuitun
+Trung Quốc      | Tân Cương                | nam cương
+Trung Quốc      | Tân Cương                | tân cương
+Trung Quốc      | Tân Cương                | urumqi
+
+# Hà Nam (đổi tên từ Hà Nam - Lạc Dương; thêm tây an từ Hồ Nam-Hồ Bắc)
+Trung Quốc      | Hà Nam                            | lạc dương, trịnh châu
+Trung Quốc      | Hà Nam                            | hà nam
+Trung Quốc      | Hà Nam                            | khai phong
+Trung Quốc      | Hà Nam                            | lạc dương
+Trung Quốc      | Hà Nam                            | núi vân đài sơn
+Trung Quốc      | Hà Nam                            | thiếu lâm tự
+Trung Quốc      | Hà Nam                            | trịnh châu
+Trung Quốc      | Hà Nam                            | tây an
+
+# Hồ Bắc (tách từ Hồ Nam-Hồ Bắc + Vũ Hán cũ)
+Trung Quốc      | Hồ Bắc     | vũ hán, hoàng hạc lâu
+Trung Quốc      | Hồ Bắc     | cửu giang
+Trung Quốc      | Hồ Bắc     | giang tây
+Trung Quốc      | Hồ Bắc     | hồ bắc
+Trung Quốc      | Hồ Bắc     | lạc giương
+Trung Quốc      | Hồ Bắc     | thượng nhiêu
+Trung Quốc      | Hồ Bắc     | vũ hán
+Trung Quốc      | Hồ Bắc     | vọng tiên cốc
+
+# Hồ Nam (tách từ Hồ Nam-Hồ Bắc cũ)
+Trung Quốc      | Hồ Nam | trương gia giới, phượng hoàng cổ trấn
+Trung Quốc      | Hồ Nam | nghi xương
+Trung Quốc      | Hồ Nam | phượng hoàng cổ trấn
+Trung Quốc      | Hồ Nam | thiên môn sơn
+Trung Quốc      | Hồ Nam | thường đức
+Trung Quốc      | Hồ Nam | trương gia giới
+Trung Quốc      | Hồ Nam | trường sa
+
+# Đường Bộ Đông Hưng (tách từ Trung Quốc đường bộ + Quảng Tây cũ)
+Trung Quốc      | TQ ĐB Đông Hưng | trà lĩnh, tịnh tây
+Trung Quốc      | TQ ĐB Đông Hưng | thái bình cổ trấn
+Trung Quốc      | TQ ĐB Đông Hưng | đông hưng
+
+# Hongkong Mono (thị trường Hongkong)
+Hongkong        | Hongkong Mono                                                                    | hong kong
+Hongkong        | Hongkong Mono                                                                    | hongkong
+Hongkong        | Hongkong Mono                                                                    | hồng kông
+
+# Hongkong - Macau (thị trường Hongkong)
+Hongkong        | Hongkong - Macau                                                                 | hồng kông, macau
+Hongkong        | Hongkong - Macau                                                                 | macau
+
+# === GIỮ NGUYÊN (tuyến cũ không thay đổi) ===
+# Con đường tơ lụa
+Trung Quốc      | Con đường tơ lụa                                                                 | tây ninh, đôn hoàng, lan châu
+Trung Quốc      | Con đường tơ lụa                                                                 | đôn hoàng, lan châu
+Trung Quốc      | Con đường tơ lụa                                                                 | gia dục quan
+Trung Quốc      | Con đường tơ lụa                                                                 | minh sa sơn
+Trung Quốc      | Con đường tơ lụa                                                                 | nguyệt nha tuyền
+Trung Quốc      | Con đường tơ lụa                                                                 | đôn hoàng
+
+# Cực Bắc Trung Quốc
+Trung Quốc      | Cực Bắc Trung Quốc                                                               | cực bắc trung quốc
+
+# Hải Nam - Tam Á
+Trung Quốc      | Hải Nam - Tam Á                                                                  | hải nam, tam á
+Trung Quốc      | Hải Nam - Tam Á                                                                  | hải khẩu
+Trung Quốc      | Hải Nam - Tam Á                                                                  | hải nam
+Trung Quốc      | Hải Nam - Tam Á                                                                  | nam sơn quan âm
+Trung Quốc      | Hải Nam - Tam Á                                                                  | phố cổ kỳ lầu
+Trung Quốc      | Hải Nam - Tam Á                                                                  | tam á
+Trung Quốc      | Hải Nam - Tam Á                                                                  | thủy cung atlantis
+Trung Quốc      | Hải Nam - Tam Á                                                                  | đảo phượng hoàng
+
+# Nam Xương
+Trung Quốc      | Nam Xương                                                                        | nam xương
+
+# Nội Mông
+Trung Quốc      | Nội Mông                                                                         | hải lạp nhĩ
+Trung Quốc      | Nội Mông                                                                         | mãn châu lý
+Trung Quốc      | Nội Mông                                                                         | nội mông
+Trung Quốc      | Nội Mông                                                                         | ordos
+Trung Quốc      | Nội Mông                                                                         | thảo nguyên
+
+# Quý Châu - Tây Giang
+Trung Quốc      | Quý Châu - Tây Giang                                                             | quý châu
+Trung Quốc      | Quý Châu - Tây Giang                                                             | tiểu thất khổng
+Trung Quốc      | Quý Châu - Tây Giang                                                             | tây giang
+
+# Quý Dương
+Trung Quốc      | Quý Dương                                                                        | quý dương, tây giang
+Trung Quốc      | Quý Dương                                                                        | quý dương
+
+# Tây Tạng
+Trung Quốc      | Tây Tạng                                                                         | tây tạng, lhasa
+Trung Quốc      | Tây Tạng                                                                         | cung điện potala
+Trung Quốc      | Tây Tạng                                                                         | lhasa
+Trung Quốc      | Tây Tạng                                                                         | tây tạng
+
+# Trung Quốc - Triều Tiên
+Trung Quốc      | Trung Quốc - Triều Tiên                                                          | trung quốc, triều tiên
+Trung Quốc      | Trung Quốc - Triều Tiên                                                          | triều tiên
+
+# Trung Quốc khác
+Trung Quốc      | Trung Quốc khác                                                                  | cam túc
+Trung Quốc      | Trung Quốc khác                                                                  | thanh hải
+Trung Quốc      | Trung Quốc khác                                                                  | tây song bản nạp
+
