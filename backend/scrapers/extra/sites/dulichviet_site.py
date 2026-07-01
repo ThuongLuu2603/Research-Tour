@@ -89,7 +89,15 @@ def _parse_cards(html: str, *, market: str) -> list[dict]:
             continue
         seen.add(key)
 
-        price_raw = _first(r'class="price-min"[^>]*>\s*<h4[^>]*>\s*([^<]+?)\s*</h4>', card)
+        price_raw = _first(
+            r'class="price-min"[^>]*>.*?<h4[^>]*>\s*([^<]+?)\s*</h4>',
+            card,
+        )
+        if not price_raw:
+            price_raw = _first(
+                r'class="list-price-brief"[^>]*>.*?([\d][\d.,]{5,})\s*(?:đ|&#273;|&nbsp;đ)',
+                card,
+            )
         dates = re.findall(
             r'class="day-tour"[^>]*>\s*<a[^>]*>\s*(\d{1,2}/\d{1,2})\s*</a>',
             card,
